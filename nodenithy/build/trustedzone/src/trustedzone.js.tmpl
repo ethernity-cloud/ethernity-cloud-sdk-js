@@ -1,0 +1,508 @@
+require('dotenv').config();
+require('dotenv').config({path: './app/.env'});
+require('dotenv').config({path: '/app/.env'});
+
+const ethers = require('ethers');
+const fs = require("fs");
+const etny_crypto = require("./etny_crypto");
+const {DOReqMetadata, Order} = require("./models");
+const {getWalletAddress} = require("./wallet");
+const {TaskStatus} = require("./task_status");
+const SwiftStreamService = require("./swift_stream_service");
+
+const contract_abi = require('./pox_abi');
+const image_registry_abi = require('./image_registry_abi');
+const {sha256} = require("./etny_crypto");
+
+class EtnyTrustedZone {
+    static debug = false;
+
+    constructor(swiftStreamClient) {
+        console.log('Initializing...');
+        this.version = 'v3';
+        this.swiftStreamService = swiftStreamClient;
+        this.etny_bucket = "etny-nodenithy-v3";
+        this.setInitializers();
+    }
+
+    setInitializers() {
+        this.is_valid_client_data = true;
+        this.private_key_file = "/private/__ENCLAVE_NAME_TRUSTEDZONE__/key.pem";
+        this.cert_file = "/app/__ENCLAVE_NAME_TRUSTEDZONE__/cert.pem";
+        this.pub_cert_file = "/app/__ENCLAVE_NAME_TRUSTEDZONE__/app.pem";
+        this.payload = "payload.etny";
+        this.input = "input.txt";
+        this.result_file = "/app/result.txt";
+        this.transaction_file = "/app/transaction.txt";
+        this.smart_contract_address = "0x549A6E06BB2084100148D50F51CF77a3436C3Ae7 ";
+        this.image_registry_address = '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31';
+        this.chain_id = 8995;
+        this.web3_provider = "https://bloxberg.ethernity.cloud";
+        this.signed_tx_as_bytes = null;
+        this.client_challenge = "";
+
+        if (this.etny_mode === "TEST") {
+            this.private_key_file = "/private/key.pem";
+            this.cert_file = "/app/cert.pem";
+            this.payload = "./app/payload.js";
+            this.input = "./app/input.txt";
+            this.result_file = "./app/result.txt";
+            this.transaction_file = "./app/transaction.txt";
+            this.pub_cert_file = "./app/enclave_pub_cert.pem";
+        }
+
+        if (this.etny_mode === "LOCAL_TEST") {
+            this.private_key_file = "./certs/key.pem";
+            this.cert_file = "./certs/cert.pem";
+            this.payload = "./app/payload.js";
+            this.input = "./app/input.txt";
+            this.result_file = "./app/result.txt";
+            this.transaction_file = "./app/transaction.txt";
+            this.pub_cert_file = "./app/enclave_pub_cert.pem";
+        }
+    }
+
+    async create() {
+        //overriding default values with those read from .env file
+        this.loadEnv();
+        this.printEnv();
+        await this.savePublicCert();
+        this.readClientChallenge();
+        this.generateNodeChallenge();
+        const wasAbleToDecode = this.decodeClientDataAndGenerateWallet();
+
+        //console.log(`wasAbleToDecode: ${wasAbleToDecode}`);
+        if (!wasAbleToDecode) {
+            console.log('Unable to decode client data, exiting.');
+            return false;
+        }
+        this.initWeb3();
+        if (this.etny_mode === "PRODUCTION") {
+            this.resetPrivateCertFile();
+        }
+
+        return true;
+    }
+
+    loadEnv() {
+        if (process.env.ETNY_CHAIN_ID) {
+            this.chain_id = parseInt(process.env.ETNY_CHAIN_ID);
+        }
+
+        if (process.env.ETNY_SMART_CONTRACT_ADDRESS) {
+            this.smart_contract_address = process.env.ETNY_SMART_CONTRACT_ADDRESS.trim();
+        }
+
+        if (process.env.ETNY_WEB3_PROVIDER) {
+            this.web3_provider = process.env.ETNY_WEB3_PROVIDER.trim();
+        }
+
+        if (process.env.ETNY_CLIENT_CHALLENGE) {
+            this.client_challenge = process.env.ETNY_CLIENT_CHALLENGE.trim();
+        }
+        if (process.env.ETNY_ORDER_ID) {
+            this.order_id = parseInt(process.env.ETNY_ORDER_ID);
+        }
+    }
+
+    printEnv() {
+        console.log('CHAIN ID:', this.chain_id);
+        console.log('SMART CONTRACT ADDRESS:', this.smart_contract_address);
+        console.log('WEB3 PROVIDER:', this.web3_provider);
+        console.log('ENCRYPTED CHALLENGE:', this.client_challenge);
+        console.log('ORDER ID:', this.order_id);
+    }
+
+    initWeb3() {
+        // Create an ethers.js provider connected to the Bloxberg network
+        this.w3 = new ethers.providers.JsonRpcProvider(this.web3_provider);
+        this.walletSigner = new ethers.Wallet(this.walletPrivateKey, this.w3);
+        // Create an instance of the contract using the ABI and address
+        this.etny = new ethers.Contract(this.smart_contract_address, contract_abi, this.w3);
+        this.etny_signer = new ethers.Contract(this.smart_contract_address, contract_abi, this.walletSigner);
+        this.image_registry = new ethers.Contract(this.image_registry_address, image_registry_abi, this.w3);
+        // this.image_registry_signer = new ethers.Contract(this.image_registry_address, image_registry_abi, this.walletSigner);
+    }
+
+    async readEnv() {
+        try {
+            console.log('Getting .env if exists...');
+            const envFile = await this.swiftStreamService.getFileContent(this.etny_bucket, ".env");
+            console.log("Env:", envFile);
+            console.log("Saving .env file...");
+            await fs.promises.writeFile('.env', envFile);
+            require('dotenv').config();
+
+            this.version = 'v3';
+            this.etny_mode = process.env.ETNY_MODE;
+            console.log(`ETNY Nodenithy [${this.version}] - running in ${this.etny_mode} MODE`);
+            //console.log(process.env);
+
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // convert client challenge
+    readClientChallenge() {
+        this.encrypted_tuple = etny_crypto.encryptedDataFromBase64Json(this.client_challenge);
+    }
+
+    generateNodeChallenge(length = 20) {
+        const lowercaseOnly = [...Array(length)].map(() => Math.random().toString(36)[2]).join('');
+        //console.log('random challenge:', lowercaseOnly);
+        this.enclave_challenge = lowercaseOnly;
+        return this.enclave_challenge;
+    }
+
+    decodeClientDataAndGenerateWallet() {
+        console.log('started decoding challenge...');
+        const decryptedResult = etny_crypto.decrypt(this.private_key_file, this.encrypted_tuple);
+        if (!decryptedResult) {
+            return false;
+        } else {
+            //console.log('decrypted_string = ', decryptedResult);
+            const [publicKey, privateKey] = getWalletAddress(decryptedResult, this.enclave_challenge);
+            this.wallet = publicKey;
+            this.walletPrivateKey = privateKey;
+
+            //console.log("wallet = ", this.wallet);
+            //console.log("private = ", this.walletPrivateKey);
+
+            return true;
+        }
+    }
+
+    extractSigner(message, signature) {
+        return ethers.utils.verifyMessage(message, signature);
+    }
+
+    async validateClientPayload(payload_data, input_data) {
+        if (this._metadata.payload_metadata_obj.checksum !== null) {
+            const payload_checksum = sha256(payload_data);
+            //console.log('payload checksum: ', payload_checksum, "===", this._metadata.payload_metadata_obj.checksum);
+            // check the wallet address that signed payload checksum is the one from order metadata
+            const payload_signer = this.extractSigner(payload_checksum, this._metadata.payload_metadata_obj.checksum);
+            //console.log("payload_signer", payload_signer);
+            //console.log("this._order_metadata.do_owner.toLowerCase()", this._order_metadata.do_owner.toLowerCase());
+            if (payload_signer.toLowerCase() !== this._order_metadata.do_owner.toLowerCase()) {
+                this.task_code = TaskStatus.PAYLOAD_CHECKSUM_ERROR;
+                this.task_result = 'PAYLOAD CHECKSUM DOESN\'T MATCH';
+                this.is_valid_client_data = false;
+                return;
+            }
+        }
+        if (this._metadata.input_metadata_obj.checksum !== null) {
+            const input_checksum = sha256(input_data);
+            //console.log('input checksum: ', input_checksum, '===', this._metadata.input_metadata_obj.checksum);
+            // check the wallet address that signed input checksum is the one from order metadata
+            const input_signer = this.extractSigner(input_checksum, this._metadata.input_metadata_obj.checksum);
+            //console.log("input_signer", input_signer);
+            //console.log("this._order_metadata.do_owner.toLowerCase()", this._order_metadata.do_owner.toLowerCase());
+            if (input_signer.toLowerCase() !== this._order_metadata.do_owner.toLowerCase()) {
+                this.task_code = TaskStatus.INPUT_CHECKSUM_ERROR;
+                this.task_result = 'INPUT CHECKSUM DOESN\'T MATCH';
+                this.is_valid_client_data = false;
+            }
+        }
+    }
+
+    wait(timeout) {
+        return new Promise(resolve => {
+            setTimeout(resolve, timeout);
+        });
+    }
+
+    async waitForObjectInBucket(bucketName, objectName, timeout = 600) {
+        let i = 0;
+        console.log(`Checking if object ${objectName} exists in bucket ${bucketName}`);
+        while (true) {
+            await this.wait(1000);
+            i++;
+            if (i % 20 === 0)
+                console.log(`Checking if object ${objectName} exists in bucket ${bucketName}`);
+            if (i > timeout) {
+                break;
+            }
+            const [status, result] = await this.swiftStreamService.isObjectInBucket(bucketName, objectName);
+            if (result) {
+                break;
+            }
+        }
+
+        console.log('secure lock finished the execution');
+    }
+
+    async waitForTask() {
+        console.log('Waiting for payload and input');
+        await this.waitForObjectInBucket(this.etny_bucket, "result.txt.securelock");
+        this.task_result = await this.getFileContentAndDecrypt(this.etny_bucket, "result.txt.securelock");
+        this.task_code = await this.getFileContentAndDecrypt(this.etny_bucket, "result_code.txt.securelock");
+    }
+
+    async getFileContentAndDecrypt(bucketName, objectName, isEmptyInput = false) {
+        try {
+            const encryptedBase64 = await this.swiftStreamService.getFileContent(bucketName, objectName);
+            console.log(`File ${objectName} downloaded from swift stream successfully`);
+            //console.log(encryptedBase64);
+            if (isEmptyInput) {
+                return encryptedBase64;
+            }
+
+            console.log('Decrypting the file with private key:');
+            const encryptedTuple = etny_crypto.encryptedDataFromBase64Json(encryptedBase64);
+            //console.log('encryptedTuple: ', encryptedTuple);
+            const decryptedResult = etny_crypto.decrypt(this.private_key_file, encryptedTuple);
+            //console.log('decryptedResult: ', decryptedResult);
+            return decryptedResult;
+        } catch (e) {
+            console.log('Error:', e);
+            console.log(`Failed to get ${objectName} file`);
+            return false;
+        }
+    }
+
+    async getSecureLockPublicKey() {
+        console.log('Getting the public key of the secure lock enclave');
+        let imageHash = this._metadata.image_hash;
+        console.log('Image Hash Secure lock:', imageHash);
+        if (EtnyTrustedZone.debug) {
+            imageHash = 'v3-hash-1';
+        }
+        this.secureLockPublicKey = await this.image_registry.getImageCertPublicKey(imageHash);
+        console.log('public key of the SecureLock enclave:', this.secureLockPublicKey)
+    }
+
+    async encryptFileAndPushToSwiftStream(fileData, fileName) {
+        try {
+            const encryptedInput = etny_crypto.encrypt(this.secureLockPublicKey, fileData);
+            const encryptedInputBase64 = etny_crypto.encryptedDataToBase64Json(encryptedInput);
+
+            // File name should end with the '.securelock' extension
+            fileName += '.securelock';
+            // const data = Buffer.from(encryptedInputBase64, 'utf8');
+            const status = this.swiftStreamService.putFileContent(this.etny_bucket, fileName, '', encryptedInputBase64);
+            if (status) {
+                console.log(`File ${fileName} encrypted and saved to swift stream successfully`);
+            }
+        } catch (e) {
+            console.log('encryptFileAndPushToSwiftStream:', e);
+        }
+    }
+
+    checkIfIsEmptyInput() {
+        const empty_input_checksum = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+        const input_signer = this.extractSigner(empty_input_checksum, this._metadata.input_metadata_obj.checksum);
+        return input_signer.toLowerCase() === this._order_metadata.do_owner.toLowerCase();
+    }
+
+    async prepareContextForSecureLock() {
+        await this.getSecureLockPublicKey();
+        const payloadData = await this.getFileContentAndDecrypt(this.etny_bucket, 'payload.etny');
+        //console.log('payloadData:', payloadData);
+        //console.log('payloadDataChecksum:', sha256(payloadData));
+        const isEmptyInput = this.checkIfIsEmptyInput();
+        const inputData = await this.getFileContentAndDecrypt(this.etny_bucket, 'input.txt', isEmptyInput);
+
+        console.log('Validate client payload and input');
+        await this.validateClientPayload(payloadData, inputData);
+        if (this.is_valid_client_data) {
+            console.log('Client payload and input are valid');
+        } else {
+            console.log('Client payload and input are NOT valid');
+            return false;
+        }
+
+        console.log('Pushing payload.etny.securelock');
+        await this.encryptFileAndPushToSwiftStream(payloadData, this.payload);
+        console.log('Pushing input.txt.securelock');
+        await this.encryptFileAndPushToSwiftStream(inputData, this.input);
+
+        return true;
+    }
+
+    async getDORequestMetadata() {
+        const o_result = await this.etny.functions._getOrder(this.order_id);
+        const order = new Order(o_result, this.order_id);
+        //console.log('order', order);
+        this._order_metadata = order;
+        const o_metadata = await this.etny.functions._getDORequestMetadata(order.do_req);
+        //console.log('o_metadata', o_metadata);
+        this._metadata = new DOReqMetadata(o_metadata, order.do_req);
+        //console.log('metadata', this._metadata);
+    }
+
+    resetPrivateCertFile() {
+        //console.log('Resetting the cert file');
+        try {
+            // const fd = fs.openSync(this.private_key_file, 'w+');
+            fs.truncate(this.private_key_file, 0, function () {
+                //console.log('Private certificate file was cleaned.')
+            });
+            // fs.closeSync(fd);
+        } catch (e) {
+            //console.log('Error while removing the private key file content', e);
+        }
+        const content = fs.readFileSync(this.private_key_file, 'utf8');
+        //console.log('cert file content', content, '##################');
+    }
+
+    async savePublicCert() {
+        try {
+            const content = await fs.promises.readFile(this.cert_file, 'utf8');
+            await fs.promises.writeFile(this.pub_cert_file, content);
+            console.log(`Public certificate saved to ${this.pub_cert_file}`);
+            console.log(`PUBLIC_KEY:`);
+            console.log(content);
+
+            await this.swiftStreamService.putFileContent(this.etny_bucket, 'cert.pem', this.pub_cert_file);
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    buildResult() {
+        this.result = `${this.version}:${this.task_code}:${this.task_result_checksum}:${this.enclave_challenge}:`;
+    }
+
+    getResultChecksum() {
+        this.task_result_checksum = etny_crypto.sha256(this.task_result);
+    }
+
+    async buildTransaction() {
+        this.buildResult();
+
+        console.log(`adding result to order ${this.order_id}`);
+
+        // Call a method in the contract and get the encoded data
+        const args = [this.order_id, this.result];
+        const nonce = await this.walletSigner.getTransactionCount();
+        const tx = await this.etny_signer.populateTransaction._addResultToOrder(...args);
+
+        // Create a transaction object
+        const transaction = {
+            ...tx,
+            nonce,
+            gasLimit: ethers.utils.hexlify(1000000),
+            gasPrice: ethers.utils.parseUnits('1', 'mwei')
+        };
+
+        // Sign the transaction and send it to the network
+        const signedTransaction = await this.walletSigner.signTransaction(transaction);
+        this.signed_tx_as_bytes = signedTransaction;
+        console.log(signedTransaction);
+        return signedTransaction;
+    }
+
+    async saveTransaction() {
+        try {
+            const tx = await this.swiftStreamService.putFileContent(this.etny_bucket, 'transaction.txt', this.transaction_file, this.signed_tx_as_bytes);
+            //console.log(tx);
+            const result = await this.swiftStreamService.getFileContent(this.etny_bucket, 'transaction.txt');
+            //console.log('Getting file transaction.txt :', result);
+        } catch (e) {
+            console.log('Save transaction error: ', e);
+        }
+
+    }
+
+    async saveResult() {
+        try {
+            console.log('Encrypting result with public key:', this._metadata.public_key);
+            const encrypted = etny_crypto.encryptWithPublicKey(this._metadata.public_key, this.task_result);
+            //console.log('Encrypted result:', encrypted.toString('hex'));
+            const result = await this.swiftStreamService.putFileContent(this.etny_bucket, 'result.txt', this.result_file, encrypted.toString('hex'));
+            //console.log('Save result put: ', result);
+
+            const result1 = await this.swiftStreamService.getFileContent(this.etny_bucket, 'result.txt');
+            //console.log('Getting file transaction.txt :', result1);
+        } catch (e) {
+            console.log('Save result error: ', e);
+        }
+    }
+
+    async execute() {
+        await this.getDORequestMetadata();
+        console.log('Validating client payload and input...');
+        const isAllPrepared = await this.prepareContextForSecureLock();
+        if (!isAllPrepared) {
+            return false;
+        }
+        await this.waitForTask();
+        console.log('TASK RESULT (code, data):', this.task_code, this.task_result);
+
+        return true;
+    }
+}
+
+function initSwiftStreamClient() {
+    console.log('Initializing SwiftStream Service...');
+    const swiftStreamClient = new SwiftStreamService(
+        EtnyTrustedZone.debug ? "localhost" : "etny-swift-stream",
+        9000,
+        "swiftstreamadmin",
+        "swiftstreamadmin");
+    console.log('SwiftStream Service started.');
+    console.log('################################');
+
+    return swiftStreamClient;
+}
+
+async function execute() {
+    console.log('########################################');
+    console.log('########################################');
+    console.log('########## [ETNY TrustedZone] ##########');
+    console.log('########################################');
+    console.log('########################################');
+    console.log('');
+    console.log('');
+    console.log('');
+
+    const swiftStreamClient = initSwiftStreamClient();
+
+    const app = new EtnyTrustedZone(swiftStreamClient);
+
+    const hasReadEnvFile = await app.readEnv();
+    if (!hasReadEnvFile && !EtnyTrustedZone.debug) {
+        console.log(`Failed reading .env file.`);
+        await app.savePublicCert();
+        return;
+    }
+
+    if (process.env.ETNY_MODE === "PUBLIC_KEY") {
+        await app.savePublicCert();
+    } else {
+        console.log('Creating the application...');
+        const created = await app.create();
+
+        if (!created) {
+            console.log(`Failed at creation step, not able decoding input metadata, exiting.`);
+            return;
+        }
+
+        const wasExecuted = await app.execute();
+        if (!wasExecuted) {
+            console.log('Task execution failed!');
+            return;
+        }
+
+        console.log('Generating task result checksum...');
+        app.getResultChecksum();
+        console.log('Building transaction...');
+        await app.buildTransaction();
+        console.log('Saving transaction...');
+        await app.saveTransaction();
+        console.log('Saving the result...');
+        await app.saveResult();
+        console.log('Finished process.');
+    }
+}
+
+(async () => {
+    try {
+        await execute();
+    } catch (e) {
+        console.log(e);
+    }
+})();

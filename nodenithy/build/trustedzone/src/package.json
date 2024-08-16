@@ -1,0 +1,40 @@
+{
+  "name": "etny-nodenithy",
+  "version": "0.0.1",
+  "description": "Ethernity Cloud Node.js Template",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://gitlab.ethernity.cloud/etny-node/etny-nodenithy.git"
+  },
+  "keywords": [
+    "Ethernity",
+    "Cloud",
+    "Node",
+    "js",
+    "template"
+  ],
+  "author": "ciprian@ethernity.cloud",
+  "license": "ISC",
+  "dependencies": {
+    "@metamask/eth-sig-util": "^5.1.0",
+    "ascii85": "^1.0.2",
+    "dotenv": "^16.0.3",
+    "ec-key": "^0.0.4",
+    "elliptic": "^6.5.4",
+    "ethers": "^5.7.2",
+    "jsrsasign": "^10.6.1",
+    "minio": "^7.1.1"
+  },
+  "overrides": {
+    "@metamask/eth-sig-util": {
+      "ethereum-cryptography": "2.0.0"
+    }
+  },
+  "resolutions": {
+    "ethereum-cryptography": "2.0.0"
+  }
+}
