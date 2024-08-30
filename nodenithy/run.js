@@ -329,7 +329,7 @@ const main = async () => {
         console.log("");
 
         const opt = ["yes", "no"];
-        const choice = await promptOptions("Do you want to continue by generating the necessary certificates using the Ethernity Cloud signing service? (yes/no): ", opt, "no");
+        const choice = await promptOptions("Do you want to continue by generating the necessary certificates using the Ethernity Cloud public certificate extraction services? (yes/no) (default: no): ", opt, "no");
 
         if (choice.toLowerCase() !== 'yes') {
             console.log("Exiting.");

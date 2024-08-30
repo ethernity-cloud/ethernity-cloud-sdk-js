@@ -250,12 +250,12 @@ const main = async () => {
     writeEnv("DOCKER_PASSWORD", dockerPassword);
   } else if (serviceType === "Nodenithy") {
     writeEnv("BASE_IMAGE_TAG", "");
-    writeEnv("DOCKER_REPO_URL", "registry.scontain.com:5050");
+    writeEnv("DOCKER_REPO_URL", "");
     writeEnv("DOCKER_LOGIN", "");
     writeEnv("DOCKER_PASSWORD", "");
   } else if (serviceType === "Pynithy") {
     writeEnv("BASE_IMAGE_TAG", "");
-    writeEnv("DOCKER_REPO_URL", "registry.scontain.com:5050");
+    writeEnv("DOCKER_REPO_URL", "");
     writeEnv("DOCKER_LOGIN", "");
     writeEnv("DOCKER_PASSWORD", "");
   }
