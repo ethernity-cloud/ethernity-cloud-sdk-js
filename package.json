@@ -1,0 +1,48 @@
+{
+    "name": "ethernity-cloud-sdk-js",
+    "version": "1.0.300",
+    "description": "A package to run ethernity cloud build scripts",
+    "scripts": {
+        "ecld-build": "cross-env node ./node_modules/ethernity-cloud-sdk-js/build.js",
+        "ecld-publish": "cross-env node ./node_modules/ethernity-cloud-sdk-js/publish.js && cross-env node ./node_modules/ethernity-cloud-sdk-js/nodenithy/run.js",
+        "ecld-init": "cross-env node ./node_modules/ethernity-cloud-sdk-js/init.js",
+        "ecld-run": "cross-env ecld-run",
+        "postinstall": "node postinstall.js"
+    },
+    "bin": {
+        "ecld-build": "./build.js",
+        "ecld-publish": "./publish.js",
+        "ecld-init": "./init.js",
+        "postinstall": "./postinstall.js"
+    },
+    "files": [
+        "nodenithy/*",
+        "pynithy/*",
+        "build.js",
+        "init.js",
+        "publish.js",
+        "postinstall.js"
+    ],
+    "dependencies": {
+        "@ethernity-cloud/runner": "^0.0.26",
+        "axios": "^1.7.2",
+        "commander": "^12.1.0",
+        "dotenv": "^16.4.5",
+        "eth-lib": "^0.1.29",
+        "ethers": "^5.5.4",
+        "kubo-rpc-client": "^4.1.1",
+        "web3": "^4.9.0",
+        "cross-env": "^7.0.3",
+        "shelljs": "^0.8.5",
+        "shx": "^0.3.4",
+        "node-forge": "^1.3.1",
+        "cli-progress": "^3.12.0",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
+        "react-scripts": "^5.0.1",
+        "web-vitals": "^2.1.4",
+        "adm-zip": "^0.5.14"
+    },
+    "author": "Alexandru Luca",
+    "license": "AGPL-3.0"
+}
