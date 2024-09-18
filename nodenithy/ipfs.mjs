@@ -272,7 +272,10 @@ const uploadFolderToIPFS = async (folderPath) => {
 
     const progressBar = multiBar.create(totalSize / 1024 / 1024, 0);
 
-    for await (const file of ipfs.addAll(globSource(folderPath, '**/*'), { ...ipfsOptions })) {
+    for await (const file of ipfs.addAll(files.map(file => ({
+      path: file.path,
+      content: fs.createReadStream(path.join(folderPath, file.path))
+    })), { ...ipfsOptions })) {
       addedFiles.push({
         cid: file.cid.toString(),
         path: file.path,
@@ -287,14 +290,6 @@ const uploadFolderToIPFS = async (folderPath) => {
     await fss.writeFile(`./IPFS_HASH.ipfs`, _hash);
     return _hash;
   } catch (e) {
-    // console.error(e);
-    // if (retryCount < 3) {
-    //   console.log(`Retrying... (${retryCount}/3)`);
-    //   await delay(2000);
-    //   return await uploadFolderToIPFS(folderPath, retryCount + 1);
-    // }
-    // return "Failed to upload folder to IPFS, please try again.";
-    // console.error(e);
     return "Upload failed.";
   }
 };

@@ -189,8 +189,8 @@ const main = async () => {
         console.log("# Generated cert.pem and key.pem files");
 
         // Read the certificate and key files
-        const certFile = fs.readFileSync('certs/cert.pem');
-        const keyFile = fs.readFileSync('certs/key.pem');
+        const certFile = fs.readFileSync('cert.pem');
+        const keyFile = fs.readFileSync('key.pem');
         const data = fs.readFileSync('etny-securelock-test.yaml');
 
         // Create an HTTPS agent with the certificate and key
