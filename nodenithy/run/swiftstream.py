@@ -7,7 +7,9 @@ from swift_stream_service import SwiftStreamService
 try:
     print("*********************")
     print("Initializing SwiftStream Service from python...")
-    swiftStreamClient = SwiftStreamService("docker:9000", "swiftstreamadmin", "swiftstreamadmin")
+    swiftStreamClient = SwiftStreamService(
+        "docker:9000", "swiftstreamadmin", "swiftstreamadmin"
+    )
     print("Initialized SwiftStream Service successfully")
     print("*********************")
     swiftStreamClient.create_bucket("etny-nodenithy-v3")
@@ -19,14 +21,16 @@ try:
     status, content = swiftStreamClient.get_file_content("etny-nodenithy-v3", ".env")
 
     print("************************")
-    print("Status %s" % status )
+    print("Status %s" % status)
     print("Content %s" % content)
     print("************************")
 
-    status, content = swiftStreamClient.get_file_content_bytes("etny-nodenithy-v3", ".env")
+    status, content = swiftStreamClient.get_file_content_bytes(
+        "etny-nodenithy-v3", ".env"
+    )
 
     print("************************")
-    print("Status %s" % status )
+    print("Status %s" % status)
     print("Content %s" % content)
     print("************************")
 except:

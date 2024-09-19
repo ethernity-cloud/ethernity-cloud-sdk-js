@@ -1,4 +1,3 @@
-const AdmZip = require('adm-zip');
 const shell = require('shelljs');
 const fs = require('fs');
 const path = require('path');
@@ -94,7 +93,7 @@ const ENCLAVE_NAME_TRUSTEDZONE = templateName;
 
 runCommand('docker pull registry:2');
 runCommand('docker run -d --restart=always -p 5000:5000 --name registry registry:2');
-runCommand(`docker login ${process.env.DOCKER_REPO_URL} -u ${process.env.DOCKER_LOGIN} -p ${process.env.DOCKER_PASSWORD}`);
+// runCommand(`docker login ${process.env.DOCKER_REPO_URL} -u ${process.env.DOCKER_LOGIN} -p ${process.env.DOCKER_PASSWORD}`);
 
 // const CI_COMMIT_BRANCH = process.env.PROJECT_NAME;
 // aleXPRoj-securelock-v3-testnet-0.1.0...
@@ -133,11 +132,11 @@ process.chdir('trustedzone');
 // runCommand('docker tag etny-trustedzone localhost:5000/etny-trustedzone');
 // runCommand('docker push localhost:5000/etny-trustedzone');
 // runCommand('docker save etny-trustedzone:latest -o etny-trustedzone.tar');
-const zip = new AdmZip('etny-trustedzone.tar.zip');
-zip.extractAllTo('.', true);
+// const zip = new AdmZip('etny-trustedzone.tar.zip');
+// zip.extractAllTo('.', true);
 
-runCommand('docker load -i etny-trustedzone.tar');
-runCommand('docker tag etny-trustedzone:latest localhost:5000/etny-trustedzone');
+runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-trustedzone:${process.env.BLOCKCHAIN_NETWORK.toLowerCase()}`);
+runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-trustedzone:${process.env.BLOCKCHAIN_NETWORK.toLowerCase()} localhost:5000/etny-trustedzone`);
 runCommand('docker push localhost:5000/etny-trustedzone');
 
 console.log('Building validator');

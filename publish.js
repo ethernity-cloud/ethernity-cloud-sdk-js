@@ -47,7 +47,7 @@ async function prompt(question) {
     process.env.NODE_NO_WARNINGS = 1
     let result = '';
     if (!PROJECT_NAME || !BLOCKCHAIN_NETWORK || !PRIVATE_KEY || !DEVELOPER_FEE) {
-        const hasWallet = await prompt('Do you have an existing wallet? (yes/no) ');
+        const hasWallet = await prompt('Do you have an existing wallet? (yes/no) (default value: no) ') || 'no';
         console.log()
         if (hasWallet.toLowerCase() !== 'yes') {
             console.log('Without a wallet, you will not be able to publish.');

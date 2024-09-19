@@ -1,4 +1,4 @@
-FROM registry.scontain.com:5050/sconecuratedimages/services:las as initial
+FROM registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/sconecuratedimages/services:las as initial
 
 FROM scratch
 

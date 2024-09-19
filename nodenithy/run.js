@@ -213,9 +213,20 @@ const main = async () => {
         // console.log("predecessor.json:"+JSON.stringify(response.data, null, 2));
         process.env.PREDECESSOR_HASH_SECURELOCK = response.data.hash || 'EMPTY';
         writeEnv('PREDECESSOR_HASH_SECURELOCK', process.env.PREDECESSOR_HASH_SECURELOCK);
+        if (process.env.PREDECESSOR_HASH_SECURELOCK === 'EMPTY') {
+            console.log("Error: Could not update session file for securelock");
+            console.log("Please change the name/version of your project (using ecld-init or by editing .env file) and run the scripts again. Exiting.");
+            process.exit(1);
+        }
+        console.log()
+        console.log("Scone CAS registration successful.");
+        console.log()
         })
         .catch(error => {
-        console.log();
+        console.log("Scone CAS error: ", error);
+        console.log("Error: Could not update session file for securelock");
+        console.log("Please change the name/version of your project (using ecld-init or by editing .env file) and run the scripts again. Exiting.");
+        process.exit(1);
         });
     }
 
@@ -329,7 +340,7 @@ const main = async () => {
         console.log("");
 
         const opt = ["yes", "no"];
-        const choice = await promptOptions("Do you want to continue by generating the necessary certificates using the Ethernity Cloud signing service? (yes/no): ", opt, "no");
+        const choice = await promptOptions("Do you want to continue by generating the necessary certificates using the Ethernity Cloud public certificate extraction services? (yes/no) (default: no): ", opt, "no");
 
         if (choice.toLowerCase() !== 'yes') {
             console.log("Exiting.");
