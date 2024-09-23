@@ -73,7 +73,6 @@ const runDockerCommand = (service) => {
     return output.split('\n').filter(line => !/Creating|Pulling|latest|Digest/.test(line)).join('');
 };
 const main = async () => {
-
     process.env.NODE_NO_WARNINGS = 1
     const backupFiles = ['docker-compose.yml.tmpl', 'docker-compose-final.yml.tmpl'];
     backupFiles.forEach(file => {
@@ -162,24 +161,49 @@ const main = async () => {
         cert.publicKey = keys.publicKey;
         cert.serialNumber = '01';
         cert.validity.notBefore = new Date();
+        cert.validity.notBefore.setFullYear(cert.validity.notBefore.getFullYear() - 1);
         cert.validity.notAfter = new Date();
-        cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 1);
+        cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 2);
 
         const attrs = [
             {
-                name: 'commonName',
-                value: process.env.ENCLAVE_NAME_SECURELOCK || 'defaultCN'
+                name: 'countryName',
+                value: 'AU'
+            },
+            {
+                shortName: 'ST',
+                value: 'Some-State'
+            },
+            {
+                name: 'organizationName',
+                value: process.env.ENCLAVE_NAME_SECURELOCK || 'Internet Widgits Pty Ltd'
             }
         ];
-
         cert.setSubject(attrs);
         cert.setIssuer(attrs);
+
+        cert.setExtensions([
+            {
+                name: 'subjectKeyIdentifier'
+            },
+            {
+                name: 'authorityKeyIdentifier',
+                keyIdentifier: true
+            },
+            {
+                name: 'basicConstraints',
+                cA: true,
+                critical: true
+            }
+        ]);
+
+
         // TOdo: use same certificate for future entryes
         // Self-sign certificate
-        cert.sign(keys.privateKey);
+        cert.sign(keys.privateKey, forge.md.sha256.create());
 
         // PEM-format keys and cert
-        const privateKeyPem = pki.privateKeyToPem(keys.privateKey);
+        const privateKeyPem = pki.privateKeyToPem(keys.privateKey, 72, { type: 'pkcs8' });
         const certPem = pki.certificateToPem(cert);
 
         // Write to files
@@ -197,7 +221,8 @@ const main = async () => {
         const agent = new https.Agent({
         cert: certFile,
         key: keyFile,
-        rejectUnauthorized: false // This is equivalent to the `-k` option in curl
+        rejectUnauthorized: false, // This is equivalent to the `-k` option in curl
+        secureProtocol: 'TLSv1_2_method' // Ensure using TLSv1.2
         });
 
         // Perform the POST request

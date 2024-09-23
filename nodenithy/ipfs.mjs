@@ -273,7 +273,7 @@ const uploadFolderToIPFS = async (folderPath) => {
     const progressBar = multiBar.create(totalSize / 1024 / 1024, 0);
 
     for await (const file of ipfs.addAll(files.map(file => ({
-      path: file.path,
+      path: file.path.replace(/\\/g, '/'),
       content: fs.createReadStream(path.join(folderPath, file.path))
     })), { ...ipfsOptions })) {
       addedFiles.push({

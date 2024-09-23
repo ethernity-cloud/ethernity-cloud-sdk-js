@@ -36,8 +36,8 @@ function App() {
 
         await runner.run(PROJECT_NAME,
                         code,
-                         '0xe0725a669b066ce98e459BeFf51d884c207c3F34',
-                         { taskPrice: 5, cpu: 1, memory: 1, storage: 20, bandwidth: 1, duration: 1, validators: 1 });
+                         '',
+                         { taskPrice: 10, cpu: 1, memory: 1, storage: 10, bandwidth: 1, duration: 1, validators: 1 });
     };
     const connectWallet = async () => {
       if (window.ethereum) {
