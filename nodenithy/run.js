@@ -15,24 +15,19 @@ const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
 });
-const displayOptions = (options) => {
-    options.forEach((option, index) => {
-        console.log(`${index + 1}) ${option}`);
-    });
-};
 
 const promptOptions = (message, options, defaultOption) => {
     return new Promise((resolve) => {
         const askOption = () => {
-            displayOptions(options);
-            rl.question(message, (reply) => {
-                if (reply.trim() === '') {
+            rl.question(message, (answer) => {
+                const reply = answer.trim().toLowerCase();
+                if (reply === '') {
                     console.log(`No option selected. Defaulting to ${defaultOption}.`);
                     resolve(defaultOption);
-                } else if (!isNaN(reply) && reply >= 1 && reply <= options.length) {
-                    resolve(options[reply - 1]);
+                } else if (options.includes(reply)) {
+                    resolve(reply);
                 } else {
-                    console.log(`Invalid option ${reply}. Please select a valid number.`);
+                    console.log(`Invalid option "${reply}". Please enter "yes" or "no".`);
                     askOption();
                 }
             });
@@ -72,6 +67,7 @@ const runDockerCommand = (service) => {
     console.log(`Output of ${command}: ${output}`);
     return output.split('\n').filter(line => !/Creating|Pulling|latest|Digest/.test(line)).join('');
 };
+
 const main = async () => {
     process.env.NODE_NO_WARNINGS = 1
     const backupFiles = ['docker-compose.yml.tmpl', 'docker-compose-final.yml.tmpl'];
@@ -134,12 +130,25 @@ const main = async () => {
     // writeEnv('PREDECESSOR_NAME_SECURELOCK', PREDECESSOR_NAME_SECURELOCK);
 
     process.env.ENCLAVE_NAME_SECURELOCK = ENCLAVE_NAME_SECURELOCK;
-
-    const PREDECESSOR_HASH_SECURELOCK = process.env.PREDECESSOR_HASH_SECURELOCK || 'EMPTY';
+    const envPredecessor = process.env.PREDECESSOR_HASH_SECURELOCK || 'EMPTY';
+    let PREDECESSOR_HASH_SECURELOCK = 'EMPTY';
+    let PREDECESSOR_PROJECT_NAME = 'EMPTY';
+    let PREDECESSOR_VERSION = 'EMPTY';
+    if (envPredecessor !== 'EMPTY') {
+        PREDECESSOR_HASH_SECURELOCK = envPredecessor.split("$$$%$")[0];
+        PREDECESSOR_PROJECT_NAME = process.env.PREDECESSOR_HASH_SECURELOCK.split("$$$%$")[1];
+        PREDECESSOR_VERSION = process.env.PREDECESSOR_HASH_SECURELOCK.split("$$$%$")[2];
+    }
 
     console.log(`PREDECESSOR_HASH_SECURELOCK: ${PREDECESSOR_HASH_SECURELOCK}`);
+    console.log(`PREDECESSOR_PROJECT_NAME: ${PREDECESSOR_PROJECT_NAME}`);
+    console.log(`PREDECESSOR_VERSION: ${PREDECESSOR_VERSION}`);
     console.log(`MRENCLAVE_SECURELOCK: ${process.env.MRENCLAVE_SECURELOCK}`);
     console.log(`ENCLAVE_NAME_SECURELOCK: ${ENCLAVE_NAME_SECURELOCK}`);
+
+    if (PREDECESSOR_HASH_SECURELOCK !== 'EMPTY' && PREDECESSOR_PROJECT_NAME !== process.env.PROJECT_NAME && PREDECESSOR_VERSION !== process.env.VERSION) {
+        PREDECESSOR_HASH_SECURELOCK = 'EMPTY';
+    }
 
     const replacementsSecurelock = {
         PREDECESSOR: PREDECESSOR_HASH_SECURELOCK === 'EMPTY' ? `# predecessor: ${PREDECESSOR_HASH_SECURELOCK}` : `predecessor: ${PREDECESSOR_HASH_SECURELOCK}`,
@@ -212,48 +221,56 @@ const main = async () => {
 
         console.log("# Generated cert.pem and key.pem files");
 
-        // Read the certificate and key files
-        const certFile = fs.readFileSync('cert.pem');
-        const keyFile = fs.readFileSync('key.pem');
-        const data = fs.readFileSync('etny-securelock-test.yaml');
 
-        // Create an HTTPS agent with the certificate and key
-        const agent = new https.Agent({
+    }
+    // Read the certificate and key files
+    const certFile = fs.readFileSync('cert.pem');
+    const keyFile = fs.readFileSync('key.pem');
+    const data = fs.readFileSync('etny-securelock-test.yaml');
+
+    // Create an HTTPS agent with the certificate and key
+    const agent = new https.Agent({
         cert: certFile,
         key: keyFile,
         rejectUnauthorized: false, // This is equivalent to the `-k` option in curl
         secureProtocol: 'TLSv1_2_method' // Ensure using TLSv1.2
-        });
-
-        // Perform the POST request
-        await axios.post('https://scone-cas.cf:8081/session', data, {
+    });
+    // Perform the POST request
+    await axios.post('https://scone-cas.cf:8081/session', data, {
         httpsAgent: agent,
         headers: {
             'Content-Type': 'application/octet-stream'
         }
-        })
+    })
         .then(response => {
-        fs.writeFileSync('predecessor.json', JSON.stringify(response.data, null, 2));
-        console.log("# Updated session file for securelock and saved to predecessor.json");
-        // console.log("predecessor.json:"+JSON.stringify(response.data, null, 2));
-        process.env.PREDECESSOR_HASH_SECURELOCK = response.data.hash || 'EMPTY';
-        writeEnv('PREDECESSOR_HASH_SECURELOCK', process.env.PREDECESSOR_HASH_SECURELOCK);
-        if (process.env.PREDECESSOR_HASH_SECURELOCK === 'EMPTY') {
+            fs.writeFileSync('predecessor.json', JSON.stringify(response.data, null, 2));
+            console.log("# Updated session file for securelock and saved to predecessor.json");
+            // console.log("predecessor.json:"+JSON.stringify(response.data, null, 2));
+            const pred = response.data.hash || 'EMPTY';
+            if (pred !== 'EMPTY') {
+                process.env.PREDECESSOR_HASH_SECURELOCK = `${pred}$$$%$${process.env.PROJECT_NAME}$$$%$${process.env.VERSION}` || 'EMPTY';
+                writeEnv('PREDECESSOR_HASH_SECURELOCK', process.env.PREDECESSOR_HASH_SECURELOCK);
+            } else {
+                process.env.PREDECESSOR_HASH_SECURELOCK = 'EMPTY';
+                writeEnv('PREDECESSOR_HASH_SECURELOCK', process.env.PREDECESSOR_HASH_SECURELOCK);
+            }
+
+            if (process.env.PREDECESSOR_HASH_SECURELOCK === 'EMPTY') {
+                console.log("Error: Could not update session file for securelock");
+                console.log("Please change the name/version of your project (using ecld-init or by editing .env file) and run the scripts again. Exiting.");
+                process.exit(1);
+            }
+            console.log()
+            console.log("Scone CAS registration successful.");
+            console.log()
+        })
+        .catch(error => {
+            console.log("Scone CAS error: ", error);
             console.log("Error: Could not update session file for securelock");
             console.log("Please change the name/version of your project (using ecld-init or by editing .env file) and run the scripts again. Exiting.");
             process.exit(1);
-        }
-        console.log()
-        console.log("Scone CAS registration successful.");
-        console.log()
-        })
-        .catch(error => {
-        console.log("Scone CAS error: ", error);
-        console.log("Error: Could not update session file for securelock");
-        console.log("Please change the name/version of your project (using ecld-init or by editing .env file) and run the scripts again. Exiting.");
-        process.exit(1);
         });
-    }
+
 
     // const ENCLAVE_NAME_TRUSTEDZONE = generateEnclaveName(process.env.ENCLAVE_NAME_TRUSTEDZONE);
     // const PREDECESSOR_NAME_TRUSTEDZONE = generateEnclaveName(`PREDECESSOR_TRUSTEDZONE_${process.env.VERSION}_${process.env.PROJECT_NAME}`);
@@ -304,7 +321,7 @@ const main = async () => {
         if (fileContentBefore.includes('__ENCLAVE_NAME_SECURELOCK__')) {
             console.log(`__ENCLAVE_NAME_SECURELOCK__ found in ${file}`);
         } else {
-            console.log(`No __ENCLAVE_NAME_SECURELOCK__ found in ${file}`);
+            console.log(`Ok, No __ENCLAVE_NAME_SECURELOCK__ found in ${file}`);
         }
         // if (fileContentBefore.includes('__ENCLAVE_NAME_TRUSTEDZONE__')) {
         //     console.log(`__ENCLAVE_NAME_TRUSTEDZONE__ found in ${file}`);
@@ -314,7 +331,7 @@ const main = async () => {
 
         const updatedContent = fileContentBefore
             .replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK)
-            // .replace(/__ENCLAVE_NAME_TRUSTEDZONE__/g, ENCLAVE_NAME_TRUSTEDZONE);
+        // .replace(/__ENCLAVE_NAME_TRUSTEDZONE__/g, ENCLAVE_NAME_TRUSTEDZONE);
 
         fs.writeFileSync(file, updatedContent, 'utf8');
 
@@ -323,7 +340,7 @@ const main = async () => {
         if (fileContentAfter.includes('__ENCLAVE_NAME_SECURELOCK__')) {
             console.log(`__ENCLAVE_NAME_SECURELOCK__ still found in ${file}`);
         } else {
-            console.log(`No __ENCLAVE_NAME_SECURELOCK__ found in ${file}`);
+            console.log(`Ok, No __ENCLAVE_NAME_SECURELOCK__ found in ${file}`);
         }
         // if (fileContentAfter.includes('__ENCLAVE_NAME_TRUSTEDZONE__')) {
         //     console.log(`__ENCLAVE_NAME_TRUSTEDZONE__ still found in ${file}`);
@@ -345,13 +362,13 @@ const main = async () => {
     }
 
     try {
-        let output = execSync(`docker-compose run etny-securelock`, {cwd: runDir}).toString().trim();
+        let output = execSync(`docker-compose run etny-securelock`, { cwd: runDir }).toString().trim();
         console.log("Output of docker-compose run etny-securelock:");
         let lines = output.split('\n');
         let publicKeyLine = lines.find(line => line.includes('PUBLIC_KEY:'));
         let PUBLIC_KEY_SECURELOCK_RES = publicKeyLine ? publicKeyLine.replace(/.*PUBLIC_KEY:\s*/, '').trim() : '';
     } catch (error) {
-        console.log("Error: Could not fetch PUBLIC_KEY_SECURELOCK"+error);
+        console.log("Error: Could not fetch PUBLIC_KEY_SECURELOCK" + error);
         // console.error("Error: Could not fetch PUBLIC_KEY_SECURELOCK");
         PUBLIC_KEY_SECURELOCK_RES = '';
         console.log("");
@@ -382,7 +399,7 @@ const main = async () => {
 
 
             console.log('Upload docker-compose-final.yml to IPFS');
-            const dockerHash = execSync(`node ../ipfs.mjs --host "${process.env.IPFS_ENDPOINT}" --action upload --filePath docker-compose-final.yml`, {stdio: "inherit"});
+            const dockerHash = execSync(`node ../ipfs.mjs --host "${process.env.IPFS_ENDPOINT}" --action upload --filePath docker-compose-final.yml`, { stdio: "inherit" });
             if (!fs.existsSync('IPFS_DOCKER_COMPOSE_HASH.ipfs')) {
                 console.error("Error: Could not upload docker-compose-final.yml to IPFS, please try again!");
                 process.exit(1);
@@ -394,7 +411,7 @@ const main = async () => {
             await new Promise(resolve => setTimeout(resolve, 3000));
 
             console.log('Upload docker registry to IPFS');
-            const repositoryHash = execSync(`node ../ipfs.mjs --host "${process.env.IPFS_ENDPOINT}" --action upload --folderPath ${registryPath}`, {stdio: "inherit"});
+            const repositoryHash = execSync(`node ../ipfs.mjs --host "${process.env.IPFS_ENDPOINT}" --action upload --folderPath ${registryPath}`, { stdio: "inherit" });
             if (!fs.existsSync(`./IPFS_HASH.ipfs`)) {
                 console.error("Error: Could not upload registry to IPFS, please try again!");
                 process.exit(1);
@@ -456,7 +473,7 @@ const main = async () => {
     }
 
     console.log('Upload docker registry to IPFS');
-    execSync(`node ../ipfs.mjs --host "${process.env.IPFS_ENDPOINT}" --action upload --folderPath ${registryPath}`, {stdio: "inherit"});
+    execSync(`node ../ipfs.mjs --host "${process.env.IPFS_ENDPOINT}" --action upload --folderPath ${registryPath}`, { stdio: "inherit" });
     if (!fs.existsSync(`./IPFS_HASH.ipfs`)) {
         console.error("Error: Could not upload registry to IPFS, please try again!");
         process.exit(1);
@@ -466,8 +483,23 @@ const main = async () => {
     writeEnv('IPFS_HASH', process.env.IPFS_HASH);
     process.chdir(currentDir);
     console.log("Adding certificates for SECURELOCK into IMAGE REGISTRY smart contract...");
-    const res = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "" "" "" "registerSecureLockImage"`, {stdio: "inherit"});
-    console.log("Script completed successfully.");
+    let existing = false;
+    try {
+        const existingImages = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${process.env.PROJECT_NAME}" "${process.env.VERSION}" "${process.env.PRIVATE_KEY}" "registerSecureLockImage"`, { stdio: "inherit" });
+        if (existingImages.toString().trim().replace('Image hash: ', '') === process.env.IPFS_HASH) {
+            console.log("Certificates for SECURELOCK already added to IMAGE REGISTRY smart contract");
+        }
+        existing = true;
+    } catch (error) {
+        // console.error("Error: Could not add certificates for SECURELOCK into IMAGE REGISTRY smart contract");
+        // console.error(error);
+        // process.exit(1);
+    }
+
+    if (!existing) {
+        const res = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "" "" "" "registerSecureLockImage"`, { stdio: "inherit" });
+    }
+    console.log("Script completed successfully. You can start testing the application now. (eg. npm run start)");
     process.exit(0);
 };
 

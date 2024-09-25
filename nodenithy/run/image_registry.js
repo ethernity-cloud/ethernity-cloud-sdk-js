@@ -128,18 +128,19 @@ class ImageRegistry {
             );
             const receipt = await this.imageRegistryContract.provider.waitForTransaction(unicornTxn.hash);
 
-            console.log("transaction status: ", receipt.status);
-            // console.log("transaction receipt: ", unicornTxn);
+            // console.log("transaction status: ", receipt.status);
+            console.log("transaction receipt: ", unicornTxn.hash);
             if (receipt.status === 1) {
                 console.log("Adding secure lock image cert transaction was successful!");
             } else {
-                console.log("Adding secure lock image cert transaction was UNSUCCESSFUL!");
+                // console.log("receipt.status", receipt.status)
+                console.log("Image certificates already exist for this image!");
             }
             // const signedTxn = await this.acct.signTransaction(unicornTxn);
             // const receipt = await this.provider.sendTransaction(signedTxn.rawTransaction);
         } catch (e) {
             // console.error(e);
-            console.log("Adding secure lock image cert transaction was UNSUCCESSFUL!");
+            console.log("Image certificates already exist for this image!");
         }
     }
 
@@ -277,16 +278,16 @@ class ImageRegistry {
             const secureLock = fs.readFileSync("./registry/certificate.securelock.crt", 'utf8');
             // console.log("SECURELOCK:", secureLock);
             const ipfsHash = process.env.IPFS_HASH || "";
-            // console.log(`ipfsHash: ${ipfsHash}`);
+            console.log(`ipfsHash: ${ipfsHash}`);
             const ipfsDockerComposeHash = process.env.IPFS_DOCKER_COMPOSE_HASH || "";
-            // console.log(`ipfsDockerComposeHash: ${ipfsDockerComposeHash}`);
+            console.log(`ipfsDockerComposeHash: ${ipfsDockerComposeHash}`);
             const imageName = process.env.PROJECT_NAME || "";
-            // console.log(`imageName: ${imageName}`);
+            console.log(`imageName: ${imageName}`);
             const version = process.env.VERSION || "";
             const enclaveNameSecureLock = process.env.ENCLAVE_NAME_SECURELOCK || "";
-            // console.log(`enclaveNameSecureLock: ${enclaveNameSecureLock}`);
+            console.log(`enclaveNameSecureLock: ${enclaveNameSecureLock}`);
             const fee = process.env.DEVELOPER_FEE || "0";
-            // console.log(`fee: ${fee}`);
+            console.log(`fee: ${fee}`);
             await imageRegistry.addSecureLockImageCert(secureLock, ipfsHash, imageName, version, ipfsDockerComposeHash, enclaveNameSecureLock, fee);
             process.exit(0);
         }
@@ -297,6 +298,7 @@ class ImageRegistry {
         }
         console.log(`Checking image: '${projectName}' on the ${networkName} blockchain...`);
         const imageHash = (await imageRegistry._getLatestImageVersionPublicKey(projectName, version))[0];
+        console.log(`Image hash: ${imageHash}`);
         if (!imageHash) {
             console.log(`Image: '${projectName}' is available on the ${networkName} blockchain.`);
             process.exit(0);

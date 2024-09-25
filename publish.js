@@ -74,7 +74,7 @@ async function prompt(question) {
         console.log(`Available funds: ${result}`);
         console.log()
         console.log(`Checking if project name is available on ${BLOCKCHAIN_NETWORK} network and ownership...`);
-        result = execSync(`node ${scriptPath} ${BLOCKCHAIN_NETWORK} ${PROJECT_NAME} "v3" ${PRIVATE_KEY}`,).toString().trim();
+        result = execSync(`node ${scriptPath} ${BLOCKCHAIN_NETWORK} ${process.env.PROJECT_NAME} ${process.env.VERSION} ${process.env.PRIVATE_KEY}`,).toString().trim();
         console.log(result);
         console.log()
 
