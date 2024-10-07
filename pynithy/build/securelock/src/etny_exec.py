@@ -1,4 +1,5 @@
 import os.path
+from .serverless.backend import *
 
 
 def ___etny_result___(data):
@@ -17,22 +18,24 @@ class TaskStatus:
 
 
 def execute_task(payload_data, input_data):
-    return Exec(payload_data, input_data,
-                {'___etny_result___': ___etny_result___})
+    return Exec(payload_data, input_data, {"___etny_result___": ___etny_result___})
 
 
 def Exec(payload_data, input_data, globals=None, locals=None):
     try:
         if payload_data is not None:
             if input_data is not None:
-                globals['___etny_data_set___'] = input_data
+                globals["___etny_data_set___"] = input_data
                 exec(payload_data, globals, locals)
             else:
                 exec(payload_data, globals, locals)
         else:
-            return TaskStatus.PAYLOAD_NOT_DEFINED, 'Could not find the source file to execute'
+            return (
+                TaskStatus.PAYLOAD_NOT_DEFINED,
+                "Could not find the source file to execute",
+            )
 
-        return TaskStatus.SUCCESS, 'TASK EXECUTED SUCCESSFULLY'
+        return TaskStatus.SUCCESS, "TASK EXECUTED SUCCESSFULLY"
     except SystemError as e:
         return TaskStatus.SYSTEM_ERROR, e.args[0]
     except KeyError as e:
@@ -47,6 +50,7 @@ def Exec(payload_data, input_data, globals=None, locals=None):
                 return TaskStatus.BASE_EXCEPTION, e.args[0]
         except Exception as e:
             return TaskStatus.BASE_EXCEPTION, e.args[0]
+
 
 # result = Exec('./v1/src/app/payload.py', './v1/src/app/input.txt',
 #              {'etny_print': etny_print})
