@@ -1,6 +1,6 @@
 {
     "name": "ethernity-cloud-sdk-js",
-    "version": "1.0.327",
+    "version": "1.0.331",
     "description": "A package to run ethernity cloud build scripts",
     "scripts": {
         "ecld-build": "cross-env node ./node_modules/ethernity-cloud-sdk-js/build.js",

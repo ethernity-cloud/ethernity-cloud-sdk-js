@@ -146,7 +146,7 @@ class ImageRegistry {
             } else {
                 const unicornTxn = await this.imageRegistryContract.addImage(
                     ipfsHash, certContent, version, imageName, dockerComposeHash, enclaveNameSecureLock, fee);
-                console.log("Transaction: ", unicornTxn);
+                // console.log("Transaction: ", unicornTxn);
                 const receipt = await this.imageRegistryContract.provider.waitForTransaction(unicornTxn.hash);
 
                 // console.log("transaction status: ", receipt.status);

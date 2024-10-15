@@ -6,7 +6,7 @@ const serviceType = process.env.SERVICE_TYPE;
 
 if (serviceType === "Nodenithy") {
     console.log("Adding prerequisites for Nodenithy...");
-    const scriptPath = path.resolve(__dirname, 'nodenithy/build.js');
+    const scriptPath = path.resolve(__dirname, 'nodenithy/build.mjs');
     console.log(`Running script: ${scriptPath}`);
     execSync(`node ${scriptPath}`, { stdio: 'inherit' });
     console.log(`Build script finished. You can now proceed to publish: npm run ecld-publish.`);
