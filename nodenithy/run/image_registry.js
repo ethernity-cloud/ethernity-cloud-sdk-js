@@ -132,7 +132,7 @@ class ImageRegistry {
                         nonce: nonce,
                         gasPrice: gasPrice,
                     });
-                console.log("Transaction: ", unicornTxn);
+                // console.log("Transaction: ", unicornTxn);
                 const receipt = await this.imageRegistryContract.provider.waitForTransaction(unicornTxn.hash);
 
                 // console.log("transaction status: ", receipt.status);
