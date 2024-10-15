@@ -20,7 +20,7 @@ function setVars(network = "") {
         IMAGE_REGISTRY_ADDRESS = "0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31";
     } else if (BLOCKCHAIN_NETWORK.includes("Polygon")) {
         if (BLOCKCHAIN_NETWORK.includes("Mainnet")) {
-            NETWORK_RPC = "https://polygon-pokt.nodies.app";
+            NETWORK_RPC = "https://polygon-rpc.com";
             IMAGE_REGISTRY_ADDRESS = "0x689f3806874d3c8A973f419a4eB24e6fBA7E830F";
             CHAIN_ID = 137;
             GAS = 20000000;

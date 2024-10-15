@@ -259,6 +259,18 @@ const main = async () => {
     writeEnv("DOCKER_LOGIN", "");
     writeEnv("DOCKER_PASSWORD", "");
   }
+  // write TRUSTED_ZONE_IMAGE {token}_{name}{networktype} with the following rules:
+  // - token should be ecld if network is polygon, etny if network is bloxberg
+  // - name should be serviceType.toLowerCase()
+  // - networktype should be "" if network contains 'mainnet' else '_testnet'
+  writeEnv(
+    "TRUSTED_ZONE_IMAGE",
+    `${blockchainNetwork.includes("Polygon") ? "ecld" : "etny"
+    }-${serviceType.toLowerCase()}${blockchainNetwork.includes("Mainnet") ? "" : "-testnet"
+    }`,
+  );
+
+
   writeEnv("BLOCKCHAIN_NETWORK", blockchainNetwork.replace(/ /g, "_"));
   writeEnv("IPFS_ENDPOINT", customUrl);
   writeEnv("IPFS_TOKEN", ipfsToken || "");

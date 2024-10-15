@@ -1,7 +1,8 @@
-const shell = require('shelljs');
-const fs = require('fs');
-const path = require('path');
-require('dotenv').config();
+import shell from 'shelljs';
+import fs from 'fs';
+import path from 'path';
+import dotenv from 'dotenv';
+dotenv.config();
 
 const VERSION = process.env.VERSION;
 console.log(`Building ${VERSION}`);
@@ -24,7 +25,16 @@ const writeEnv = (key, value) => {
 
   fs.writeFileSync(envFile, envContent, 'utf8');
 };
-
+// runner name: [smart contract address, image registry address, rpc url, chainid]
+export const ECRunner = {
+  'etny-pynithy-testnet': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c', '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31', 'https://core.bloxberg.org', 8995],
+  'etny-nodenithy-testnet': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c', '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31', 'https://core.bloxberg.org', 8995],
+  'etny-pynithy': ['0x549A6E06BB2084100148D50F51CF77a3436C3Ae7', '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31', 'https://core.bloxberg.org', 8995],
+  'etny-nodenithy': ['0x549A6E06BB2084100148D50F51CF77a3436C3Ae7', '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31', 'https://core.bloxberg.org', 8995],
+  'ecld-nodenithy-testnet': ['0x4274b1188ABCfa0d864aFdeD86bF9545B020dCDf', '0xF7F4eEb3d9a64387F4AcEb6d521b948E6E2fB049', 'https://rpc-mumbai.matic.today', 80001],
+  'ecld-pynithy': ['0x439945BE73fD86fcC172179021991E96Beff3Cc4', '0x689f3806874d3c8A973f419a4eB24e6fBA7E830F', 'https://polygon-rpc.com', 137],
+  'ecld-nodenithy': ['0x439945BE73fD86fcC172179021991E96Beff3Cc4', '0x689f3806874d3c8A973f419a4eB24e6fBA7E830F', 'https://polygon-rpc.com', 137]
+};
 
 const runCommand = (command, canPass = false) => {
   if (shell.exec(command).code !== 0 && !canPass) {
@@ -76,18 +86,9 @@ fs.readdirSync(srcDir).forEach(file => {
 
 process.chdir(buildDir);
 
-let templateName = "";
-if (process.env.BLOCKCHAIN_NETWORK === 'Bloxberg_Testnet') {
-  templateName = 'etny-nodenithy-testnet';
-} else if (process.env.BLOCKCHAIN_NETWORK === 'Bloxberg_Mainnet') {
-  templateName = 'etny-nodenithy';
-} else if (process.env.BLOCKCHAIN_NETWORK === 'Polygon_Mainnet') {
-  templateName = 'ecld-nodenithy';
-} else if (process.env.BLOCKCHAIN_NETWORK === 'Polygon_Amoy_Testnet') {
-  templateName = 'ecld-nodenithy-testnet';
-} else {
-  templateName = 'etny-nodenithy-testnet';
-}
+let templateName = process.env.TRUSTED_ZONE_IMAGE || 'etny-nodenithy-testnet';
+
+const isMainnet = !templateName.includes('testnet');
 
 const ENCLAVE_NAME_TRUSTEDZONE = templateName;
 
@@ -105,7 +106,12 @@ console.log('Building etny-securelock');
 process.chdir('securelock');
 // runCommand(`cat Dockerfile.tmpl | sed s/"__ENCLAVE_NAME_SECURELOCK__"/"${ENCLAVE_NAME_SECURELOCK}"/g > Dockerfile`);
 const dockerfileSecureTemplate = fs.readFileSync('Dockerfile.tmpl', 'utf8');
-const dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__BUCKET_NAME__/g, templateName+"-v3");
+const dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]);
+
+if (isMainnet) {
+  fs.writeFileSync('Dockerfile', dockerfileSecureContent.replace('# RUN scone-signer sign --key=/enclave-key.pem --env --production /usr/bin/node', 'RUN scone-signer sign --key=/enclave-key.pem --env --production /usr/bin/node'));
+}
+
 fs.writeFileSync('Dockerfile', dockerfileSecureContent);
 
 
@@ -139,19 +145,26 @@ runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-
 runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-trustedzone:${process.env.BLOCKCHAIN_NETWORK.toLowerCase()} localhost:5000/etny-trustedzone`);
 runCommand('docker push localhost:5000/etny-trustedzone');
 
-console.log('Building validator');
-process.chdir('../validator');
-runCommand('docker build -t etny-validator:latest .');
-runCommand('docker tag etny-validator localhost:5000/etny-validator');
-runCommand('docker push localhost:5000/etny-validator');
-// runCommand('docker save etny-validator:latest -o etny-validator.tar');
+if (isMainnet) {
+  console.log('Building validator');
+  process.chdir('../validator');
+  // runCommand('docker build -t etny-validator:latest .');
+  // runCommand('docker tag etny-validator localhost:5000/etny-validator');
+  // runCommand('docker push localhost:5000/etny-validator');
+  runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-validator:${process.env.BLOCKCHAIN_NETWORK.toLowerCase()}`);
+  runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-validator:${process.env.BLOCKCHAIN_NETWORK.toLowerCase()} localhost:5000/etny-validator`);
+  runCommand('docker push localhost:5000/etny-validator');
+}
+
 
 console.log('Building etny-las');
 process.chdir('../las');
-runCommand('docker build -t etny-las .');
-runCommand('docker tag etny-las localhost:5000/etny-las');
+// runCommand('docker build -t etny-las .');
+// runCommand('docker tag etny-las localhost:5000/etny-las');
+// runCommand('docker push localhost:5000/etny-las');
+runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-las:${process.env.BLOCKCHAIN_NETWORK.toLowerCase()}`);
+runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-las:${process.env.BLOCKCHAIN_NETWORK.toLowerCase()} localhost:5000/etny-las`);
 runCommand('docker push localhost:5000/etny-las');
-// runCommand('docker save etny-las:latest -o etny-las.tar');
 
 
 process.chdir(currentDir);

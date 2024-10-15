@@ -54,6 +54,11 @@ const writeEnv = (key, value) => {
 
     fs.writeFileSync(envFile, envContent);
 };
+
+let templateName = process.env.TRUSTED_ZONE_IMAGE || 'etny-nodenithy-testnet';
+
+const isMainnet = !templateName.includes('testnet');
+
 const currentDir = process.cwd();
 console.log(`currentDir: ${currentDir}`);
 const runDir = `${currentDir}/node_modules/ethernity-cloud-sdk-js/nodenithy/run`;
@@ -85,12 +90,12 @@ const main = async () => {
     console.log(`MRENCLAVE_SECURELOCK: ${process.env.MRENCLAVE_SECURELOCK}`);
     // process.env.MRENCLAVE_TRUSTEDZONE = runDockerCommand('etny-trustedzone');
     // console.log(`MRENCLAVE_TRUSTEDZONE: ${process.env.MRENCLAVE_TRUSTEDZONE}`);
-    process.env.MRENCLAVE_VALIDATOR = runDockerCommand('etny-validator');
-    console.log(`MRENCLAVE_VALIDATOR: ${process.env.MRENCLAVE_VALIDATOR}`);
+    // process.env.MRENCLAVE_VALIDATOR = runDockerCommand('etny-validator');
+    // console.log(`MRENCLAVE_VALIDATOR: ${process.env.MRENCLAVE_VALIDATOR}`);
 
     writeEnv('MRENCLAVE_SECURELOCK', process.env.MRENCLAVE_SECURELOCK);
     // writeEnv('MRENCLAVE_TRUSTEDZONE', process.env.MRENCLAVE_TRUSTEDZONE);
-    writeEnv('MRENCLAVE_VALIDATOR', process.env.MRENCLAVE_VALIDATOR);
+    // writeEnv('MRENCLAVE_VALIDATOR', process.env.MRENCLAVE_VALIDATOR);
 
     const generateEnclaveName = (name) => {
         return name.toUpperCase().replace(/\//g, '_').replace(/-/g, '_');
@@ -106,6 +111,9 @@ const main = async () => {
         for (const [key, value] of Object.entries(replacements)) {
             const regex = new RegExp(`__${key}__`, 'g');
             content = content.replace(regex, value);
+        }
+        if (isMainnet) {
+            content = content.replace(", debug-mode", "").replace('ignore_advisories: ["INTEL-SA-00220", "INTEL-SA-00270", "INTEL-SA-00293", "INTEL-SA-00320", "INTEL-SA-00329", "INTEL-SA-00334", "INTEL-SA-00381", "INTEL-SA-00389", "INTEL-SA-00477", "INTEL-SA-00614", "INTEL-SA-00615", "INTEL-SA-00617", "INTEL-SA-00828"]', '');
         }
 
         fs.writeFileSync(outputFile, content);
@@ -156,6 +164,7 @@ const main = async () => {
         ENCLAVE_NAME: ENCLAVE_NAME_SECURELOCK
     };
     processYamlTemplate('etny-securelock-test.yaml.tpl', 'etny-securelock-test.yaml', replacementsSecurelock);
+
 
     // don't generate new keys if PREDECESSOR_HASH_SECURELOCK is not empty and the key.pem and cert.pem files exist
     if (PREDECESSOR_HASH_SECURELOCK !== 'EMPTY' && fs.existsSync('key.pem') && fs.existsSync('cert.pem')) {
@@ -323,15 +332,19 @@ const main = async () => {
         } else {
             console.log(`Ok, No __ENCLAVE_NAME_SECURELOCK__ found in ${file}`);
         }
-        // if (fileContentBefore.includes('__ENCLAVE_NAME_TRUSTEDZONE__')) {
-        //     console.log(`__ENCLAVE_NAME_TRUSTEDZONE__ found in ${file}`);
-        // } else {
-        //     console.log(`No __ENCLAVE_NAME_TRUSTEDZONE__ found in ${file}`);
-        // }
+        if (fileContentBefore.includes('__ENCLAVE_NAME_TRUSTEDZONE__')) {
+            console.log(`__ENCLAVE_NAME_TRUSTEDZONE__ found in ${file}`);
+        } else {
+            console.log(`No __ENCLAVE_NAME_TRUSTEDZONE__ found in ${file}`);
+        }
 
+        let ENCLAVE_NAME_TRUSTEDZONE = 'etny-nodenithy-trustedzone-v3-testnet-0.0.8'
+        if (isMainnet) {
+            ENCLAVE_NAME_TRUSTEDZONE = 'ecld-nodenithy-trustedzone-v3-3.0.0'
+        }
         const updatedContent = fileContentBefore
             .replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK)
-        // .replace(/__ENCLAVE_NAME_TRUSTEDZONE__/g, ENCLAVE_NAME_TRUSTEDZONE);
+            .replace(/__ENCLAVE_NAME_TRUSTEDZONE__/g, ENCLAVE_NAME_TRUSTEDZONE);
 
         fs.writeFileSync(file, updatedContent, 'utf8');
 
@@ -342,11 +355,11 @@ const main = async () => {
         } else {
             console.log(`Ok, No __ENCLAVE_NAME_SECURELOCK__ found in ${file}`);
         }
-        // if (fileContentAfter.includes('__ENCLAVE_NAME_TRUSTEDZONE__')) {
-        //     console.log(`__ENCLAVE_NAME_TRUSTEDZONE__ still found in ${file}`);
-        // } else {
-        //     console.log(`No __ENCLAVE_NAME_TRUSTEDZONE__ found in ${file}`);
-        // }
+        if (fileContentAfter.includes('__ENCLAVE_NAME_TRUSTEDZONE__')) {
+            console.log(`__ENCLAVE_NAME_TRUSTEDZONE__ still found in ${file}`);
+        } else {
+            console.log(`No __ENCLAVE_NAME_TRUSTEDZONE__ found in ${file}`);
+        }
 
         console.log();
     });
@@ -454,7 +467,7 @@ const main = async () => {
     }
 
     // const scriptPath = path.resolve(__dirname, '/image_registry.js');
-    const trustedZoneCert = execSync(`node ./image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "etny-nodenithy" "v3" "" "getTrustedZoneCert"`).toString().trim();
+    const trustedZoneCert = execSync(`node ./image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" ${templateName} "v3" "" "getTrustedZoneCert"`).toString().trim();
 
     console.log("trustedZoneCert: ", trustedZoneCert);
 
