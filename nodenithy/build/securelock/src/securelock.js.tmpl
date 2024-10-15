@@ -245,7 +245,7 @@ class EtnySecureLock {
     async getLatestTrustedZoneImageCertPublicKey() {
         try {
             console.log('Getting the public key of the trusted zone enclave');
-            this.trustedZonePublicKey = (await this.image_registry.getLatestTrustedZoneImageCertPublicKey('etny-nodenithy-testnet', 'v3'))[1];
+            this.trustedZonePublicKey = (await this.image_registry.getLatestTrustedZoneImageCertPublicKey("__TRUSTED_ZONE_IMAGE__", 'v3'))[1];
             console.log('Public key of the TrustedZone enclave from smart contract:', this.trustedZonePublicKey);
         } catch (e) {
             console.log('getLatestTrustedZoneImageCertPublicKey', e);

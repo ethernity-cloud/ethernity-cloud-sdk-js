@@ -106,14 +106,18 @@ console.log('Building etny-securelock');
 process.chdir('securelock');
 // runCommand(`cat Dockerfile.tmpl | sed s/"__ENCLAVE_NAME_SECURELOCK__"/"${ENCLAVE_NAME_SECURELOCK}"/g > Dockerfile`);
 const dockerfileSecureTemplate = fs.readFileSync('Dockerfile.tmpl', 'utf8');
-const dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]);
+const dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]).replace(/__TRUSTED_ZONE_IMAGE__/g, templateName);
+
+fs.writeFileSync('Dockerfile', dockerfileSecureContent);
+
 let imagesTag = process.env.BLOCKCHAIN_NETWORK.toLowerCase();
+
 if (isMainnet) {
   fs.writeFileSync('Dockerfile', dockerfileSecureContent.replace('# RUN scone-signer sign --key=/enclave-key.pem --env --production /usr/bin/node', 'RUN scone-signer sign --key=/enclave-key.pem --env --production /usr/bin/node'));
   imagesTag = process.env.BLOCKCHAIN_NETWORK.split("_")[0].toLowerCase()
 }
 
-fs.writeFileSync('Dockerfile', dockerfileSecureContent);
+
 
 
 runCommand(`docker build --build-arg ENCLAVE_NAME_SECURELOCK=${ENCLAVE_NAME_SECURELOCK} -t etny-securelock:latest .`);

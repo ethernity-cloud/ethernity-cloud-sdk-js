@@ -119,23 +119,52 @@ class ImageRegistry {
     async addSecureLockImageCert(certContent, ipfsHash, imageName, version, dockerComposeHash, enclaveNameSecureLock, fee) {
         try {
             console.log("Adding secure lock image cert to image registry");
+            // Fetch current nonce
+            if (BLOCKCHAIN_NETWORK.includes("Polygon")) {
+                console.log("Polygon Mainnet");
+                let nonce = await this.provider.getTransactionCount(this.acct.address, 'pending');
+                // Fetch current gas price and increase it
+                let gasPrice = await this.provider.getGasPrice();
+                gasPrice = gasPrice.mul(ethers.BigNumber.from(110)).div(ethers.BigNumber.from(100));
+                const unicornTxn = await this.imageRegistryContract.addImage(
+                    ipfsHash, certContent, version, imageName, dockerComposeHash, enclaveNameSecureLock, fee,
+                    {
+                        nonce: nonce,
+                        gasPrice: gasPrice,
+                    });
+                console.log("Transaction: ", unicornTxn);
+                const receipt = await this.imageRegistryContract.provider.waitForTransaction(unicornTxn.hash);
+
+                // console.log("transaction status: ", receipt.status);
+                console.log("transaction receipt: ", unicornTxn.hash);
+                if (receipt.status === 1) {
+                    console.log("Adding secure lock image cert transaction was successful!");
+                } else {
+                    // console.log("receipt.status", receipt.status)
+                    console.log("Image certificates already exist for this image!");
+                }
+            } else {
+                const unicornTxn = await this.imageRegistryContract.addImage(
+                    ipfsHash, certContent, version, imageName, dockerComposeHash, enclaveNameSecureLock, fee);
+                console.log("Transaction: ", unicornTxn);
+                const receipt = await this.imageRegistryContract.provider.waitForTransaction(unicornTxn.hash);
+
+                // console.log("transaction status: ", receipt.status);
+                console.log("transaction receipt: ", unicornTxn.hash);
+                if (receipt.status === 1) {
+                    console.log("Adding secure lock image cert transaction was successful!");
+                } else {
+                    // console.log("receipt.status", receipt.status)
+                    console.log("Image certificates already exist for this image!");
+                }
+            }
+
             // console.log("this.acct.address: ", this.acct.address);
             // console.log("private key", PRIVATE_KEY);
             // console.log('Getting nonce');
             // const nonce = await this.imageRegistryContract.provider.getTransactionCount(this.acct.address);
-            const unicornTxn = await this.imageRegistryContract.addImage(
-                ipfsHash, certContent, version, imageName, dockerComposeHash, enclaveNameSecureLock, fee
-            );
-            const receipt = await this.imageRegistryContract.provider.waitForTransaction(unicornTxn.hash);
 
-            // console.log("transaction status: ", receipt.status);
-            console.log("transaction receipt: ", unicornTxn.hash);
-            if (receipt.status === 1) {
-                console.log("Adding secure lock image cert transaction was successful!");
-            } else {
-                // console.log("receipt.status", receipt.status)
-                console.log("Image certificates already exist for this image!");
-            }
+
             // const signedTxn = await this.acct.signTransaction(unicornTxn);
             // const receipt = await this.provider.sendTransaction(signedTxn.rawTransaction);
         } catch (e) {
