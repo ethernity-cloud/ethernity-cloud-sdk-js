@@ -107,9 +107,10 @@ process.chdir('securelock');
 // runCommand(`cat Dockerfile.tmpl | sed s/"__ENCLAVE_NAME_SECURELOCK__"/"${ENCLAVE_NAME_SECURELOCK}"/g > Dockerfile`);
 const dockerfileSecureTemplate = fs.readFileSync('Dockerfile.tmpl', 'utf8');
 const dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]);
-
+let imagesTag = process.env.BLOCKCHAIN_NETWORK.toLowerCase();
 if (isMainnet) {
   fs.writeFileSync('Dockerfile', dockerfileSecureContent.replace('# RUN scone-signer sign --key=/enclave-key.pem --env --production /usr/bin/node', 'RUN scone-signer sign --key=/enclave-key.pem --env --production /usr/bin/node'));
+  imagesTag = process.env.BLOCKCHAIN_NETWORK.split("_")[0].toLowerCase()
 }
 
 fs.writeFileSync('Dockerfile', dockerfileSecureContent);
@@ -141,8 +142,8 @@ process.chdir('trustedzone');
 // const zip = new AdmZip('etny-trustedzone.tar.zip');
 // zip.extractAllTo('.', true);
 
-runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-trustedzone:${process.env.BLOCKCHAIN_NETWORK.toLowerCase()}`);
-runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-trustedzone:${process.env.BLOCKCHAIN_NETWORK.toLowerCase()} localhost:5000/etny-trustedzone`);
+runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-trustedzone:${imagesTag}`);
+runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-trustedzone:${imagesTag} localhost:5000/etny-trustedzone`);
 runCommand('docker push localhost:5000/etny-trustedzone');
 
 if (isMainnet) {
@@ -151,8 +152,8 @@ if (isMainnet) {
   // runCommand('docker build -t etny-validator:latest .');
   // runCommand('docker tag etny-validator localhost:5000/etny-validator');
   // runCommand('docker push localhost:5000/etny-validator');
-  runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-validator:${process.env.BLOCKCHAIN_NETWORK.toLowerCase()}`);
-  runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-validator:${process.env.BLOCKCHAIN_NETWORK.toLowerCase()} localhost:5000/etny-validator`);
+  runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-validator:${imagesTag}`);
+  runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-validator:${imagesTag} localhost:5000/etny-validator`);
   runCommand('docker push localhost:5000/etny-validator');
 }
 
@@ -162,8 +163,8 @@ process.chdir('../las');
 // runCommand('docker build -t etny-las .');
 // runCommand('docker tag etny-las localhost:5000/etny-las');
 // runCommand('docker push localhost:5000/etny-las');
-runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-las:${process.env.BLOCKCHAIN_NETWORK.toLowerCase()}`);
-runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-las:${process.env.BLOCKCHAIN_NETWORK.toLowerCase()} localhost:5000/etny-las`);
+runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-las:${imagesTag}`);
+runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-las:${imagesTag} localhost:5000/etny-las`);
 runCommand('docker push localhost:5000/etny-las');
 
 
