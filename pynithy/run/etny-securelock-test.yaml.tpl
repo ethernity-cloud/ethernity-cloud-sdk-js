@@ -4,9 +4,9 @@ __PREDECESSOR__
 
 security:
   attestation:
-    tolerate: [debug-mode, hyperthreading, outdated-tcb, software-hardening-needed]
+    tolerate: [debug-mode, hyperthreading, outdated-tcb, software-hardening-needed, debug-mode]
     ignore_advisories: "*"
-    
+
 services:
    - name: application
      image_name: application_image

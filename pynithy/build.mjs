@@ -47,7 +47,7 @@ const runCommand = (command, canPass = false) => {
 shell.rm('-rf', './registry');
 const currentDir = process.cwd();
 // console.log(`current_dir: ${currentDir}`);
-const buildDir = path.join(currentDir, 'node_modules/ethernity-cloud-sdk-js/nodenithy/build');
+const buildDir = path.join(currentDir, 'node_modules/ethernity-cloud-sdk-js/pynithy/build');
 // console.log(`build_dir: ${buildDir}`);
 
 const dockerPS = shell.exec('docker ps --filter name=registry -q', { silent: true }).stdout.trim();
@@ -86,7 +86,7 @@ fs.readdirSync(srcDir).forEach(file => {
 
 process.chdir(buildDir);
 
-let templateName = process.env.TRUSTED_ZONE_IMAGE || 'etny-nodenithy-testnet';
+let templateName = process.env.TRUSTED_ZONE_IMAGE || 'etny-pynithy-testnet';
 
 const isMainnet = !templateName.includes('testnet');
 
@@ -146,20 +146,20 @@ process.chdir('trustedzone');
 // const zip = new AdmZip('etny-trustedzone.tar.zip');
 // zip.extractAllTo('.', true);
 
-runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-trustedzone:${imagesTag}`);
-runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-trustedzone:${imagesTag} localhost:5000/etny-trustedzone`);
+runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-trustedzone:py_${imagesTag}`);
+runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-trustedzone:py_${imagesTag} localhost:5000/etny-trustedzone`);
 runCommand('docker push localhost:5000/etny-trustedzone');
 
-if (isMainnet) {
-  console.log('Building validator');
-  process.chdir('../validator');
-  // runCommand('docker build -t etny-validator:latest .');
-  // runCommand('docker tag etny-validator localhost:5000/etny-validator');
-  // runCommand('docker push localhost:5000/etny-validator');
-  runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-validator:${imagesTag}`);
-  runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-validator:${imagesTag} localhost:5000/etny-validator`);
-  runCommand('docker push localhost:5000/etny-validator');
-}
+// if (isMainnet) {
+//   console.log('Building validator');
+//   process.chdir('../validator');
+//   // runCommand('docker build -t etny-validator:latest .');
+//   // runCommand('docker tag etny-validator localhost:5000/etny-validator');
+//   // runCommand('docker push localhost:5000/etny-validator');
+//   runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-validator:py_${imagesTag}`);
+//   runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-validator:py_${imagesTag} localhost:5000/etny-validator`);
+//   runCommand('docker push localhost:5000/etny-validator');
+// }
 
 
 console.log('Building etny-las');
@@ -167,8 +167,8 @@ process.chdir('../las');
 // runCommand('docker build -t etny-las .');
 // runCommand('docker tag etny-las localhost:5000/etny-las');
 // runCommand('docker push localhost:5000/etny-las');
-runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-las:${imagesTag}`);
-runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-las:${imagesTag} localhost:5000/etny-las`);
+runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-las:py_${imagesTag}`);
+runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-las:py_${imagesTag} localhost:5000/etny-las`);
 runCommand('docker push localhost:5000/etny-las');
 
 

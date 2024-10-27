@@ -54,6 +54,11 @@ const writeEnv = (key, value) => {
 
     fs.writeFileSync(envFile, envContent);
 };
+
+let templateName = process.env.TRUSTED_ZONE_IMAGE || 'etny-nodenithy-testnet';
+
+const isMainnet = !templateName.includes('testnet');
+
 const currentDir = process.cwd();
 console.log(`currentDir: ${currentDir}`);
 const runDir = `${currentDir}/node_modules/ethernity-cloud-sdk-js/pynithy/run`;
@@ -83,11 +88,14 @@ const main = async () => {
 
     process.env.MRENCLAVE_SECURELOCK = runDockerCommand('etny-securelock');
     console.log(`MRENCLAVE_SECURELOCK: ${process.env.MRENCLAVE_SECURELOCK}`);
-    process.env.MRENCLAVE_VALIDATOR = runDockerCommand('etny-validator');
-    console.log(`MRENCLAVE_VALIDATOR: ${process.env.MRENCLAVE_VALIDATOR}`);
+    // process.env.MRENCLAVE_TRUSTEDZONE = runDockerCommand('etny-trustedzone');
+    // console.log(`MRENCLAVE_TRUSTEDZONE: ${process.env.MRENCLAVE_TRUSTEDZONE}`);
+    // process.env.MRENCLAVE_VALIDATOR = runDockerCommand('etny-validator');
+    // console.log(`MRENCLAVE_VALIDATOR: ${process.env.MRENCLAVE_VALIDATOR}`);
 
     writeEnv('MRENCLAVE_SECURELOCK', process.env.MRENCLAVE_SECURELOCK);
-    writeEnv('MRENCLAVE_VALIDATOR', process.env.MRENCLAVE_VALIDATOR);
+    // writeEnv('MRENCLAVE_TRUSTEDZONE', process.env.MRENCLAVE_TRUSTEDZONE);
+    // writeEnv('MRENCLAVE_VALIDATOR', process.env.MRENCLAVE_VALIDATOR);
 
     const generateEnclaveName = (name) => {
         return name.toUpperCase().replace(/\//g, '_').replace(/-/g, '_');
@@ -104,8 +112,13 @@ const main = async () => {
             const regex = new RegExp(`__${key}__`, 'g');
             content = content.replace(regex, value);
         }
+        if (isMainnet) {
+            content = content.replace(", debug-mode", "");
+        }
 
         fs.writeFileSync(outputFile, content);
+        // console.log(`Contents of ${outputFile}:`);
+        // console.log(content);
 
         console.log("Checking for remaining placeholders:");
         const remainingPlaceholders = content.match(/__.*__/g);
@@ -116,9 +129,13 @@ const main = async () => {
         }
     };
 
+    // const ENCLAVE_NAME_SECURELOCK = generateEnclaveName(process.env.ENCLAVE_NAME_SECURELOCK);
     const ENCLAVE_NAME_SECURELOCK = process.env.ENCLAVE_NAME_SECURELOCK;
+    // const PREDECESSOR_NAME_SECURELOCK = generateEnclaveName(`PREDECESSOR_SECURELOCK_${process.env.VERSION}_${process.env.PROJECT_NAME}`);
 
     console.log(`\nENCLAVE_NAME_SECURELOCK: ${ENCLAVE_NAME_SECURELOCK}`);
+    // console.log(`PREDECESSOR_NAME_SECURELOCK: ${PREDECESSOR_NAME_SECURELOCK}`);
+    // writeEnv('PREDECESSOR_NAME_SECURELOCK', PREDECESSOR_NAME_SECURELOCK);
 
     process.env.ENCLAVE_NAME_SECURELOCK = ENCLAVE_NAME_SECURELOCK;
     const envPredecessor = process.env.PREDECESSOR_HASH_SECURELOCK || 'EMPTY';
@@ -147,6 +164,7 @@ const main = async () => {
         ENCLAVE_NAME: ENCLAVE_NAME_SECURELOCK
     };
     processYamlTemplate('etny-securelock-test.yaml.tpl', 'etny-securelock-test.yaml', replacementsSecurelock);
+
 
     // don't generate new keys if PREDECESSOR_HASH_SECURELOCK is not empty and the key.pem and cert.pem files exist
     if (PREDECESSOR_HASH_SECURELOCK !== 'EMPTY' && fs.existsSync('key.pem') && fs.existsSync('cert.pem')) {
@@ -236,6 +254,7 @@ const main = async () => {
         .then(response => {
             fs.writeFileSync('predecessor.json', JSON.stringify(response.data, null, 2));
             console.log("# Updated session file for securelock and saved to predecessor.json");
+            // console.log("predecessor.json:"+JSON.stringify(response.data, null, 2));
             const pred = response.data.hash || 'EMPTY';
             if (pred !== 'EMPTY') {
                 process.env.PREDECESSOR_HASH_SECURELOCK = `${pred}$$$%$${process.env.PROJECT_NAME}$$$%$${process.env.VERSION}` || 'EMPTY';
@@ -261,6 +280,37 @@ const main = async () => {
             process.exit(1);
         });
 
+
+    // const ENCLAVE_NAME_TRUSTEDZONE = generateEnclaveName(process.env.ENCLAVE_NAME_TRUSTEDZONE);
+    // const PREDECESSOR_NAME_TRUSTEDZONE = generateEnclaveName(`PREDECESSOR_TRUSTEDZONE_${process.env.VERSION}_${process.env.PROJECT_NAME}`);
+
+
+
+    // console.log(`\ENCLAVE_NAME_TRUSTEDZONE: ${ENCLAVE_NAME_TRUSTEDZONE}`);
+    // console.log(`PREDECESSOR_NAME_TRUSTEDZONE: ${PREDECESSOR_NAME_TRUSTEDZONE}`);
+    // writeEnv('PREDECESSOR_NAME_TRUSTEDZONE', PREDECESSOR_NAME_TRUSTEDZONE);
+
+    // process.env.ENCLAVE_NAME_TRUSTEDZONE = ENCLAVE_NAME_TRUSTEDZONE;
+
+    // const PREDECESSOR_HASH_TRUSTEDZONE = process.env[PREDECESSOR_NAME_TRUSTEDZONE] || 'EMPTY';
+
+    // console.log(`PREDECESSOR_HASH_TRUSTEDZONE: ${PREDECESSOR_HASH_TRUSTEDZONE}`);
+    // console.log(`MRENCLAVE_TRUSTEDZONE: ${process.env.MRENCLAVE_TRUSTEDZONE}`);
+    // console.log(`ENCLAVE_NAME_TRUSTEDZONE: ${ENCLAVE_NAME_TRUSTEDZONE}`);
+
+    // const replacementsTrustedzone = {
+    //     PREDECESSOR: PREDECESSOR_HASH_TRUSTEDZONE === 'EMPTY' ? `# predecessor: ${PREDECESSOR_HASH_TRUSTEDZONE}` : `predecessor: ${PREDECESSOR_HASH_TRUSTEDZONE}`,
+    //     MRENCLAVE: process.env.MRENCLAVE_TRUSTEDZONE,
+    //     ENCLAVE_NAME: ENCLAVE_NAME_TRUSTEDZONE,
+    //     MRENCLAVE_VALIDATOR: process.env.MRENCLAVE_VALIDATOR
+    // };
+
+    // processYamlTemplate('etny-trustedzone-test.yaml.tpl', 'etny-trustedzone-test.yaml', replacementsTrustedzone);
+
+    // revert 'docker-compose.yml', 'docker-compose-final.yml' to the backed up ones from 'docker-compose.yml.tmpl', 'docker-compose-final.yml.tmpl'
+
+
+
     console.log("# Update docker-compose files");
 
     const files = ['docker-compose.yml', 'docker-compose-final.yml'];
@@ -273,6 +323,7 @@ const main = async () => {
 
         console.log(`Processing ${file}`);
         console.log(`ENCLAVE_NAME_SECURELOCK: ${ENCLAVE_NAME_SECURELOCK}`);
+        // console.log(`ENCLAVE_NAME_TRUSTEDZONE: ${ENCLAVE_NAME_TRUSTEDZONE}`);
 
         console.log("Checking for placeholders before replacement:");
         const fileContentBefore = fs.readFileSync(file, 'utf8');
@@ -281,9 +332,19 @@ const main = async () => {
         } else {
             console.log(`Ok, No __ENCLAVE_NAME_SECURELOCK__ found in ${file}`);
         }
+        if (fileContentBefore.includes('__ENCLAVE_NAME_TRUSTEDZONE__')) {
+            console.log(`__ENCLAVE_NAME_TRUSTEDZONE__ found in ${file}`);
+        } else {
+            console.log(`No __ENCLAVE_NAME_TRUSTEDZONE__ found in ${file}`);
+        }
 
+        let ENCLAVE_NAME_TRUSTEDZONE = 'etny-pynithy-trustedzone-v3-testnet-0.1.12'
+        if (isMainnet) {
+            ENCLAVE_NAME_TRUSTEDZONE = 'ecld-pynithy-trustedzone-v3-3.0.0'
+        }
         const updatedContent = fileContentBefore
             .replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK)
+            .replace(/__ENCLAVE_NAME_TRUSTEDZONE__/g, ENCLAVE_NAME_TRUSTEDZONE);
 
         fs.writeFileSync(file, updatedContent, 'utf8');
 
@@ -294,9 +355,17 @@ const main = async () => {
         } else {
             console.log(`Ok, No __ENCLAVE_NAME_SECURELOCK__ found in ${file}`);
         }
+        if (fileContentAfter.includes('__ENCLAVE_NAME_TRUSTEDZONE__')) {
+            console.log(`__ENCLAVE_NAME_TRUSTEDZONE__ still found in ${file}`);
+        } else {
+            console.log(`No __ENCLAVE_NAME_TRUSTEDZONE__ found in ${file}`);
+        }
 
         console.log();
     });
+
+    // let PUBLIC_KEY_SECURELOCK_RES = execSync(`docker-compose run etny-securelock 2>/dev/null | grep -v Creating | grep -v Pulling | grep -v latest | grep -v Digest | sed 's/.*PUBLIC_KEY:\\s*//' | tr -d '\\r'`).toString().trim();
+
 
     // TODO: calculate hash of the files localy, and query the public key service, if the hash is already there it means we dont have to do the below.
 
@@ -319,6 +388,7 @@ const main = async () => {
     }
     console.log(`PUBLIC_KEY_SECURELOCK_RES: ${PUBLIC_KEY_SECURELOCK_RES}`);
 
+    // v3:QmPwv3JfYdfkBMDJK8mTFMMdQgrbSCgqRbPQi5qfRUqKgy:etny-nodenithy-testnet:QmNk58xU3f74NFcGmEpUz6KM8eMKiySdwyXgb33QwCaxCc:QmPFVaY5M2esayqCkLEFC5ivF2GWxRp8BZXTFjasPP5cVH:bad1ba9aae6bc1ad314435d5a4843abe1449f261feaf32ccaaac7aad68c95702
 
     if (!PUBLIC_KEY_SECURELOCK_RES) {
         console.log("\n\nIt seems that your machine is not SGX compatible.\n");
@@ -392,10 +462,12 @@ const main = async () => {
     console.log(fs.readFileSync('certificate.securelock.crt', 'utf8'));
 
     if (fs.existsSync('certificate.trustedzone.crt')) {
+        // delete it
         fs.unlinkSync('certificate.trustedzone.crt');
     }
 
-    const trustedZoneCert = execSync(`node ./image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "etny-pynithy" "v3" "" "getTrustedZoneCert"`).toString().trim();
+    // const scriptPath = path.resolve(__dirname, '/image_registry.js');
+    const trustedZoneCert = execSync(`node ./image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" ${templateName} "v3" "" "getTrustedZoneCert"`).toString().trim();
 
     console.log("trustedZoneCert: ", trustedZoneCert);
 
@@ -432,6 +504,9 @@ const main = async () => {
         }
         existing = true;
     } catch (error) {
+        // console.error("Error: Could not add certificates for SECURELOCK into IMAGE REGISTRY smart contract");
+        // console.error(error);
+        // process.exit(1);
     }
 
     if (!existing) {
