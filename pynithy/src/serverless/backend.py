@@ -1,2 +1,2 @@
 def hello(msg="World") -> str:
-    return "Hello " + msg
+    return "Py: Hello " + msg

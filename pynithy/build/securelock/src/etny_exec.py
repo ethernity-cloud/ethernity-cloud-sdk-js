@@ -1,5 +1,5 @@
 import os.path
-from .serverless.backend import *
+from serverless.backend import hello
 
 
 def ___etny_result___(data):
@@ -18,7 +18,11 @@ class TaskStatus:
 
 
 def execute_task(payload_data, input_data):
-    return Exec(payload_data, input_data, {"___etny_result___": ___etny_result___})
+    return Exec(
+        payload_data,
+        input_data,
+        {"___etny_result___": ___etny_result___, "hello": hello},
+    )
 
 
 def Exec(payload_data, input_data, globals=None, locals=None):

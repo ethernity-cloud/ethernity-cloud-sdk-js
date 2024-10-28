@@ -100,13 +100,25 @@ async function prompt(question) {
 
     if (SERVICE_TYPE === 'Nodenithy') {
         console.log('Adding prerequisites for Nodenithy...');
-        // const runScript = spawn('node', ['./node_modules/ethernity-cloud-sdk-js/nodenithy/run.js'], { stdio: ['inherit', 'inherit', 'inherit'] });
+        // the current process can be exited 'cross-env node ./node_modules/ethernity-cloud-sdk-js/nodenithy/run.js'
+        const run = spawn('node', ['./node_modules/ethernity-cloud-sdk-js/nodenithy/run.js'], {
+            stdio: 'inherit'
+        });
 
-        // runScript.on('close', (code) => {
-        //     console.log(`Child process exited with code ${code}`);
-        // });
+        run.on('exit', code => {
+            console.log('Exit code:', code);
+            process.exit(code);
+        });
     } else if (SERVICE_TYPE === 'Pynithy') {
         console.log('Adding prerequisites for Pynithy...');
+        const run = spawn('node', ['./node_modules/ethernity-cloud-sdk-js/pynithy/run.js'], {
+            stdio: 'inherit'
+        });
+
+        run.on('exit', code => {
+            console.log('Exit code:', code);
+            process.exit(code);
+        });
     } else {
         console.log('Something went wrong');
         process.exit(1);

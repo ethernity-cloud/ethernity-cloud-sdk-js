@@ -74,4 +74,5 @@ ENV SCONE_EXTENSIONS_PATH=/lib/libbinary-fs.so
 
 RUN rm -rf /enclave-key.pem
 
+
 ENTRYPOINT ["/usr/local/bin/python", "/etny-securelock/securelock.py"]

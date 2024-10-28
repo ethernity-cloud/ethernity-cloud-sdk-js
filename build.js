@@ -12,7 +12,7 @@ if (serviceType === "Nodenithy") {
     console.log(`Build script finished. You can now proceed to publish: npm run ecld-publish.`);
 } else if (serviceType === "Pynithy") {
     console.log("Adding prerequisites for Pynithy...");
-    const scriptPath = path.resolve(__dirname, 'pynithy/build.js');
+    const scriptPath = path.resolve(__dirname, 'pynithy/build.mjs');
     console.log(`Running script: ${scriptPath}`);
     execSync(`node ${scriptPath}`, { stdio: 'inherit' });
     console.log(`Build script finished. You can now proceed to publish: npm run ecld-publish.`);

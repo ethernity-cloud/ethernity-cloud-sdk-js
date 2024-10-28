@@ -220,15 +220,27 @@ const main = async () => {
     console.log(
       "  src/ec_helloworld_example.js (Hello World function call - Frontend)",
     );
-    // Simulate copying files
-    fs.cpSync("node_modules/ethernity-cloud-sdk-js/nodenithy/src/", "src/", {
-      recursive: true,
-    });
-    fs.cpSync(
-      "node_modules/ethernity-cloud-sdk-js/nodenithy/public/",
-      "public/",
-      { recursive: true },
-    );
+    if (serviceType === "Nodenithy") {
+      // Simulate copying files
+      fs.cpSync("node_modules/ethernity-cloud-sdk-js/nodenithy/src/", "src/", {
+        recursive: true,
+      });
+      fs.cpSync(
+        "node_modules/ethernity-cloud-sdk-js/nodenithy/public/",
+        "public/",
+        { recursive: true },
+      );
+    } else if (serviceType === "Pynithy") {
+      // Simulate copying files
+      fs.cpSync("node_modules/ethernity-cloud-sdk-js/pynithy/src/", "src/", {
+        recursive: true,
+      });
+      fs.cpSync(
+        "node_modules/ethernity-cloud-sdk-js/pynithy/public/",
+        "public/",
+        { recursive: true },
+      );
+    }
     console.log("Installing required packages...");
     // Simulate npm install
     execSync(
@@ -237,7 +249,7 @@ const main = async () => {
     );
   } else {
     console.log(
-      "Define backend functions in src/ectasks to be available for Frontend interaction.",
+      "Define backend functions in src/serverless to be available for Frontend interaction.",
     );
   }
 

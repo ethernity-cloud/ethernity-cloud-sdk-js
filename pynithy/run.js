@@ -55,7 +55,7 @@ const writeEnv = (key, value) => {
     fs.writeFileSync(envFile, envContent);
 };
 
-let templateName = process.env.TRUSTED_ZONE_IMAGE || 'etny-nodenithy-testnet';
+let templateName = process.env.TRUSTED_ZONE_IMAGE || 'etny-pynithy-testnet';
 
 const isMainnet = !templateName.includes('testnet');
 
