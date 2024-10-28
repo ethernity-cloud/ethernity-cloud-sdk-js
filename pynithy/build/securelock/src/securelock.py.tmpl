@@ -290,7 +290,7 @@ class EtnySecureLock:
         self.task_result_checksum = hashlib.sha256(self.task_result.encode("utf-8")).hexdigest()
 
     def save_result(self):
-        self.__get_trusted_zone_public_key()
+        self.__get_latest_trusted_zone_public_key()
         self.encrypt_file_and_push_to_swifstream(str(self.task_result), "result.txt")
         self.encrypt_file_and_push_to_swifstream(str(self.task_code), "result_code.txt")
 
@@ -356,6 +356,11 @@ class EtnySecureLock:
             image_hash = 'v3-hash-1'
         self.trusted_zone_public_key = self.image_registry.caller().getTrustedZoneImageCertPublicKey(
             image_hash)
+
+    def __get_latest_trusted_zone_public_key(self):
+        print('getting latest public key of the trusted zone enclave')
+        self.trusted_zone_public_key = self.image_registry.caller().getLatestTrustedZoneImageCertPublicKey(
+            '__TRUSTED_ZONE_IMAGE__', 'v3')[1]
 
 
 if __name__ == '__main__':

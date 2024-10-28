@@ -168,7 +168,7 @@ const main = async () => {
 
     // don't generate new keys if PREDECESSOR_HASH_SECURELOCK is not empty and the key.pem and cert.pem files exist
     if (PREDECESSOR_HASH_SECURELOCK !== 'EMPTY' && fs.existsSync('key.pem') && fs.existsSync('cert.pem')) {
-        console.log("Skipping keypair generation and certificate creation.");
+        console.log("Skipping key pair generation and certificate creation.");
         console.log("Using existing key.pem and cert.pem files.");
     } else {
         // Generate a keypair and create an X.509v3 certificate

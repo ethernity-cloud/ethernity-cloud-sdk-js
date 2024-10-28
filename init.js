@@ -289,7 +289,7 @@ const main = async () => {
   writeEnv("VERSION", "v1");
   console.log();
   console.log(
-    "To start the application, run the appropriate start command based on your setup.",
+    "You can proceed to run ecld-build, once you set up the serverless functions or directly if you want to test with the provided template.",
   );
   rl.close();
 };
