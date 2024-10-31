@@ -216,11 +216,11 @@ const main = async () => {
 
   if (useAppTemplate === "yes") {
     console.log("Bringing Frontend/Backend templates...");
-    console.log("  src/serverless/backend.js (Hello World function)");
-    console.log(
-      "  src/ec_helloworld_example.js (Hello World function call - Frontend)",
-    );
     if (serviceType === "Nodenithy") {
+      console.log("  src/serverless/backend.js (Hello World function)");
+      console.log(
+        "  src/ec_helloworld_example.js (Hello World function call - Frontend)",
+      );
       // Simulate copying files
       fs.cpSync("node_modules/ethernity-cloud-sdk-js/nodenithy/src/", "src/", {
         recursive: true,
@@ -231,6 +231,10 @@ const main = async () => {
         { recursive: true },
       );
     } else if (serviceType === "Pynithy") {
+      console.log("  src/serverless/backend.py (Hello World function)");
+      console.log(
+        "  src/ec_helloworld_example.js (Hello World function call - Frontend)",
+      );
       // Simulate copying files
       fs.cpSync("node_modules/ethernity-cloud-sdk-js/pynithy/src/", "src/", {
         recursive: true,
