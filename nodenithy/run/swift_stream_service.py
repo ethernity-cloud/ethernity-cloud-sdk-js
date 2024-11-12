@@ -7,10 +7,12 @@ from minio.error import S3Error
 class SwiftStreamService:
 
     def __init__(self, endpoint: str, access_key: str, secret_key: str):
-        self.client = Minio(endpoint=endpoint,
-                            access_key=access_key,
-                            secret_key=secret_key,
-                            secure=False)
+        self.client = Minio(
+            endpoint=endpoint,
+            access_key=access_key,
+            secret_key=secret_key,
+            secure=False,
+        )
 
     def create_bucket(self, bucket_name: str) -> (bool, str):
         try:
@@ -58,7 +60,9 @@ class SwiftStreamService:
 
         return True, f"Files, {list_of_files} successfully deleted!"
 
-    def upload_file(self, bucket_name: str, file_name: str, file_path: str) -> (bool, str):
+    def upload_file(
+        self, bucket_name: str, file_name: str, file_path: str
+    ) -> (bool, str):
         try:
             if self.client.bucket_exists(bucket_name):
                 self.client.fput_object(bucket_name, file_name, file_path)
@@ -70,26 +74,36 @@ class SwiftStreamService:
 
         return True, f"{file_path} is successfully uploaded to bucket {bucket_name}."
 
-    def upload_files(self, bucket_name: str, list_of_files: list[str],
-                     upload_file_paths: list[str]) -> (bool, str):
+    def upload_files(
+        self, bucket_name: str, list_of_files: list[str], upload_file_paths: list[str]
+    ) -> (bool, str):
         try:
             if self.client.bucket_exists(bucket_name):
                 for file_idx in range(len(upload_file_paths)):
-                    self.client.fput_object(bucket_name,
-                                            list_of_files[file_idx],
-                                            upload_file_paths[file_idx])
+                    self.client.fput_object(
+                        bucket_name,
+                        list_of_files[file_idx],
+                        upload_file_paths[file_idx],
+                    )
             else:
                 self.create_bucket(bucket_name)
                 for file_idx in range(len(upload_file_paths)):
-                    self.client.fput_object(bucket_name,
-                                            list_of_files[file_idx],
-                                            upload_file_paths[file_idx])
+                    self.client.fput_object(
+                        bucket_name,
+                        list_of_files[file_idx],
+                        upload_file_paths[file_idx],
+                    )
         except S3Error as err:
             return False, err
 
-        return True, f"{upload_file_paths} are successfully uploaded to bucket {bucket_name}."
+        return (
+            True,
+            f"{upload_file_paths} are successfully uploaded to bucket {bucket_name}.",
+        )
 
-    def download_file(self, bucket_name: str, file_name: str, file_path: str) -> (bool, str):
+    def download_file(
+        self, bucket_name: str, file_name: str, file_path: str
+    ) -> (bool, str):
         try:
             if self.client.bucket_exists(bucket_name):
                 self.client.fget_object(bucket_name, file_name, file_path)
@@ -98,28 +112,37 @@ class SwiftStreamService:
         except S3Error as err:
             return False, err
 
-        return True, f"File, {file_name} from bucket {bucket_name} was downloaded in {file_path}."
+        return (
+            True,
+            f"File, {file_name} from bucket {bucket_name} was downloaded in {file_path}.",
+        )
 
-    def download_files(self, bucket_name: str, list_of_files: list[str],
-                       download_file_paths: list[str]) -> (bool, str):
+    def download_files(
+        self, bucket_name: str, list_of_files: list[str], download_file_paths: list[str]
+    ) -> (bool, str):
         try:
             if self.client.bucket_exists(bucket_name):
                 for file_idx in range(len(list_of_files)):
-                    self.client.fget_object(bucket_name,
-                                            list_of_files[file_idx],
-                                            download_file_paths[file_idx])
+                    self.client.fget_object(
+                        bucket_name,
+                        list_of_files[file_idx],
+                        download_file_paths[file_idx],
+                    )
             else:
                 return False, f"Bucket, {bucket_name} does not exists!"
         except S3Error as err:
             return False, err
 
-        return True, f"{download_file_paths} are successfully uploaded to bucket {bucket_name}."
+        return (
+            True,
+            f"{download_file_paths} are successfully uploaded to bucket {bucket_name}.",
+        )
 
     def get_file_content_bytes(self, bucket_name: str, file_name: str) -> (bool, bytes):
         response = None
         try:
             response = self.client.get_object(bucket_name, file_name)
-            _d = b''
+            _d = b""
             for data in response.stream(amt=1024 * 1024):
                 _d = _d + data
 
@@ -134,24 +157,27 @@ class SwiftStreamService:
     def get_file_content(self, bucket_name: str, file_name: str) -> (bool, str):
         status, content = self.get_file_content_bytes(bucket_name, file_name)
         if status:
-            return True, content.decode('utf-8')
+            return True, content.decode("utf-8")
         return status, content
 
-    def put_file_content(self, bucket_name: str, object_name: str, object_path: str,
-                         object_data: object = None) -> (bool, str):
+    def put_file_content(
+        self,
+        bucket_name: str,
+        object_name: str,
+        object_path: str,
+        object_data: object = None,
+    ) -> (bool, str):
         try:
             if object_data is not None:
-                self.client.put_object(bucket_name,
-                                       object_name,
-                                       object_data,
-                                       len(object_data.getbuffer()))
+                self.client.put_object(
+                    bucket_name, object_name, object_data, len(object_data.getbuffer())
+                )
             else:
                 object_stat = os.stat(object_path)
-                with open(object_path, 'rb') as file_data:
-                    self.client.put_object(bucket_name,
-                                           object_name,
-                                           file_data,
-                                           object_stat.st_size)
+                with open(object_path, "rb") as file_data:
+                    self.client.put_object(
+                        bucket_name, object_name, file_data, object_stat.st_size
+                    )
                 file_data.close()
         except S3Error as err:
             return False, err

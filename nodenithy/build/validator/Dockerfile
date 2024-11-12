@@ -1,4 +1,4 @@
-FROM registry.scontain.com:5050/ethernity/node:16.13.1-alpine3.15-scone5.8-production as release
+FROM registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/node:16.13.1-alpine3.15-scone5.8-production as release
 
 RUN apk update
 
@@ -26,14 +26,14 @@ WORKDIR /
 RUN ["chmod", "+x", "etny-trustedzone/binary-fs-build.sh"]
 RUN etny-trustedzone/binary-fs-build.sh
 
-FROM registry.scontain.com:5050/sconecuratedimages/crosscompilers as build
+FROM registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/sconecuratedimages/crosscompilers as build
 
 COPY --from=release /binary-fs-dir /.
 
 RUN scone gcc ./binary_fs_blob.s ./libbinary_fs_template.a -shared -o /libbinary-fs.so
 
 #
-FROM registry.scontain.com:5050/ethernity/node:16.13.1-alpine3.15-scone5.8-production
+FROM registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/node:16.13.1-alpine3.15-scone5.8-production
 
 COPY --from=build /libbinary-fs.so /lib/libbinary-fs.so
 #

@@ -6,7 +6,7 @@ import Web3 from 'web3';
 const PROJECT_NAME = "";
 const IPFS_ENDPOINT = "";
 
-const code = `hello("World");`;
+const code = `hello("World")`;
 
 function App() {
     const executeTask = async () => {
@@ -36,8 +36,8 @@ function App() {
 
         await runner.run(PROJECT_NAME,
                         code,
-                         '',
-                         { taskPrice: 10, cpu: 1, memory: 1, storage: 10, bandwidth: 1, duration: 1, validators: 1 });
+                         '0xd58f5C1834279ABD601df85b3E4b2323aDD4E75e',
+                         { taskPrice: 6, cpu: 1, memory: 1, storage: 10, bandwidth: 1, duration: 1, validators: 1 });
     };
     const connectWallet = async () => {
       if (window.ethereum) {

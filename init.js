@@ -216,19 +216,35 @@ const main = async () => {
 
   if (useAppTemplate === "yes") {
     console.log("Bringing Frontend/Backend templates...");
-    console.log("  src/serverless/backend.js (Hello World function)");
-    console.log(
-      "  src/ec_helloworld_example.js (Hello World function call - Frontend)",
-    );
-    // Simulate copying files
-    fs.cpSync("node_modules/ethernity-cloud-sdk-js/nodenithy/src/", "src/", {
-      recursive: true,
-    });
-    fs.cpSync(
-      "node_modules/ethernity-cloud-sdk-js/nodenithy/public/",
-      "public/",
-      { recursive: true },
-    );
+    if (serviceType === "Nodenithy") {
+      console.log("  src/serverless/backend.js (Hello World function)");
+      console.log(
+        "  src/ec_helloworld_example.js (Hello World function call - Frontend)",
+      );
+      // Simulate copying files
+      fs.cpSync("node_modules/ethernity-cloud-sdk-js/nodenithy/src/", "src/", {
+        recursive: true,
+      });
+      fs.cpSync(
+        "node_modules/ethernity-cloud-sdk-js/nodenithy/public/",
+        "public/",
+        { recursive: true },
+      );
+    } else if (serviceType === "Pynithy") {
+      console.log("  src/serverless/backend.py (Hello World function)");
+      console.log(
+        "  src/ec_helloworld_example.js (Hello World function call - Frontend)",
+      );
+      // Simulate copying files
+      fs.cpSync("node_modules/ethernity-cloud-sdk-js/pynithy/src/", "src/", {
+        recursive: true,
+      });
+      fs.cpSync(
+        "node_modules/ethernity-cloud-sdk-js/pynithy/public/",
+        "public/",
+        { recursive: true },
+      );
+    }
     console.log("Installing required packages...");
     // Simulate npm install
     execSync(
@@ -237,7 +253,7 @@ const main = async () => {
     );
   } else {
     console.log(
-      "Define backend functions in src/ectasks to be available for Frontend interaction.",
+      "Define backend functions in src/serverless to be available for Frontend interaction.",
     );
   }
 
@@ -250,22 +266,34 @@ const main = async () => {
     writeEnv("DOCKER_PASSWORD", dockerPassword);
   } else if (serviceType === "Nodenithy") {
     writeEnv("BASE_IMAGE_TAG", "");
-    writeEnv("DOCKER_REPO_URL", "registry.scontain.com:5050");
+    writeEnv("DOCKER_REPO_URL", "");
     writeEnv("DOCKER_LOGIN", "");
     writeEnv("DOCKER_PASSWORD", "");
   } else if (serviceType === "Pynithy") {
     writeEnv("BASE_IMAGE_TAG", "");
-    writeEnv("DOCKER_REPO_URL", "registry.scontain.com:5050");
+    writeEnv("DOCKER_REPO_URL", "");
     writeEnv("DOCKER_LOGIN", "");
     writeEnv("DOCKER_PASSWORD", "");
   }
+  // write TRUSTED_ZONE_IMAGE {token}_{name}{networktype} with the following rules:
+  // - token should be ecld if network is polygon, etny if network is bloxberg
+  // - name should be serviceType.toLowerCase()
+  // - networktype should be "" if network contains 'mainnet' else '_testnet'
+  writeEnv(
+    "TRUSTED_ZONE_IMAGE",
+    `${blockchainNetwork.includes("Polygon") ? "ecld" : "etny"
+    }-${serviceType.toLowerCase()}${blockchainNetwork.includes("Mainnet") ? "" : "-testnet"
+    }`,
+  );
+
+
   writeEnv("BLOCKCHAIN_NETWORK", blockchainNetwork.replace(/ /g, "_"));
   writeEnv("IPFS_ENDPOINT", customUrl);
   writeEnv("IPFS_TOKEN", ipfsToken || "");
   writeEnv("VERSION", "v1");
   console.log();
   console.log(
-    "To start the application, run the appropriate start command based on your setup.",
+    "You can proceed to run ecld-build, once you set up the serverless functions or directly if you want to test with the provided template.",
   );
   rl.close();
 };

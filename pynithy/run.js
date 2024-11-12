@@ -55,13 +55,13 @@ const writeEnv = (key, value) => {
     fs.writeFileSync(envFile, envContent);
 };
 
-let templateName = process.env.TRUSTED_ZONE_IMAGE || 'etny-nodenithy-testnet';
+let templateName = process.env.TRUSTED_ZONE_IMAGE || 'etny-pynithy-testnet';
 
 const isMainnet = !templateName.includes('testnet');
 
 const currentDir = process.cwd();
 console.log(`currentDir: ${currentDir}`);
-const runDir = `${currentDir}/node_modules/ethernity-cloud-sdk-js/nodenithy/run`;
+const runDir = `${currentDir}/node_modules/ethernity-cloud-sdk-js/pynithy/run`;
 process.chdir(runDir);
 process.env.REGISTRY_PATH = `${currentDir}/registry`;
 const registryPath = process.env.REGISTRY_PATH;
@@ -113,7 +113,7 @@ const main = async () => {
             content = content.replace(regex, value);
         }
         if (isMainnet) {
-            content = content.replace(", debug-mode", "").replace('ignore_advisories: ["INTEL-SA-00220", "INTEL-SA-00270", "INTEL-SA-00293", "INTEL-SA-00320", "INTEL-SA-00329", "INTEL-SA-00334", "INTEL-SA-00381", "INTEL-SA-00389", "INTEL-SA-00477", "INTEL-SA-00614", "INTEL-SA-00615", "INTEL-SA-00617", "INTEL-SA-00828"]', '');
+            content = content.replace(", debug-mode", "");
         }
 
         fs.writeFileSync(outputFile, content);
@@ -168,7 +168,7 @@ const main = async () => {
 
     // don't generate new keys if PREDECESSOR_HASH_SECURELOCK is not empty and the key.pem and cert.pem files exist
     if (PREDECESSOR_HASH_SECURELOCK !== 'EMPTY' && fs.existsSync('key.pem') && fs.existsSync('cert.pem')) {
-        console.log("Skipping keypair generation and certificate creation.");
+        console.log("Skipping key pair generation and certificate creation.");
         console.log("Using existing key.pem and cert.pem files.");
     } else {
         // Generate a keypair and create an X.509v3 certificate
@@ -338,9 +338,9 @@ const main = async () => {
             console.log(`No __ENCLAVE_NAME_TRUSTEDZONE__ found in ${file}`);
         }
 
-        let ENCLAVE_NAME_TRUSTEDZONE = 'etny-nodenithy-trustedzone-v3-testnet-0.0.8'
+        let ENCLAVE_NAME_TRUSTEDZONE = 'etny-pynithy-trustedzone-v3-testnet-0.1.12'
         if (isMainnet) {
-            ENCLAVE_NAME_TRUSTEDZONE = 'ecld-nodenithy-trustedzone-v3-3.0.0'
+            ENCLAVE_NAME_TRUSTEDZONE = 'ecld-pynithy-trustedzone-v3-3.0.0'
         }
         const updatedContent = fileContentBefore
             .replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK)
