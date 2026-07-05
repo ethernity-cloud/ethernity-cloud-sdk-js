@@ -77,17 +77,25 @@ fs.readdirSync(srcDir).forEach(file => {
 
 process.chdir(buildDir);
 
+// templateName is TRUSTED_ZONE_IMAGE (the registry image-name segment); trustedZoneNet
+// is the network tag the nodenithy CI pushes the prebuilt trustedzone under
+// (registry.ethernity.cloud:443/.../<templateName>/trustedzone:<trustedZoneNet>). Both must
+// match v3/networks.yaml image_name + network key in the etny-nodenithy repo, or the pull
+// below 404s and the SDK falls back to the vendored tarball.
 let templateName = "";
+let trustedZoneNet = "";
 if (process.env.BLOCKCHAIN_NETWORK === 'Bloxberg_Testnet') {
-  templateName = 'etny-nodenithy-testnet';
+  templateName = 'etny-nodenithy-testnet'; trustedZoneNet = 'bloxberg_testnet';
 } else if (process.env.BLOCKCHAIN_NETWORK === 'Bloxberg_Mainnet') {
-  templateName = 'etny-nodenithy';
+  templateName = 'etny-nodenithy'; trustedZoneNet = 'bloxberg';
 } else if (process.env.BLOCKCHAIN_NETWORK === 'Polygon_Mainnet') {
-  templateName = 'ecld-nodenithy';
+  templateName = 'ecld-nodenithy'; trustedZoneNet = 'polygon';
 } else if (process.env.BLOCKCHAIN_NETWORK === 'Polygon_Amoy_Testnet') {
-  templateName = 'ecld-nodenithy-testnet';
+  // image_name in etny-nodenithy v3/networks.yaml (amoy) is ecld-nodenithy-amoy,
+  // NOT ecld-nodenithy-testnet -- must match or the registry pull 404s.
+  templateName = 'ecld-nodenithy-amoy'; trustedZoneNet = 'amoy';
 } else {
-  templateName = 'etny-nodenithy-testnet';
+  templateName = 'etny-nodenithy-testnet'; trustedZoneNet = 'bloxberg_testnet';
 }
 
 const ENCLAVE_NAME_TRUSTEDZONE = templateName;
@@ -129,14 +137,28 @@ process.chdir('trustedzone');
 // const dockerfileTrustedContent = dockerfileTrustedTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK);
 // fs.writeFileSync('Dockerfile', dockerfileTrustedContent);
 
-// runCommand(`docker build --build-arg ENCLAVE_NAME_TRUSTEDZONE=${ENCLAVE_NAME_TRUSTEDZONE} -t etny-trustedzone:latest .`);
-// runCommand('docker tag etny-trustedzone localhost:5000/etny-trustedzone');
-// runCommand('docker push localhost:5000/etny-trustedzone');
-// runCommand('docker save etny-trustedzone:latest -o etny-trustedzone.tar');
-const zip = new AdmZip('etny-trustedzone.tar.zip');
-zip.extractAllTo('.', true);
-
-runCommand('docker load -i etny-trustedzone.tar');
+// Prefer the CI-built trustedzone published to the ethernity registry by the
+// etny-nodenithy pipeline (registry.ethernity.cloud:443/.../<templateName>/trustedzone:<net>).
+// This mirrors the Python SDK (ec-sdk-py build.py) and keeps the bundled trustedzone
+// in sync with what is registered on-chain -- the vendored etny-trustedzone.tar.zip
+// only refreshes when someone manually re-vendors it, so it drifts. Fall back to the
+// vendored tarball if the pull fails (e.g. tag not yet published for this network).
+const trustedZoneImage = `registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/${templateName}/trustedzone:${trustedZoneNet}`;
+let pulledTrustedZone = false;
+console.log(`Pulling prebuilt trustedzone: ${trustedZoneImage}`);
+// canPass=true: a failed pull must NOT exit the build -- fall back to the vendored
+// tarball instead (runCommand process.exit(1)s on failure otherwise).
+if (shell.exec(`docker pull ${trustedZoneImage}`).code === 0) {
+  runCommand(`docker tag ${trustedZoneImage} etny-trustedzone:latest`);
+  pulledTrustedZone = true;
+} else {
+  console.log(`WARN: could not pull ${trustedZoneImage}; falling back to vendored etny-trustedzone.tar.zip`);
+}
+if (!pulledTrustedZone) {
+  const zip = new AdmZip('etny-trustedzone.tar.zip');
+  zip.extractAllTo('.', true);
+  runCommand('docker load -i etny-trustedzone.tar');
+}
 runCommand('docker tag etny-trustedzone:latest localhost:5000/etny-trustedzone');
 runCommand('docker push localhost:5000/etny-trustedzone');
 
