@@ -47,7 +47,7 @@ async function prompt(question) {
     process.env.NODE_NO_WARNINGS = 1
     let result = '';
     if (!PROJECT_NAME || !BLOCKCHAIN_NETWORK || !PRIVATE_KEY || !DEVELOPER_FEE) {
-        const hasWallet = await prompt('Do you have an existing wallet? (yes/no) ');
+        const hasWallet = await prompt('Do you have an existing wallet? (yes/no) (default value: no) ') || 'no';
         console.log()
         if (hasWallet.toLowerCase() !== 'yes') {
             console.log('Without a wallet, you will not be able to publish.');
@@ -74,7 +74,7 @@ async function prompt(question) {
         console.log(`Available funds: ${result}`);
         console.log()
         console.log(`Checking if project name is available on ${BLOCKCHAIN_NETWORK} network and ownership...`);
-        result = execSync(`node ${scriptPath} ${BLOCKCHAIN_NETWORK} ${PROJECT_NAME} "v3" ${PRIVATE_KEY}`,).toString().trim();
+        result = execSync(`node ${scriptPath} ${BLOCKCHAIN_NETWORK} ${process.env.PROJECT_NAME} ${process.env.VERSION} ${process.env.PRIVATE_KEY}`,).toString().trim();
         console.log(result);
         console.log()
 
@@ -100,13 +100,25 @@ async function prompt(question) {
 
     if (SERVICE_TYPE === 'Nodenithy') {
         console.log('Adding prerequisites for Nodenithy...');
-        // const runScript = spawn('node', ['./node_modules/ethernity-cloud-sdk-js/nodenithy/run.js'], { stdio: ['inherit', 'inherit', 'inherit'] });
+        // the current process can be exited 'cross-env node ./node_modules/ethernity-cloud-sdk-js/nodenithy/run.js'
+        const run = spawn('node', ['./node_modules/ethernity-cloud-sdk-js/nodenithy/run.js'], {
+            stdio: 'inherit'
+        });
 
-        // runScript.on('close', (code) => {
-        //     console.log(`Child process exited with code ${code}`);
-        // });
+        run.on('exit', code => {
+            console.log('Exit code:', code);
+            process.exit(code);
+        });
     } else if (SERVICE_TYPE === 'Pynithy') {
         console.log('Adding prerequisites for Pynithy...');
+        const run = spawn('node', ['./node_modules/ethernity-cloud-sdk-js/pynithy/run.js'], {
+            stdio: 'inherit'
+        });
+
+        run.on('exit', code => {
+            console.log('Exit code:', code);
+            process.exit(code);
+        });
     } else {
         console.log('Something went wrong');
         process.exit(1);

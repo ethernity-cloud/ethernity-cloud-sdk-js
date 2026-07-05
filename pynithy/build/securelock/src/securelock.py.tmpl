@@ -76,11 +76,11 @@ class EtnySecureLock:
         self.input = 'input.txt.securelock'
         self.result_file = '/app/result.txt'
         self.transaction_file = '/app/transaction.txt'
-        self.smart_contract_address = '0x02882F03097fE8cD31afbdFbB5D72a498B41112c'
-        self.image_registry_address = '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31'
-        self.chain_id = 8995
-        self.web3_provider = 'https://bloxberg.ethernity.cloud'
-        self.etny_bucket = "etny-pynithy-testnet-v3"
+        self.smart_contract_address = '__SMART_CONTRACT_ADDRESS__'
+        self.image_registry_address = '__IMAGE_REGISTRY_ADDRESS__'
+        self.chain_id = __CHAIN_ID__
+        self.web3_provider = '__RPC_URL__'
+        self.etny_bucket = "__BUCKET_NAME__"
         self.trusted_zone_public_key = ''
         if EtnySecureLock.debug:
             self.key_file = "./app/cert1-ca1-clean.key"
@@ -290,7 +290,7 @@ class EtnySecureLock:
         self.task_result_checksum = hashlib.sha256(self.task_result.encode("utf-8")).hexdigest()
 
     def save_result(self):
-        self.__get_trusted_zone_public_key()
+        self.__get_latest_trusted_zone_public_key()
         self.encrypt_file_and_push_to_swifstream(str(self.task_result), "result.txt")
         self.encrypt_file_and_push_to_swifstream(str(self.task_code), "result_code.txt")
 
@@ -356,6 +356,11 @@ class EtnySecureLock:
             image_hash = 'v3-hash-1'
         self.trusted_zone_public_key = self.image_registry.caller().getTrustedZoneImageCertPublicKey(
             image_hash)
+
+    def __get_latest_trusted_zone_public_key(self):
+        print('getting latest public key of the trusted zone enclave')
+        self.trusted_zone_public_key = self.image_registry.caller().getLatestTrustedZoneImageCertPublicKey(
+            '__TRUSTED_ZONE_IMAGE__', 'v3')[1]
 
 
 if __name__ == '__main__':
