@@ -312,12 +312,28 @@ class ImageRegistry {
             console.log(`ipfsDockerComposeHash: ${ipfsDockerComposeHash}`);
             const imageName = process.env.PROJECT_NAME || "";
             console.log(`imageName: ${imageName}`);
-            const version = process.env.VERSION || "";
+            const enclaveVersion = process.env.VERSION || "";
             const enclaveNameSecureLock = process.env.ENCLAVE_NAME_SECURELOCK || "";
             console.log(`enclaveNameSecureLock: ${enclaveNameSecureLock}`);
             const fee = process.env.DEVELOPER_FEE || "0";
             console.log(`fee: ${fee}`);
-            await imageRegistry.addSecureLockImageCert(secureLock, ipfsHash, imageName, version, ipfsDockerComposeHash, enclaveNameSecureLock, fee);
+
+            // Register the SAME build under two registry version keys:
+            //   "v3"           -> the moving "latest" pointer the runner resolves by
+            //                     default (getLatestImageVersionPublicKey(name,"v3")).
+            //                     This MUST be "v3" (the protocol version), NOT the
+            //                     enclave/template VERSION -- registering under the
+            //                     VERSION (e.g. "21") wrote the pointer where the
+            //                     runner never looks, so it kept using a stale image.
+            //   <VERSION>      -> an immutable per-version entry (e.g. "22") so this
+            //                     exact build can be pinned/rolled back to later.
+            // The contract stores each (name,version) channel append-only.
+            const versionKeys = ["v3"];
+            if (enclaveVersion && enclaveVersion !== "v3") versionKeys.push(enclaveVersion);
+            for (const versionKey of versionKeys) {
+                console.log(`Registering securelock under version '${versionKey}'`);
+                await imageRegistry.addSecureLockImageCert(secureLock, ipfsHash, imageName, versionKey, ipfsDockerComposeHash, enclaveNameSecureLock, fee);
+            }
             process.exit(0);
         }
         if (action === 'getImagePublicKey') {

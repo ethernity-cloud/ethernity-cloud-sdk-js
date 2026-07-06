@@ -374,12 +374,19 @@ const main = async () => {
         fs.unlinkSync('certificate.securelock.crt');
     }
 
+    let PUBLIC_KEY_SECURELOCK_RES = '';
     try {
-        let output = execSync(`docker-compose run etny-securelock`, { cwd: runDir }).toString().trim();
+        const output = execSync(`docker-compose run etny-securelock`, { cwd: runDir }).toString();
         console.log("Output of docker-compose run etny-securelock:");
-        let lines = output.split('\n');
-        let publicKeyLine = lines.find(line => line.includes('PUBLIC_KEY:'));
-        let PUBLIC_KEY_SECURELOCK_RES = publicKeyLine ? publicKeyLine.replace(/.*PUBLIC_KEY:\s*/, '').trim() : '';
+        // Extract the WHOLE multi-line PEM certificate block from the enclave
+        // output. A previous version grabbed only the single line containing
+        // "PUBLIC_KEY:" -- but the certificate is multi-line, so that captured just
+        // the "-----BEGIN CERTIFICATE-----" line (or a fragment), and any log noise
+        // interleaved with it (e.g. an IPFS "Saving file(s) to Qm..." line) could be
+        // stored as the key. Match the full BEGIN..END block instead, tolerating a
+        // "PUBLIC_KEY:"/"PUBLIC_CERT:" marker prefix on the BEGIN line.
+        const certMatch = output.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
+        PUBLIC_KEY_SECURELOCK_RES = certMatch ? certMatch[0].trim() : '';
     } catch (error) {
         console.log("Error: Could not fetch PUBLIC_KEY_SECURELOCK" + error);
         // console.error("Error: Could not fetch PUBLIC_KEY_SECURELOCK");
@@ -450,9 +457,15 @@ const main = async () => {
         };
     }
 
-    const CERTIFICATE_CONTENT_SECURELOCK = PUBLIC_KEY_SECURELOCK_RES.match(/-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----/s)[1].trim();
+    // Validate we actually have a certificate before registering it on-chain.
+    // (Guard the match so a missing/garbage value fails loudly instead of throwing
+    // "Cannot read properties of null".) On-chain registrations are effectively
+    // permanent per version, so refuse to register anything that isn't a PEM cert.
+    const certContentMatch = PUBLIC_KEY_SECURELOCK_RES.match(/-----BEGIN CERTIFICATE-----([\s\S]*?)-----END CERTIFICATE-----/);
+    const CERTIFICATE_CONTENT_SECURELOCK = certContentMatch ? certContentMatch[1].trim() : '';
     if (!CERTIFICATE_CONTENT_SECURELOCK) {
-        console.error("ERROR! PUBLIC_KEY_SECURELOCK not found");
+        console.error("ERROR! PUBLIC_KEY_SECURELOCK not a valid certificate; refusing to register.");
+        console.error(`  got: ${JSON.stringify((PUBLIC_KEY_SECURELOCK_RES || '').slice(0, 120))}`);
         process.exit(1);
     } else {
         console.log("FOUND PUBLIC_KEY_SECURELOCK");
@@ -472,7 +485,13 @@ const main = async () => {
     console.log("trustedZoneCert: ", trustedZoneCert);
 
 
-    const CERTIFICATE_CONTENT_TRUSTEDZONE = trustedZoneCert.match(/-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----/s)[1].trim();
+    const tzMatch = trustedZoneCert.match(/-----BEGIN CERTIFICATE-----([\s\S]*?)-----END CERTIFICATE-----/);
+    if (!tzMatch) {
+        console.error("ERROR! Could not read a valid trustedzone certificate from the image registry.");
+        console.error(`  got: ${JSON.stringify((trustedZoneCert || '').slice(0, 120))}`);
+        process.exit(1);
+    }
+    const CERTIFICATE_CONTENT_TRUSTEDZONE = tzMatch[1].trim();
     const PUBLIC_KEY_TRUSTEDZONE = `-----BEGIN CERTIFICATE-----\n${CERTIFICATE_CONTENT_TRUSTEDZONE}\n-----END CERTIFICATE-----`;
     fs.writeFileSync('certificate.trustedzone.crt', PUBLIC_KEY_TRUSTEDZONE);
     console.log("Listing certificate PUBLIC_KEY_TRUSTEDZONE:");
