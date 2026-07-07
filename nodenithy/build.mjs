@@ -47,7 +47,7 @@ const runCommand = (command, canPass = false) => {
 shell.rm('-rf', './registry');
 const currentDir = process.cwd();
 // console.log(`current_dir: ${currentDir}`);
-const buildDir = path.join(currentDir, 'node_modules/ethernity-cloud-sdk-js/nodenithy/build');
+const buildDir = path.join(currentDir, 'node_modules/@ethernity-cloud/sdk-js/nodenithy/build');
 // console.log(`build_dir: ${buildDir}`);
 
 const dockerPS = shell.exec('docker ps --filter name=registry -q', { silent: true }).stdout.trim();

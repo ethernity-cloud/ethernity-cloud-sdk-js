@@ -141,7 +141,7 @@ const main = async () => {
     `Checking if the project name (image name) is available on the ${blockchainNetwork.replace(/ /g, "_")} network and ownership...`,
   );
   // const { execSync } = require('child_process');
-  // execSync(`python $(pwd)/node_modules/ethernity-cloud-sdk-js/nodenithy/run/image_registry.py "${blockchainNetwork.replace(/ /g, "_")}" "${projectName.replace(/ /g, "-")}" v3`);
+  // execSync(`python $(pwd)/node_modules/@ethernity-cloud/sdk-js/nodenithy/run/image_registry.py "${blockchainNetwork.replace(/ /g, "_")}" "${projectName.replace(/ /g, "-")}" v3`);
   const scriptPath = path.resolve(__dirname, "nodenithy/run/image_registry.js");
   // Spawn a new process to run the image_registry.js script
   const runChildProcess = () =>
@@ -222,11 +222,11 @@ const main = async () => {
         "  src/ec_helloworld_example.js (Hello World function call - Frontend)",
       );
       // Simulate copying files
-      fs.cpSync("node_modules/ethernity-cloud-sdk-js/nodenithy/src/", "src/", {
+      fs.cpSync("node_modules/@ethernity-cloud/sdk-js/nodenithy/src/", "src/", {
         recursive: true,
       });
       fs.cpSync(
-        "node_modules/ethernity-cloud-sdk-js/nodenithy/public/",
+        "node_modules/@ethernity-cloud/sdk-js/nodenithy/public/",
         "public/",
         { recursive: true },
       );
@@ -236,11 +236,11 @@ const main = async () => {
         "  src/ec_helloworld_example.js (Hello World function call - Frontend)",
       );
       // Simulate copying files
-      fs.cpSync("node_modules/ethernity-cloud-sdk-js/pynithy/src/", "src/", {
+      fs.cpSync("node_modules/@ethernity-cloud/sdk-js/pynithy/src/", "src/", {
         recursive: true,
       });
       fs.cpSync(
-        "node_modules/ethernity-cloud-sdk-js/pynithy/public/",
+        "node_modules/@ethernity-cloud/sdk-js/pynithy/public/",
         "public/",
         { recursive: true },
       );

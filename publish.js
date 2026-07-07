@@ -100,8 +100,8 @@ async function prompt(question) {
 
     if (SERVICE_TYPE === 'Nodenithy') {
         console.log('Adding prerequisites for Nodenithy...');
-        // the current process can be exited 'cross-env node ./node_modules/ethernity-cloud-sdk-js/nodenithy/run.js'
-        const run = spawn('node', ['./node_modules/ethernity-cloud-sdk-js/nodenithy/run.js'], {
+        // the current process can be exited 'cross-env node ./node_modules/@ethernity-cloud/sdk-js/nodenithy/run.js'
+        const run = spawn('node', ['./node_modules/@ethernity-cloud/sdk-js/nodenithy/run.js'], {
             stdio: 'inherit'
         });
 
@@ -111,7 +111,7 @@ async function prompt(question) {
         });
     } else if (SERVICE_TYPE === 'Pynithy') {
         console.log('Adding prerequisites for Pynithy...');
-        const run = spawn('node', ['./node_modules/ethernity-cloud-sdk-js/pynithy/run.js'], {
+        const run = spawn('node', ['./node_modules/@ethernity-cloud/sdk-js/pynithy/run.js'], {
             stdio: 'inherit'
         });
 

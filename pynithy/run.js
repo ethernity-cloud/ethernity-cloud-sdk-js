@@ -61,7 +61,7 @@ const isMainnet = !templateName.includes('testnet');
 
 const currentDir = process.cwd();
 console.log(`currentDir: ${currentDir}`);
-const runDir = `${currentDir}/node_modules/ethernity-cloud-sdk-js/pynithy/run`;
+const runDir = `${currentDir}/node_modules/@ethernity-cloud/sdk-js/pynithy/run`;
 process.chdir(runDir);
 process.env.REGISTRY_PATH = `${currentDir}/registry`;
 const registryPath = process.env.REGISTRY_PATH;
