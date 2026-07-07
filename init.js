@@ -204,7 +204,7 @@ const main = async () => {
       ),
     );
   } else {
-    customUrl = "http://ipfs.ethernity.cloud:5001";
+    customUrl = "https://ipfs.ethernity.cloud";
   }
 
   fs.mkdirSync("src/serverless", { recursive: true });

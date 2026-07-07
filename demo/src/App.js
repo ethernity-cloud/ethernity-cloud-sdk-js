@@ -12,7 +12,7 @@ function App() {
     const executeTask = async () => {
         const runner = new EthernityCloudRunner();
         // this is a server provided by Ethernity CLOUD, please bear in mind that you can use your own Decentralized Storage server
-        const ipfsAddress = 'https://ipfs.ethernity.cloud:5001';
+        const ipfsAddress = 'https://ipfs.ethernity.cloud';
         runner.initializeStorage(ipfsAddress);
 
         const onTaskProgress = (e) => {
