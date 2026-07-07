@@ -94,6 +94,12 @@ if (process.env.BLOCKCHAIN_NETWORK === 'Bloxberg_Testnet') {
   // image_name in etny-nodenithy v3/networks.yaml (amoy) is ecld-nodenithy-amoy,
   // NOT ecld-nodenithy-testnet -- must match or the registry pull 404s.
   templateName = 'ecld-nodenithy-amoy'; trustedZoneNet = 'amoy';
+} else if (process.env.BLOCKCHAIN_NETWORK === 'IoTeX_Testnet') {
+  templateName = 'ecld-nodenithy-iotex-testnet'; trustedZoneNet = 'iotex_testnet';
+} else if (process.env.BLOCKCHAIN_NETWORK === 'Ethereum_Sepolia') {
+  templateName = 'ecld-nodenithy-ethereum-sepolia'; trustedZoneNet = 'ethereum_sepolia';
+} else if (process.env.BLOCKCHAIN_NETWORK === 'LitVM_LiteForge') {
+  templateName = 'ecld-nodenithy-litvm-testnet'; trustedZoneNet = 'litvm_liteforge';
 } else {
   templateName = 'etny-nodenithy-testnet'; trustedZoneNet = 'bloxberg_testnet';
 }

@@ -129,6 +129,9 @@ const main = async () => {
     "Bloxberg Testnet",
     "Polygon Mainnet",
     "Polygon Amoy Testnet",
+    "IoTeX Testnet",
+    "Ethereum Sepolia",
+    "LitVM LiteForge",
   ];
   const blockchainNetwork = await promptOptions(
     "On which Blockchain network do you want to have the app set up, as a starting point? (default is Bloxberg Testnet): ",
@@ -277,14 +280,24 @@ const main = async () => {
   }
   // write TRUSTED_ZONE_IMAGE {token}_{name}{networktype} with the following rules:
   // - token should be ecld if network is polygon, etny if network is bloxberg
-  // - name should be serviceType.toLowerCase()
-  // - networktype should be "" if network contains 'mainnet' else '_testnet'
-  writeEnv(
-    "TRUSTED_ZONE_IMAGE",
-    `${blockchainNetwork.includes("Polygon") ? "ecld" : "etny"
-    }-${serviceType.toLowerCase()}${blockchainNetwork.includes("Mainnet") ? "" : "-testnet"
-    }`,
-  );
+  // TRUSTED_ZONE_IMAGE = <prefix>-<service>-<suffix>, matching image_name in
+  // etny-{pynithy,nodenithy}/v3/networks.yaml. The old code derived this from
+  // "Polygon?ecld:etny" + "Mainnet?'':'-testnet'", which only worked for
+  // bloxberg/polygon and produced wrong names for iotex/sepolia/litvm (all use
+  // the ecld prefix and network-specific suffixes). Use an explicit per-network
+  // map instead.
+  const svc = serviceType.toLowerCase();
+  const imageByNetwork = {
+    "Bloxberg Mainnet": `etny-${svc}`,
+    "Bloxberg Testnet": `etny-${svc}-testnet`,
+    "Polygon Mainnet": `ecld-${svc}`,
+    "Polygon Amoy Testnet": `ecld-${svc}-amoy`,
+    "IoTeX Testnet": `ecld-${svc}-iotex-testnet`,
+    "Ethereum Sepolia": `ecld-${svc}-ethereum-sepolia`,
+    "LitVM LiteForge": `ecld-${svc}-litvm-testnet`,
+  };
+  const trustedZoneImage = imageByNetwork[blockchainNetwork] || `etny-${svc}-testnet`;
+  writeEnv("TRUSTED_ZONE_IMAGE", trustedZoneImage);
 
 
   writeEnv("BLOCKCHAIN_NETWORK", blockchainNetwork.replace(/ /g, "_"));
