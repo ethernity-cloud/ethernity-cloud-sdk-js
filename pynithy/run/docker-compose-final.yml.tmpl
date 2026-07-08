@@ -6,6 +6,8 @@ services:
         image: localhost:5000/etny-las
         entrypoint: "/las_entrypoint.sh"
         command: "bash -c '/las_entrypoint.sh && /usr/local/bin/las | tee /var/log/las.log'"
+        devices:
+          - "/dev/sgx_enclave:/dev/sgx_enclave"
         restart: unless-stopped
         networks:
           - ethernity
@@ -33,6 +35,8 @@ services:
           - SCONE_ALLOW_DLOPEN=1
           - SCONE_EXTENSIONS_PATH=/lib/libbinary-fs.so
         restart: on-failure
+        devices:
+          - "/dev/sgx_enclave:/dev/sgx_enclave"
         networks:
           - ethernity
         depends_on:
@@ -53,6 +57,8 @@ services:
         - SCONE_ALLOW_DLOPEN=1
         - SCONE_EXTENSIONS_PATH=/lib/libbinary-fs.so
       restart: on-failure
+      devices:
+        - "/dev/sgx_enclave:/dev/sgx_enclave"
       networks:
         - ethernity
       depends_on:
