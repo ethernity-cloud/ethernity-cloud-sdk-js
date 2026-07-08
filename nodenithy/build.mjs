@@ -122,16 +122,53 @@ console.log('Building etny-securelock');
 process.chdir('securelock');
 // runCommand(`cat Dockerfile.tmpl | sed s/"__ENCLAVE_NAME_SECURELOCK__"/"${ENCLAVE_NAME_SECURELOCK}"/g > Dockerfile`);
 const dockerfileSecureTemplate = fs.readFileSync('Dockerfile.tmpl', 'utf8');
-const dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]).replace(/__TRUSTED_ZONE_IMAGE__/g, templateName);
+let dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]).replace(/__TRUSTED_ZONE_IMAGE__/g, templateName);
 
-fs.writeFileSync('Dockerfile', dockerfileSecureContent);
+// Amount of enclave heap to allocate (SCONE_HEAP). Kept in sync with the
+// run/docker-compose securelock service; overridable via ECLD_MEMORY_TO_ALLOCATE.
+const MEMORY_TO_ALLOCATE = (process.env.ECLD_MEMORY_TO_ALLOCATE || '1024M').trim();
+
+// CRITICAL (mainnet DCAP): sign /usr/local/bin/node -- the binary the enclave
+// actually EXECUTES (ENTRYPOINT + the run/publish compose command both run
+// /usr/local/bin/node). Signing anything else leaves the executed binary as the
+// base image's DEBUG-signed one, so at load SCONE recomputes MRENCLAVE and
+// re-signs it as debug -> CAS rejects the DCAP quote ("Debug mode enabled").
+//
+// The enclave-creation params (--heap/--stack/--dlopen/--extensions) MUST be
+// passed explicitly and match the runtime env exactly (scone-signer embeds SCONE
+// defaults for anything not passed as a flag) -- any drift triggers the same
+// debug re-sign. Values mirror the run/docker-compose securelock service.
+const signFlags =
+  `--key=/enclave-key.pem --env --heap=${MEMORY_TO_ALLOCATE} ` +
+  `--stack=4M --dlopen=1 --extensions=/lib/libbinary-fs.so`;
+
+// scone-signer prints two tab-indented "MRENCLAVE:" lines (non-EDMM first;
+// runtime has EDMM disabled, so the first is what SCONE_HASH produces). Capture
+// to a file first -- piping into head/grep kills scone-signer with SIGPIPE
+// (exit 141) under buildkit's pipefail shell.
+const signedMrenclaveStep =
+  'RUN scone-signer info /usr/local/bin/node > /tmp/siginfo.txt 2>&1; \\\n' +
+  '    grep -iE "MRENCLAVE:" /tmp/siginfo.txt | sed -n \'1p\' \\\n' +
+  '      | sed -E \'s/.*MRENCLAVE:[[:space:]]*//I\' | tr -d \'[:space:]\' > /signed_mrenclave.txt && \\\n' +
+  '    echo "SIGNED_MRENCLAVE=$(cat /signed_mrenclave.txt)"';
 
 let imagesTag = process.env.BLOCKCHAIN_NETWORK.toLowerCase();
 
 if (isMainnet) {
-  fs.writeFileSync('Dockerfile', dockerfileSecureContent.replace('# RUN scone-signer sign', 'RUN scone-signer sign'));
-  imagesTag = process.env.BLOCKCHAIN_NETWORK.split("_")[0].toLowerCase()
+  // Mainnet: production sign the executed node binary + bake the signed MRENCLAVE.
+  dockerfileSecureContent = dockerfileSecureContent
+    .replace('__SCONE_SIGN__', `RUN scone-signer sign ${signFlags} --production /usr/local/bin/node`)
+    .replace('__SIGNED_MRENCLAVE__', signedMrenclaveStep);
+  imagesTag = process.env.BLOCKCHAIN_NETWORK.split("_")[0].toLowerCase();
+} else {
+  // Testnet: non-CAS self-sign path -- no --production sign and no signed
+  // MRENCLAVE baking (the enclave self-signs from MR_ENCLAVE at runtime).
+  dockerfileSecureContent = dockerfileSecureContent
+    .replace('__SCONE_SIGN__', '# testnet: non-CAS self-sign (no --production sign at build time)')
+    .replace('__SIGNED_MRENCLAVE__', '# testnet: no signed MRENCLAVE (self-signed from MR_ENCLAVE at runtime)');
 }
+
+fs.writeFileSync('Dockerfile', dockerfileSecureContent);
 
 
 
