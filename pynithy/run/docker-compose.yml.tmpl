@@ -1,3 +1,10 @@
+# Publish-time compose: used by ecld-publish to compute the MRENCLAVE
+# (SCONE_HASH=1) and extract the enclave certificate LOCALLY. It intentionally
+# does NOT mount /dev/sgx_enclave so it runs on a developer machine WITHOUT SGX
+# (SCONE_HASH is a build measurement; enclaves reach SGX via LAS over TCP). When
+# no local SGX is present, cert extraction falls back to the remote
+# publickey.ethernity.cloud service. The on-node runtime uses
+# docker-compose-final.yml, which targets real SGX hardware.
 version: '3.2'
 services:
     las:
@@ -5,8 +12,6 @@ services:
         privileged: true
         image: localhost:5000/etny-las
         command: "bash -c '/las_entrypoint.sh && /usr/local/bin/las | tee /var/log/las.log'"
-        devices:
-         - "/dev/sgx_enclave:/dev/sgx_enclave"
         restart: unless-stopped
         ports:
           - target: 18766
@@ -32,8 +37,6 @@ services:
           - SCONE_ALLOW_DLOPEN=1
           - SCONE_EXTENSIONS_PATH=/lib/libbinary-fs.so
         restart: on-failure:5
-        devices:
-          - "/dev/sgx_enclave:/dev/sgx_enclave"
         depends_on:
           - las
 
@@ -52,7 +55,5 @@ services:
         - SCONE_ALLOW_DLOPEN=1
         - SCONE_EXTENSIONS_PATH=/lib/libbinary-fs.so
       restart: on-failure:5
-      devices:
-        - "/dev/sgx_enclave:/dev/sgx_enclave"
       depends_on:
         - las
