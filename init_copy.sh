@@ -167,7 +167,7 @@ if [ "$ipfs_service" == "Custom IPFS" ]; then
 fi
 if [ "$ipfs_service" == "Ehternity (best effort)" ]; then
     echo "Using the Ehternity IPFS service endpoint."
-    custom_url="https://ipfs.ethernity.cloud:5001"
+    custom_url="https://ipfs.ethernity.cloud"
 fi
 echo ""
 

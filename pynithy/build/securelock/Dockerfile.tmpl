@@ -64,13 +64,29 @@ COPY --from=build /libbinary-fs.so /lib/libbinary-fs.so
 
 RUN openssl genrsa -3 -out /enclave-key.pem 3072
 
+# SCONE runtime env. Must match the enclave-creation params passed to
+# scone-signer below (any drift makes SCONE recompute + debug re-sign at load,
+# which CAS rejects on mainnet). Values mirror the run/docker-compose securelock
+# service (SCONE_HEAP=1024M, SCONE_STACK=4M, dlopen=1, extensions=libbinary-fs).
 ENV SCONE_LOG=INFO
 ENV SCONE_HEAP=1024M
+ENV SCONE_STACK=4M
 ENV SCONE_ALLOW_DLOPEN=1
 ENV SCONE_EXTENSIONS_PATH=/lib/libbinary-fs.so
 
-# Disabled production mode for testnet
-# RUN scone-signer sign --key=/enclave-key.pem --env --production /usr/local/bin/python3
+# Rendered by build.mjs. Signs the EXECUTED binary (/usr/local/bin/python -- the
+# ENTRYPOINT and the run/publish compose command both run /usr/local/bin/python;
+# python3 is a SEPARATE symlink, signing it leaves the executed binary
+# debug-signed). Mainnet adds --production (CAS/DCAP); testnet omits it (non-CAS
+# self-sign). On testnet builds this line is a no-op comment.
+__SCONE_SIGN__
+
+# Record the SIGNED MRENCLAVE so publish (run.js) can assert the runtime enclave
+# measurement matches what was signed before registering the CAS session. Only
+# produced for --production (mainnet); on testnet the file is absent and the
+# check is skipped. Capture to a file first (piping scone-signer into head/grep
+# kills it with SIGPIPE / exit 141 under buildkit's pipefail shell).
+__SIGNED_MRENCLAVE__
 
 RUN rm -rf /enclave-key.pem
 

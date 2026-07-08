@@ -73,6 +73,30 @@ const runDockerCommand = (service) => {
     return output.split('\n').filter(line => !/Creating|Pulling|latest|Digest/.test(line)).join('');
 };
 
+// Extract the runtime enclave measurement (SCONE_HASH) as a bare 64-hex string.
+// Mirrors Python extract_scone_hash: the enclave prints its MRENCLAVE somewhere
+// in the SCONE_HASH=1 output; pick the first 64-hex token.
+const extractSconeHash = (service) => {
+    const output = runDockerCommand(service);
+    const m = output.match(/\b[a-fA-F0-9]{64}\b/);
+    if (!m) throw new Error(`No SHA256 MRENCLAVE found in ${service} SCONE_HASH output.`);
+    return m[0];
+};
+
+// Read the MRENCLAVE that was signed at build time (baked into the image as
+// /signed_mrenclave.txt by the securelock Dockerfile on mainnet). Mirrors Python
+// extract_signed_mrenclave. Returns '' if the file is absent (testnet builds).
+const extractSignedMrenclave = (service) => {
+    try {
+        const command = `docker-compose -f docker-compose.yml run --no-deps --entrypoint cat ${service} /signed_mrenclave.txt`;
+        const output = execSync(command, { stdio: ['pipe', 'pipe', 'pipe'] }).toString().trim();
+        const m = output.match(/\b[a-fA-F0-9]{64}\b/);
+        return m ? m[0] : '';
+    } catch (e) {
+        return '';
+    }
+};
+
 const main = async () => {
     process.env.NODE_NO_WARNINGS = 1
     const backupFiles = ['docker-compose.yml.tmpl', 'docker-compose-final.yml.tmpl'];
@@ -86,12 +110,31 @@ const main = async () => {
     });
 
 
-    process.env.MRENCLAVE_SECURELOCK = runDockerCommand('etny-securelock');
+    process.env.MRENCLAVE_SECURELOCK = extractSconeHash('etny-securelock');
     console.log(`MRENCLAVE_SECURELOCK: ${process.env.MRENCLAVE_SECURELOCK}`);
     // process.env.MRENCLAVE_TRUSTEDZONE = runDockerCommand('etny-trustedzone');
     // console.log(`MRENCLAVE_TRUSTEDZONE: ${process.env.MRENCLAVE_TRUSTEDZONE}`);
     // process.env.MRENCLAVE_VALIDATOR = runDockerCommand('etny-validator');
     // console.log(`MRENCLAVE_VALIDATOR: ${process.env.MRENCLAVE_VALIDATOR}`);
+
+    // ----- MRENCLAVE match-gate (mainnet) -----
+    // The runtime enclave measured just above (SCONE_HASH, with the same env the
+    // harvest uses) MUST match the MRENCLAVE that was signed --production at build
+    // time (baked into /signed_mrenclave.txt). A mismatch means SCONE recomputed
+    // the measurement at load because the runtime enclave-creation params drifted
+    // from the signed binary -- and a runtime recompute yields a DEBUG enclave
+    // that CAS rejects ("Debug mode is enabled"). Refuse to publish rather than
+    // register an untrusted identity on-chain or fail opaquely later.
+    if (isMainnet) {
+        const signedMrenclave = extractSignedMrenclave('etny-securelock');
+        if (!signedMrenclave || signedMrenclave !== process.env.MRENCLAVE_SECURELOCK) {
+            console.error(`Error: securelock runtime MRENCLAVE (${process.env.MRENCLAVE_SECURELOCK}) != signed MRENCLAVE (${signedMrenclave}).`);
+            console.error('       The runtime enclave differs from the --production-signed binary (SCONE recomputed -> debug).');
+            console.error('       Refusing to publish. Rebuild with the current SDK (ecld-build) and retry.');
+            process.exit(1);
+        }
+        console.log('\t✔  MRENCLAVE match-gate passed: runtime enclave matches the --production-signed MRENCLAVE');
+    }
 
     writeEnv('MRENCLAVE_SECURELOCK', process.env.MRENCLAVE_SECURELOCK);
     // writeEnv('MRENCLAVE_TRUSTEDZONE', process.env.MRENCLAVE_TRUSTEDZONE);

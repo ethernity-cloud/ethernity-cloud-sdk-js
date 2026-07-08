@@ -28,6 +28,9 @@ services:
       - SCONE_LAS_ADDR=las
       - SCONE_CONFIG_ID=__ENCLAVE_NAME_SECURELOCK__/application
       - SCONE_HEAP=1024M
+      # Must match the --stack the securelock binary was signed with (build.mjs),
+      # otherwise SCONE recomputes MRENCLAVE at load and re-signs as debug.
+      - SCONE_STACK=4M
       - SCONE_LOG=DEBUG
       - SCONE_ALLOW_DLOPEN=1
       - SCONE_EXTENSIONS_PATH=/lib/libbinary-fs.so

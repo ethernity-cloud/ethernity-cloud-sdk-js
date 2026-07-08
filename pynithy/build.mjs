@@ -122,16 +122,42 @@ console.log('Building etny-securelock');
 process.chdir('securelock');
 // runCommand(`cat Dockerfile.tmpl | sed s/"__ENCLAVE_NAME_SECURELOCK__"/"${ENCLAVE_NAME_SECURELOCK}"/g > Dockerfile`);
 const dockerfileSecureTemplate = fs.readFileSync('Dockerfile.tmpl', 'utf8');
-const dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]).replace(/__TRUSTED_ZONE_IMAGE__/g, templateName);
+let dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]).replace(/__TRUSTED_ZONE_IMAGE__/g, templateName);
 
-fs.writeFileSync('Dockerfile', dockerfileSecureContent);
+// Amount of enclave heap to allocate (SCONE_HEAP); overridable, in sync with the
+// run/docker-compose securelock service.
+const MEMORY_TO_ALLOCATE = (process.env.ECLD_MEMORY_TO_ALLOCATE || '1024M').trim();
+
+// CRITICAL (mainnet DCAP): sign /usr/local/bin/python -- the binary the enclave
+// actually EXECUTES (ENTRYPOINT + run/publish compose command both run
+// /usr/local/bin/python). /usr/local/bin/python3 is a SEPARATE symlink; signing
+// it leaves the executed binary DEBUG-signed, so SCONE recomputes MRENCLAVE at
+// load and re-signs as debug -> CAS rejects the DCAP quote on mainnet.
+// The enclave-creation params MUST match the runtime env exactly.
+const signFlags =
+  `--key=/enclave-key.pem --env --heap=${MEMORY_TO_ALLOCATE} ` +
+  `--stack=4M --dlopen=1 --extensions=/lib/libbinary-fs.so`;
+
+const signedMrenclaveStep =
+  'RUN scone-signer info /usr/local/bin/python > /tmp/siginfo.txt 2>&1; \\\n' +
+  '    grep -iE "MRENCLAVE:" /tmp/siginfo.txt | sed -n \'1p\' \\\n' +
+  '      | sed -E \'s/.*MRENCLAVE:[[:space:]]*//I\' | tr -d \'[:space:]\' > /signed_mrenclave.txt && \\\n' +
+  '    echo "SIGNED_MRENCLAVE=$(cat /signed_mrenclave.txt)"';
 
 let imagesTag = process.env.BLOCKCHAIN_NETWORK.toLowerCase();
 
 if (isMainnet) {
-  fs.writeFileSync('Dockerfile', dockerfileSecureContent.replace('# RUN scone-signer sign', 'RUN scone-signer sign'));
-  imagesTag = process.env.BLOCKCHAIN_NETWORK.split("_")[0].toLowerCase()
+  dockerfileSecureContent = dockerfileSecureContent
+    .replace('__SCONE_SIGN__', `RUN scone-signer sign ${signFlags} --production /usr/local/bin/python`)
+    .replace('__SIGNED_MRENCLAVE__', signedMrenclaveStep);
+  imagesTag = process.env.BLOCKCHAIN_NETWORK.split("_")[0].toLowerCase();
+} else {
+  dockerfileSecureContent = dockerfileSecureContent
+    .replace('__SCONE_SIGN__', '# testnet: non-CAS self-sign (no --production sign at build time)')
+    .replace('__SIGNED_MRENCLAVE__', '# testnet: no signed MRENCLAVE (self-signed from MR_ENCLAVE at runtime)');
 }
+
+fs.writeFileSync('Dockerfile', dockerfileSecureContent);
 
 
 

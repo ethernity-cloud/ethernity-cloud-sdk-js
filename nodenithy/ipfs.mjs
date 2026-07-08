@@ -1,360 +1,349 @@
-// ipfsClient.js
-import { create, globSource } from 'kubo-rpc-client';
+// ipfs.mjs
+//
+// IPFS client for the Ethernity Cloud JS SDK.
+//
+// The UPLOAD path is a faithful port of the Python SDK's IPFSClient
+// (ethernity_cloud_sdk_py/commands/pynithy/ipfs_client.py): it posts directly
+// to the IPFS HTTP API `/api/v0/add` with a raw multipart body,
+// `wrap-with-directory=true`, `Expect: 100-continue`, an explicit
+// `Content-Length`, and parses the newline-delimited JSON response to find the
+// wrapping-directory root hash (the entry whose `Name` is empty). A 10-attempt
+// exponential-backoff retry wraps both file and directory uploads. This matches
+// the Python pipeline step-for-step so both SDKs upload identically (e.g. for
+// the certex / public-key extraction flow).
+//
+// The DOWNLOAD path keeps the existing kubo-rpc-client based helpers.
+import http from 'http';
+import https from 'https';
+import { URL } from 'url';
 import { promisify } from 'util';
 import fs from 'fs';
 import { Command } from 'commander';
 import { promises as fss } from 'fs';
 import path from 'path';
-import { MultiBar, Presets } from 'cli-progress';
+import { create } from 'kubo-rpc-client';
 
 const program = new Command();
 const writeFile = promisify(fs.writeFile);
 const delay = (ms) => new Promise((res) => setTimeout(res, ms));
 const getRetryDelay = (retryCount, baseDelay = 1) => baseDelay * 2 ** retryCount;
 
+const RETRY_COUNT = 10; // mirrors Python ipfs_client.RETRY_COUNT
+
+// Endpoint + auth, mirroring the Python IPFSClient constructor.
+//   apiUrl : e.g. "https://ipfs.ethernity.cloud"
+//   addUrl : `${apiUrl}/api/v0/add`
+let apiUrl = null;
+let authHeader = null; // Authorization header value, or null
+
+// kubo-rpc-client instance, used only for the download helpers below.
 let ipfs = null;
 
 const initialize = (host, protocol, port, token) => {
-  if (host.search('http') !== -1) {
-    ipfs = create(host); //{ timeout: '4m' }
-  } else if (token === '') {
-    ipfs = create({
-      host,
-      protocol,
-      port,
-      // timeout: '4m'
-    });
+  // Normalise the endpoint to a base URL string, matching how the Python client
+  // treats `ipfs_endpoint` (it just prepends it to `/api/v0/add`).
+  if (host && host.search('http') !== -1) {
+    apiUrl = host.replace(/\/+$/, '');
+    ipfs = create(host);
   } else {
-    ipfs = create({
-      host,
-      protocol,
-      port,
-      headers: { authorization: token },
-      // timeout: '4m'
-    });
+    const proto = protocol || 'http';
+    const p = port ? `:${port}` : '';
+    apiUrl = `${proto}://${host}${p}`.replace(/\/+$/, '');
+    const opts = { host, protocol: proto, port };
+    if (token) opts.headers = { authorization: token };
+    ipfs = create(opts);
   }
+  authHeader = token && token !== '' ? token : null;
+};
+
+// ---------------------------------------------------------------------------
+// Raw multipart upload (Python-parity)
+// ---------------------------------------------------------------------------
+
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const CHECK = '\x1b[92m✔\x1b[0m  ';
+const FAIL = '\x1b[91m✘\x1b[0m  ';
+
+// Recursively collect every file under a directory (absolute paths), like
+// Python's os.walk in upload_dir.
+const gatherFiles = (dirPath) => {
+  const out = [];
+  const walk = (dir) => {
+    for (const name of fs.readdirSync(dir)) {
+      const full = path.join(dir, name);
+      if (fs.statSync(full).isDirectory()) walk(full);
+      else out.push(full);
+    }
+  };
+  walk(dirPath);
+  return out;
+};
+
+// Build a multipart/form-data body identical in shape to requests_toolbelt's
+// MultipartEncoder: one part per file, the field name AND filename both set to
+// the POSIX relative path, Content-Type application/octet-stream. Returns the
+// full body Buffer + the boundary + total byte length.
+const buildMultipartBody = (files, dirPath) => {
+  const boundary =
+    '----EthernityCloudFormBoundary' +
+    Buffer.from(`${files.length}-${dirPath}`).toString('hex').slice(0, 24);
+  const parts = [];
+  for (const filepath of files) {
+    const rel = path.relative(dirPath, filepath).replace(/\\/g, '/');
+    const header =
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="${rel}"; filename="${rel}"\r\n` +
+      `Content-Type: application/octet-stream\r\n\r\n`;
+    parts.push(Buffer.from(header, 'utf8'));
+    parts.push(fs.readFileSync(filepath));
+    parts.push(Buffer.from('\r\n', 'utf8'));
+  }
+  parts.push(Buffer.from(`--${boundary}--\r\n`, 'utf8'));
+  const body = Buffer.concat(parts);
+  return { body, boundary, length: body.length };
+};
+
+// Low-level POST to the IPFS add endpoint using Node's http/https so we can set
+// Content-Length + Expect: 100-continue exactly like the Python client and read
+// the streamed NDJSON response. Resolves { statusCode, text }.
+const postAdd = (query, body, boundary, contentLength, onProgress) =>
+  new Promise((resolve, reject) => {
+    const url = new URL(`${apiUrl}/api/v0/add${query}`);
+    const mod = url.protocol === 'https:' ? https : http;
+    const headers = {
+      'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      'Content-Length': String(contentLength),
+      Expect: '100-continue'
+    };
+    if (authHeader) headers.Authorization = authHeader;
+
+    const req = mod.request(
+      {
+        method: 'POST',
+        hostname: url.hostname,
+        port: url.port || (url.protocol === 'https:' ? 443 : 80),
+        path: `${url.pathname}${url.search}`,
+        headers
+      },
+      (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => {
+          text += chunk;
+        });
+        res.on('end', () => resolve({ statusCode: res.statusCode, text }));
+      }
+    );
+
+    req.on('error', reject);
+
+    // Honour Expect: 100-continue -- only stream the body once the server
+    // approves (mirrors requests' behaviour with Expect: 100-continue).
+    let sent = 0;
+    const sendBody = () => {
+      // Write in MB-ish chunks so we can report progress like Python.
+      const CHUNK = 1024 * 1024;
+      let offset = 0;
+      const writeNext = () => {
+        if (offset >= body.length) {
+          req.end();
+          return;
+        }
+        const end = Math.min(offset + CHUNK, body.length);
+        const ok = req.write(body.subarray(offset, end));
+        sent += end - offset;
+        offset = end;
+        if (onProgress) onProgress(sent);
+        if (ok) setImmediate(writeNext);
+        else req.once('drain', writeNext);
+      };
+      writeNext();
+    };
+
+    let bodySent = false;
+    req.on('continue', () => {
+      if (bodySent) return;
+      bodySent = true;
+      sendBody();
+    });
+    // Fallback: if the server never sends 100-continue within a short grace
+    // period, send the body anyway (some gateways skip it).
+    setTimeout(() => {
+      if (bodySent) return;
+      bodySent = true;
+      sendBody();
+    }, 3000);
+  });
+
+// Parse the NDJSON add response and return the wrapping-directory root hash --
+// the entry whose "Name" is "" (matches Python upload_dir).
+const parseRootHash = (text) => {
+  const rootLineHash = () => {
+    let root = null;
+    let last = null;
+    for (const line of text.split('\n')) {
+      const t = line.trim();
+      if (!t) continue;
+      let obj;
+      try {
+        obj = JSON.parse(t);
+      } catch {
+        continue;
+      }
+      last = obj;
+      if (obj.Name === '') root = obj.Hash;
+    }
+    // Some gateways don't emit an empty-Name entry; fall back to the last hash.
+    return root || (last && last.Hash) || null;
+  };
+  return rootLineHash();
+};
+
+// Generic retry wrapper mirroring Python's retry_on_failure (10 attempts,
+// 10s initial delay, x2 backoff, small jitter).
+const retryOnFailure = async (fn, label) => {
+  let delayMs = 10000;
+  const backoff = 2;
+  for (let attempt = 0; attempt < RETRY_COUNT; attempt++) {
+    try {
+      const result = await fn();
+      if (result !== null && result !== false && result !== 'Upload failed.') return result;
+      throw new Error('empty result');
+    } catch (e) {
+      process.stdout.write(
+        `\n[Retry ${attempt + 1}/${RETRY_COUNT}] ${label} failed: ${e && e.message ? e.message : e}\n`
+      );
+      if (attempt < RETRY_COUNT - 1) {
+        await delay(delayMs + Math.random() * 100);
+        delayMs *= backoff;
+      }
+    }
+  }
+  console.log('Max retry attempts reached. Operation failed.');
+  return null;
+};
+
+// Upload a single file: POST it to /api/v0/add and return its hash.
+const uploadFileToIPFSOnce = async (filePath) => {
+  const files = [filePath];
+  const dir = path.dirname(filePath);
+  const { body, boundary, length } = buildMultipartBody(files, dir);
+  const { statusCode, text } = await postAdd('', body, boundary, length, null);
+  if (statusCode !== 200) {
+    console.log(`Failed to upload to IPFS. Status code: ${statusCode}`);
+    return null;
+  }
+  // For a single file the last NDJSON line carries its hash.
+  let last = null;
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    try {
+      last = JSON.parse(t);
+    } catch {
+      /* ignore */
+    }
+  }
+  return last ? last.Hash : null;
 };
 
 const uploadFileToIPFS = async (filePath) => {
-  try {
-    const fileContent = await fss.readFile(filePath);
-    const response = await ipfs.add({ path: filePath, content: fileContent });
-    await fss.writeFile(`./IPFS_DOCKER_COMPOSE_HASH.ipfs`, response.cid.toString());
-    return response.cid.toString();
-  } catch (e) {
-    console.error();
-    return "Failed to upload file to IPFS, please try again.";
-  }
-};
-
-const uploadFolderToIPFS2 = async (path) => {
-  try {
-    console.log(`Uploading folder to IPFS: ${path}`);
-    const response = await ipfs.add(path, { pin: true , recursive: true }).catch((e) => console.log(e));
-    // console.log(JSON.stringify(response, null, 2));
-    const { cid } = response;
-    // while (true) {
-    //   const { cid } = response;
-    //   if (response.path) {
-    //     break;
-    //   }
-    //   // console.log(`Added file: ${cid}`);
-    //   delay(50000);
-    // }
-    // console.log(`response: ${response}`);
-    return cid;
-  } catch (e) {
-    console.log(e);
-    return null;
-  }
-};
-
-const MAX_BATCH_SIZE = 20 * 1024 * 1024; // 100MB
-
-const uploadFolderToIPFSBatch = async (folderPath) => {
-  try {
-    const files = [];
-    const readDirectory = (dir) => {
-      fs.readdirSync(dir).forEach((file) => {
-        const fullPath = path.join(dir, file);
-        if (fs.statSync(fullPath).isDirectory()) {
-          readDirectory(fullPath);
-        } else {
-          files.push({
-            path: path.relative(folderPath, fullPath),
-            content: fs.readFileSync(fullPath),
-            size: fs.statSync(fullPath).size
-          });
-        }
-      });
-    };
-
-    readDirectory(folderPath);
-    console.log(`Uploading folder to IPFS: ${folderPath}`);
-    console.log(`Number of files: ${files.length}`);
-
-    const ipfsOptions = {
-      wrapWithDirectory: false,
-      pin: true,
-      progress: (prog) => console.log(`Added ${prog / 1024 / 1024} MB`),
-      timeout: '2m'
-    };
-
-    const allCids = [];
-    let currentBatch = [];
-    let currentBatchSize = 0;
-
-    for (const file of files) {
-      if (file.size > MAX_BATCH_SIZE) {
-        // Upload large files individually
-        console.log(`Uploading large file individually: ${file.path}, size: ${file.size / 1024 / 1024} MB`);
-        for await (const result of ipfs.addAll([file], ipfsOptions)) {
-          allCids.push(result.cid);
-        }
-      } else {
-        // Add file to current batch
-        if (currentBatchSize + file.size > MAX_BATCH_SIZE) {
-          // await delay(30000);
-          // Upload current batch, display in mb
-          console.log(`Uploading batch of size ${currentBatchSize / 1024 / 1024} MB`);
-          for await (const result of ipfs.addAll(currentBatch, ipfsOptions)) {
-            allCids.push(result.cid);
-          }
-          // Reset batch
-          currentBatch = [];
-          currentBatchSize = 0;
-        }
-        currentBatch.push(file);
-        currentBatchSize += file.size;
-      }
+  const hash = await retryOnFailure(() => uploadFileToIPFSOnce(filePath), 'upload_file');
+  if (hash) {
+    try {
+      await fss.writeFile(`./IPFS_DOCKER_COMPOSE_HASH.ipfs`, hash);
+    } catch {
+      /* best effort */
     }
-
-    // Upload any remaining files in the last batch
-    if (currentBatch.length > 0) {
-      console.log(`Uploading final batch of size ${currentBatchSize / 1024 / 1024} MB`);
-      for await (const result of ipfs.addAll(currentBatch, ipfsOptions)) {
-        allCids.push(result.cid);
-      }
-    }
-
-    // Wrap all files into a single directory
-    const directory = await ipfs.addAll(allCids.map(cid => ({ path: cid.toString(), content: ipfs.cat(cid) })), {
-      wrapWithDirectory: true,
-      pin: true,
-      timeout: '2m'
-    });
-
-    console.log(`response: ${JSON.stringify(directory, null, 2)}`);
-    return directory.cid;
-  } catch (e) {
-    console.error(e);
-    return "error";
   }
+  return hash;
 };
 
-const uploadFolderToIPFS3 = async (folderPath) => {
-  try {
-    const files = [];
+// Upload a whole directory with wrap-with-directory=true and return the root
+// directory hash -- the exact behaviour of Python's upload_dir.
+const uploadDirOnce = async (dirPath) => {
+  const abs = path.resolve(dirPath);
+  const files = gatherFiles(abs);
+  const totalSize = files.reduce((acc, f) => acc + fs.statSync(f).size, 0);
+  const totalMb = Math.floor(totalSize / (1024 * 1024));
+  const { body, boundary, length } = buildMultipartBody(files, abs);
 
-    const readDirectory = (dir) => {
-      const items = fs.readdirSync(dir);
-      items.forEach((item) => {
-        const fullPath = path.join(dir, item);
-        const stats = fs.statSync(fullPath);
-        if (stats.isDirectory()) {
-          readDirectory(fullPath);
-        } else {
-          files.push({
-            path: path.relative(folderPath, fullPath),
-            content: fs.readFileSync(fullPath)
-          });
-        }
-      });
-    };
-
-    readDirectory(folderPath);
-    console.log(`Uploading folder to IPFS: ${folderPath}`);
-    // console.log(`Files: ${JSON.stringify(files[0], null, 2)}`);
-    console.log(`number of files: ${files.length}`);
-    // const response = await ipfs.addAll(files, { wrapWithDirectory: true, pin: true, timeout: 600000, progress: (prog) => console.log(`Added ${prog} bytes`)});
-    // const response = await ipfs.addAll(files);
-    for await (const file of ipfs.addAll(files, { wrapWithDirectory: true, pin: true, timeout: 600000, progress: (prog) => console.log(`Added ${prog} bytes`)})) {
-      console.log(file)
+  let lastShownMb = -1;
+  let frame = 0;
+  const onProgress = (sent) => {
+    const mb = Math.floor(sent / (1024 * 1024));
+    if (mb > lastShownMb) {
+      frame = (frame + 1) % SPINNER_FRAMES.length;
+      lastShownMb = mb;
+      process.stdout.write(
+        `\r\t${SPINNER_FRAMES[frame]}  Uploading and pinning enclave to IPFS... ${mb}MB/${totalMb}MB`
+      );
     }
-    console.log(`response: ${JSON.stringify(response, null, 2)}`);
-    return response.cid;
-  } catch (e) {
-    console.log(e);
-    return "error";
+  };
+
+  const query =
+    '?quieter=true&stream-channels=true&wrap-with-directory=true&progress=false&timeout=5m';
+  const { statusCode, text } = await postAdd(query, body, boundary, length, onProgress);
+
+  if (statusCode !== 200) {
+    process.stdout.write(`\r\t${FAIL}Uploading and pinning enclave to IPFS\n`);
+    console.log(`Failed to upload to IPFS. Status code: ${statusCode}`);
+    return false;
   }
+  const rootHash = parseRootHash(text);
+  if (!rootHash) {
+    process.stdout.write(`\r\t${FAIL}Uploading and pinning enclave to IPFS\n`);
+    console.log('Failed to upload to IPFS. Could not determine root hash.');
+    return false;
+  }
+  process.stdout.write(`\r\t${CHECK}Uploading and pinning enclave to IPFS\n`);
+  return rootHash;
 };
-
-// const uploadFolderToIPFS = async (folderPath) => {
-//   try {
-//     const addedFiles = [nume, continut];
-//     const ipfsOptions = {
-//       wrapWithDirectory: true,
-//       pin: true,
-//       progress: (prog) => console.log(`Added ${prog / 1024 / 1024} MB`),
-//       timeout: '5m'
-//     };
-//     console.log(`Uploading folder to IPFS: ${folderPath}`);
-//     for await (const file of ipfs.addAll(globSource(folderPath, '**/*'),{ ...ipfsOptions })) {
-//       addedFiles.push({
-//         cid: file.cid.toString(),
-//         path: file.path,
-//         size: file.size,
-//       });
-//     }
-
-//     // for await (const file of ipfs.addAll(
-//     //   globSource(folderPath, '**/*', { hidden: true }),
-//     //   { ...ipfsOptions, fileImportConcurrency: 1 }
-//     // )) {
-//     //   // export each added file to a json file
-//     //   await writeFile(`./files/addedFile${file.cid.toString()}.json`, JSON.stringify(file, null, 2));
-//     //   console.log(`Added file: ${file.path} with CID: ${file.cid.toString()}`);
-//     //   addedFiles.push({
-//     //     cid: file.cid.toString(),
-//     //     path: file.path,
-//     //     size: file.size,
-//     //   });
-//     // }
-//     // // export added files to a json file
-//     // await writeFile('addedFiles, json', JSON.stringify(addedFiles, null, 2));
-
-//     // console.log("addedFiles: ", JSON.stringify(addedFiles, null, 2));
-
-//     // Return the CID of the root directory
-//     return addedFiles.find(file => file.path === '').cid;
-//     // return;
-//   } catch (e) {
-//     console.error(e);
-//     return "err";
-//   }
-// };
 
 const uploadFolderToIPFS = async (folderPath) => {
-  try {
-    const addedFiles = [];
-    const ipfsOptions = {
-      wrapWithDirectory: true,
-      pin: true,
-      hidden: true,
-      timeout: '5m'
-    };
-
-    console.log(`Uploading folder to IPFS: ${folderPath}`);
-
-    const multiBar = new MultiBar({
-      clearOnComplete: false,
-      hideCursor: true,
-      format: 'Progress [{bar}] {percentage}% | {value}/{total} MB'
-    }, Presets.shades_classic);
-
-    const files = [];
-    const readDirectory = (dir) => {
-      fs.readdirSync(dir).forEach((file) => {
-        const fullPath = path.join(dir, file);
-        if (fs.statSync(fullPath).isDirectory()) {
-          readDirectory(fullPath);
-        } else {
-          files.push({
-            path: path.relative(folderPath, fullPath),
-            size: fs.statSync(fullPath).size
-          });
-        }
-      });
-    };
-
-    readDirectory(folderPath);
-    const totalSize = files.reduce((acc, file) => acc + file.size, 0);
-
-    const progressBar = multiBar.create(totalSize / 1024 / 1024, 0);
-
-    for await (const file of ipfs.addAll(files.map(file => ({
-      path: file.path.replace(/\\/g, '/'),
-      content: fs.createReadStream(path.join(folderPath, file.path))
-    })), { ...ipfsOptions })) {
-      addedFiles.push({
-        cid: file.cid.toString(),
-        path: file.path,
-        size: file.size,
-      });
-      progressBar.increment(file.size / 1024 / 1024);
+  const hash = await retryOnFailure(() => uploadDirOnce(folderPath), 'upload_dir');
+  if (hash) {
+    try {
+      await fss.writeFile(`./IPFS_HASH.ipfs`, hash);
+    } catch {
+      /* best effort */
     }
-    progressBar.update(totalSize / 1024 / 1024);
-    multiBar.stop();
-    const _hash = addedFiles.find(file => file.path === '').cid;
-    // Return the CID of the root directory
-    await fss.writeFile(`./IPFS_HASH.ipfs`, _hash);
-    return _hash;
-  } catch (e) {
-    return "Upload failed.";
+    return hash;
   }
+  return 'Upload failed.';
 };
 
-const getFromIPFS = async (hhash,  filePath, maxRetries = process.env.REACT_APP_IPFS_RETRIES || 5) => {
+// Dispatcher mirroring Python's IPFSClient.upload(path).
+const upload = async (p) => {
+  const stat = fs.statSync(p);
+  if (stat.isFile()) return uploadFileToIPFS(p);
+  if (stat.isDirectory()) return uploadFolderToIPFS(p);
+  console.log(`Path ${p} is neither a file nor a directory.`);
+  return null;
+};
+
+// ---------------------------------------------------------------------------
+// Download helpers (kubo-rpc-client based; unchanged behaviour)
+// ---------------------------------------------------------------------------
+
+const getFromIPFS = async (hhash, filePath, maxRetries = process.env.REACT_APP_IPFS_RETRIES || 5) => {
   let res = '';
   let retryCount = 0;
-  // console.log('Downloading file from IPFS...');
-  // console.log(`Hash: ${hhash}`);
-  // console.log(`Max Retries: ${maxRetries}`);
-
   while (retryCount < maxRetries) {
     try {
       for await (const file of ipfs.cat(hhash)) {
-        res += new TextDecoder().decode(file.buffer);
+        res += new TextDecoder().decode(file.buffer || file);
       }
       await writeFile(filePath, res);
       return;
     } catch (error) {
       console.error(`Error: ${error.message}`);
       retryCount += 1;
-
       if (retryCount < maxRetries) {
-        console.log(`Retrying... (${retryCount}/${maxRetries})`);
         await delay(getRetryDelay(retryCount));
         continue;
       } else {
-        throw new Error("ECError.IPFS_DOWNLOAD_ERROR");
-      }
-    }
-  }
-};
-
-const downloadFromIPFS = async (hash, folderPath, maxRetries = process.env.REACT_APP_IPFS_RETRIES || 5) => {
-  let retryCount = 0;
-  console.log(`Hash: ${hash}`);
-  console.log(`Folder Path: ${folderPath}`);
-  console.log(`Max Retries: ${maxRetries}`);
-
-  while (retryCount < maxRetries) {
-    try {
-      for await (const file of ipfs.get(hash)) {
-        console.log(`file: ${JSON.stringify(file, null, 2)}`);
-        const filePathToWrite = path.join(folderPath, file.path);
-
-        if (file.type === 'dir') {
-          await fs.mkdir(filePathToWrite, { recursive: true });
-        } else {
-          const content = new TextDecoder().decode(file.content);
-          await fs.mkdir(path.dirname(filePathToWrite), { recursive: true });
-          await fs.writeFile(filePathToWrite, content);
-        }
-      }
-      console.log(`Download complete. Files saved to ${folderPath}`);
-      return;
-    } catch (error) {
-      console.error(`Error: ${error.message}`);
-      retryCount += 1;
-
-      if (retryCount < maxRetries) {
-        console.log(`Retrying... (${retryCount}/${maxRetries})`);
-        await delay(getRetryDelay(retryCount));
-        continue;
-      } else {
-        throw new Error("ECError.IPFS_DOWNLOAD_ERROR");
+        throw new Error('ECError.IPFS_DOWNLOAD_ERROR');
       }
     }
   }
@@ -362,130 +351,62 @@ const downloadFromIPFS = async (hash, folderPath, maxRetries = process.env.REACT
 
 const downloadFolderFromIPFS = async (cid, outputPath) => {
   try {
-    // const ipfs = create({ url: 'http://localhost:5001' }); // Adjust the IPFS API URL if necessary
-
     console.log(`Downloading folder from IPFS: ${cid}`);
-
-    const multiBar = new MultiBar({
-      clearOnComplete: false,
-      hideCursor: true,
-      format: 'Progress [{bar}] {percentage}% | {value}/{total} MB'
-    }, Presets.shades_classic);
-
     const files = [];
     for await (const file of ipfs.get(cid)) {
-      console.log(`file: ${JSON.stringify(file, null, 2)}`);
       if (!file.content) continue;
-
       const filePath = path.join(outputPath, file.path);
       const dir = path.dirname(filePath);
-
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       const writeStream = fs.createWriteStream(filePath);
-      const progressBar = multiBar.create(file.size / 1024 / 1024, 0);
-
       for await (const chunk of file.content) {
         writeStream.write(chunk);
-        progressBar.increment(chunk.length / 1024 / 1024);
       }
-
       writeStream.end();
-      progressBar.update(file.size / 1024 / 1024);
       files.push(filePath);
     }
-
-    multiBar.stop();
     console.log(`Downloaded ${files.length} files to ${outputPath}`);
   } catch (e) {
     console.error(e);
-    return "err";
+    return 'err';
   }
 };
-
-// const downloadFolderFromIPFS = async (cid, folderPath) => {
-//   try {
-//     console.log(`Downloading folder from IPFS: ${cid}`);
-
-//     // let res = await ipfs.get(cid);
-
-//     // const buffer = res[0];
-
-//     const utf8Decode = new TextDecoder('utf-8');
-//     // const string = utf8Decode.decode(buffer);
-
-//     // const object = JSON.parse(string);
-//     // console.log(`object: ${JSON.stringify(string, null, 2)}`);
-//     for await (const file of ipfs.get(cid)) {
-
-//       // console.log(`file: ${JSON.stringify(file, null, 2)}`);
-//       console.log(`file decoded: ${JSON.stringify(utf8Decode.decode(file), null, 2)}`);
-//       // const buffer = file[0];
-//       // console.log(`file: ${JSON.stringify(utf8Decode.decode(buffer), null, 2)}`);
-//       process.exit(0);
-//       // console.log(`${JSON.stringify(new TextDecoder().decode(file), null, 2)}`)
-//       // console.log(`file: ${JSON.stringify(file, null, 2)}`);
-//       // console.log(`file: ${JSON.stringify(file, null, 2)}`);
-//       // for await (const ffile of ipfs.ls(file.path)) {
-//       //   console.log(`ffile: ${JSON.stringify(ffile, null, 2)}`);
-//       // }
-//       // for await (const ffile of ipfs.get("QmbjQpKFbueKR6QDU2Cj4ChsyGBR2spMwKV2S3yqrjF6w7")) {
-//       //   console.log(`ffile: ${JSON.stringify(ffile, null, 2)}`);
-//       // }
-//       // console.log(`file cid: ${JSON.stringify(await ipfs.get("QmbjQpKFbueKR6QDU2Cj4ChsyGBR2spMwKV2S3yqrjF6w7"), null, 2)}`);
-
-//       // if (!file.path) {
-//       //   // console.warn(`Skipping file with undefined path: ${JSON.stringify(file)}`);
-//       //   continue;
-//       // }
-
-//       // const filePath = path.join(folderPath, file.path);
-//       // console.log(`Downloading file: ${filePath}`);
-//       // if (file.type === 'dir') {
-//       //   fs.mkdirSync(filePath, { recursive: true });
-//       // } else {
-//       //   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-//       //   const content = [];
-//       //   for await (const chunk of file.content) {
-//       //     content.push(chunk);
-//       //   }
-//       //   fs.writeFileSync(filePath, Buffer.concat(content));
-//       // }
-//     }
-
-//     console.log(`Download complete: ${folderPath}`);
-//   } catch (e) {
-//     console.error(e);
-//     return "err";
-//   }
-// };
 
 const getContentFromIPFS = async (hash, maxRetries = process.env.REACT_APP_IPFS_RETRIES || 5) => {
   let res = '';
   let retryCount = 0;
-
   while (retryCount < maxRetries) {
     try {
       for await (const file of ipfs.cat(hash)) {
-        res += new TextDecoder().decode(file.buffer);
+        res += new TextDecoder().decode(file.buffer || file);
       }
-
       return res;
     } catch (error) {
       console.error(error.message);
       retryCount += 1;
-
       if (retryCount < maxRetries) {
         await delay(getRetryDelay(retryCount));
         continue;
       } else {
-        throw new Error("ECIPFSDownloadError");
+        throw new Error('ECIPFSDownloadError');
       }
     }
   }
 };
+
+export {
+  initialize,
+  upload,
+  uploadFileToIPFS,
+  uploadFolderToIPFS,
+  getFromIPFS,
+  downloadFolderFromIPFS,
+  getContentFromIPFS
+};
+
+// ---------------------------------------------------------------------------
+// CLI (unchanged interface: --host --action upload/download --filePath/--folderPath)
+// ---------------------------------------------------------------------------
 
 program
   .option('--host <host>', 'IPFS host')
@@ -493,59 +414,52 @@ program
   .option('--filePath <path>', 'Path to the file')
   .option('--folderPath <path>', 'Path to the folder')
   .option('--action <action>', 'Action to perform (upload, download)')
+  .option('--token <token>', 'IPFS authorization token')
   .option('--output <path>', 'Output path for download');
 
-program.parse(process.argv);
+const isMain = process.argv[1] && process.argv[1].endsWith('ipfs.mjs');
 
-const options = program.opts();
+if (isMain) {
+  program.parse(process.argv);
+  const options = program.opts();
 
-const main = async () => {
-  const host = options.host || 'localhost';
-  initialize(host);
+  const main = async () => {
+    const host = options.host || 'localhost';
+    initialize(host, undefined, undefined, options.token || '');
 
-  if (options.action === 'upload') {
-    if (options.filePath) {
-      const hhash = await uploadFileToIPFS(options.filePath);
-      console.log(`${hhash}`);
-    } else if (options.folderPath) {
-      // const hhash = await uploadFolderToIPFSBatch(options.folderPath);
-      let retryCount = 0;
-      let hhash = null;
-      try {
-        hhash = await uploadFolderToIPFS(options.folderPath);
+    if (options.action === 'upload') {
+      if (options.filePath) {
+        const hhash = await uploadFileToIPFS(options.filePath);
         console.log(`${hhash}`);
-      } catch (e) {
-        // console.log(e);
-      }
-      while ((!hhash || hhash === 'Upload failed.') && retryCount < 3) {
-        console.log(`Retrying... (${retryCount}/3)`);
-        hhash = await uploadFolderToIPFS(options.folderPath);
+        process.exit(hhash ? 0 : 1);
+      } else if (options.folderPath) {
+        // retryOnFailure already retries 10x internally; a single call suffices.
+        const hhash = await uploadFolderToIPFS(options.folderPath);
         console.log(`${hhash}`);
-        retryCount += 1;
+        if (!hhash || hhash === 'Upload failed.') {
+          console.log(`Failed to upload folder to IPFS, please try again.`);
+          process.exit(1);
+        }
+        process.exit(0);
+      } else {
+        console.error('Please provide a filePath or folderPath for upload.');
+        process.exit(1);
       }
-
-      if (!hhash || hhash === 'Upload failed.') {
-        console.log(`Failed to upload folder to IPFS, please try again.`);
+    } else if (options.action === 'download') {
+      if (options.filePath) {
+        await getFromIPFS(options.hhash, options.filePath);
+        console.log(`File downloaded. ${options.hhash}`);
+      } else if (options.folderPath) {
+        await downloadFolderFromIPFS(options.hhash, options.folderPath);
+        console.log(`Folder downloaded. ${options.hhash}`);
+      } else {
+        console.error('Please provide a filePath or folderPath for download.');
       }
-      process.exit(0);
     } else {
-      console.error('Please provide a filePath or folderPath for upload.');
+      console.error('Please provide a valid action (upload, download).');
+      process.exit(1);
     }
-  } else if (options.action === 'download') {
-    if (options.filePath) {
-      console.log(`Downloading file from IPFS: ${options.hhash}`);
-      const content = await getFromIPFS(options.hhash, options.filePath);
-      console.log(`File downloaded. ${options.hhash}`);
-    } else if (options.folderPath) {
-      console.log(`Downloading folder from IPFS: ${options.hhash}`);
-      const content = await downloadFolderFromIPFS(options.hhash, options.folderPath);
-      console.log(`Folder downloaded. ${options.hhash}`);
-    } else {
-      console.error('Please provide a filePath or folderPath for download.');
-    }
-  } else {
-    console.error('Please provide a valid action (upload, download).');
-  }
-};
+  };
 
-main();
+  main();
+}

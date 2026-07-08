@@ -6,7 +6,6 @@ RUN cd /
 
 RUN apk add bash
 
-ENV SCONE_MODE=SIM
 ENV SCONE_HEAP=256M
 ENV SCONE_LOG=DEBUG
 ENV ENCLAVE_NAME_SECURELOCK=__ENCLAVE_NAME_SECURELOCK__
@@ -50,14 +49,31 @@ RUN apk add openssl
 
 RUN openssl genrsa -3 -out /enclave-key.pem 3072
 
-
-ENV SCONE_LOG=info
+# SCONE runtime env. These MUST match the enclave-creation params passed to
+# scone-signer below (SCONE embeds defaults for anything not signed explicitly;
+# any drift makes SCONE recompute + debug re-sign the enclave at load, which CAS
+# rejects on mainnet). Values mirror the publish/run docker-compose securelock
+# service (SCONE_HEAP=1024M, SCONE_STACK=4M, dlopen=1, extensions=libbinary-fs).
 ENV SCONE_HEAP=1024M
+ENV SCONE_STACK=4M
 ENV SCONE_ALLOW_DLOPEN=1
 ENV SCONE_EXTENSIONS_PATH=/lib/libbinary-fs.so
 
-# Enable production mode for mainnet
-# RUN scone-signer sign --key=/enclave-key.pem --env --production /usr/bin/node
+# Rendered by build.mjs. Signs the EXECUTED binary (/usr/local/bin/node -- the
+# ENTRYPOINT and the run/publish compose command both run /usr/local/bin/node).
+# Mainnet adds --production (CAS/DCAP attestation); testnet omits it (non-CAS
+# self-sign). On testnet builds this line is a no-op comment.
+__SCONE_SIGN__
+
+# Record the SIGNED MRENCLAVE so publish (run.js) can assert the runtime enclave
+# measurement matches what was signed BEFORE registering the CAS session /
+# publishing. A mismatch means SCONE recomputed the enclave at load (params
+# drift) => debug re-sign => CAS rejects the DCAP quote on mainnet. Only produced
+# for --production (mainnet) signs; on testnet the file is absent and the check
+# is skipped. Capture to a file first: piping scone-signer into `head` kills it
+# with SIGPIPE (exit 141) under buildkit's pipefail shell.
+__SIGNED_MRENCLAVE__
+
 RUN rm -rf /enclave-key.pem
 
 #RUN scone cas attest scone-cas.cf 3061b9feb7fa67f3815336a085f629a13f04b0a1667c93b14ff35581dc8271e4 -GCS --only_for_testing-debug --only_for_testing-ignore-signer
