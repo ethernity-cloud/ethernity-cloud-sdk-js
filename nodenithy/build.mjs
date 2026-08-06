@@ -92,6 +92,29 @@ runCommand(`docker rm registry -f`);
 
 const srcDir = './src/serverless';
 const destDir = path.join(buildDir, 'securelock/src/serverless');
+
+// Fail the build NOW if the backend is missing or unloadable. An enclave
+// built without a valid backend runs every task into "X is not defined" /
+// IMPORT_ERROR on-chain — expensive to discover after building, publishing
+// and paying for a task.
+const backendFile = path.join(srcDir, 'backend.js');
+if (!fs.existsSync(backendFile)) {
+  console.error(`ERROR: ${backendFile} not found.`);
+  console.error('       The securelock enclave loads your functions from src/serverless/backend.js;');
+  console.error('       without it no backend function will exist inside the enclave.');
+  console.error('       Run ecld-init to scaffold it, or create the file before building.');
+  process.exit(1);
+}
+try {
+  const { createRequire } = await import('module');
+  createRequire(import.meta.url)(path.resolve(backendFile));
+} catch (e) {
+  console.error('ERROR: src/serverless/backend.js failed to load and would fail inside the enclave:');
+  console.error(`       ${e.name || 'Error'}: ${e.message}`);
+  console.error('       Fix the module (missing dependency? bad require?) before building.');
+  process.exit(1);
+}
+
 console.log(`Creating destination directory: ${destDir}`);
 fs.mkdirSync(destDir, { recursive: true });
 

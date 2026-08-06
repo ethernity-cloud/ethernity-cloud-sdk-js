@@ -10,10 +10,24 @@ const { TaskStatus } = require('./task_status');
 // A missing backend leaves only ___etny_result___ in scope, which is the
 // stock-enclave behaviour.
 let backendFunctions = {};
+// If the backend fails to load, remember WHY. A silently-swallowed failure
+// (missing npm module, bad require inside backend.js) makes every task die
+// later with a misleading "X is not defined". Only a genuinely absent backend
+// stays silent — that is the stock-enclave configuration.
+let backendImportError = null;
 try {
     backendFunctions = { ...require('./serverless/backend') };
 } catch (e) {
     backendFunctions = {};
+    // MODULE_NOT_FOUND messages embed the whole require stack (which always
+    // mentions serverless/backend.js), so parse out WHICH module is missing:
+    // only a missing backend module itself means "no backend shipped".
+    const m = /Cannot find module '([^']+)'/.exec(e.message || '');
+    const missingBackendItself =
+        e.code === 'MODULE_NOT_FOUND' && m && /serverless[\\/]backend/.test(m[1]);
+    if (!missingBackendItself) {
+        backendImportError = `${e.name || 'Error'}: ${(e.message || '').split('\n')[0]}`;
+    }
 }
 
 function ___etny_result___(data) {
@@ -21,6 +35,15 @@ function ___etny_result___(data) {
 }
 
 function executeTask(payload, input) {
+    if (backendImportError !== null) {
+        return [
+            TaskStatus.IMPORT_ERROR,
+            'BACKEND IMPORT ERROR: ' + backendImportError +
+            ' | The serverless backend failed to load inside the enclave, so none of its' +
+            ' functions are available. Common causes: a module missing from the enclave' +
+            ' image dependencies, or a bad require() inside backend.js.'
+        ];
+    }
     return exec(payload, input, { '___etny_result___': ___etny_result___, ...backendFunctions });
 }
 

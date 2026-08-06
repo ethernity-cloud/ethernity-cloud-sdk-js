@@ -43,6 +43,7 @@ const TASK_STATUS_NAMES = {
   6: 'PAYLOAD_CHECKSUM_ERROR',
   7: 'INPUT_CHECKSUM_ERROR',
   8: 'EVAL_ERROR',
+  28: 'IMPORT_ERROR',
 };
 
 const VENDORED_SRC = path.join(__dirname, 'nodenithy', 'build', 'securelock', 'src');
