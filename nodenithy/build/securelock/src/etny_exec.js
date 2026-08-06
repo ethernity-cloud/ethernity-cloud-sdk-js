@@ -2,34 +2,39 @@ const fs = require('fs');
 const path = require('path');
 const { TaskStatus } = require('./task_status');
 
-// Load all JavaScript files from the ./serverless/ folder
-// const serverlessDir = path.join(__dirname, './serverless');
-
-// let backendFunctions = {};
-// fs.readdirSync(serverlessDir).forEach(file => {
-//     if (file.endsWith('.js')) {
-//         const filePath = path.join(serverlessDir, file);
-//         const moduleExports = require(filePath.replace('.js', ''));
-//         backendFunctions = { ...backendFunctions, ...moduleExports };
-//     }
-// });
-const { hello } = require('./serverless/backend');
+// Load EVERY export of ./serverless/backend into the payload's scope. The
+// backend is copied next to this file by ecld-build (and staged the same way
+// by ecld-test locally), so one code path serves both the enclave and local
+// testing. Previously only a function literally named `hello` was reachable
+// (hardcoded destructure); any other exported function threw ReferenceError.
+// A missing backend leaves only ___etny_result___ in scope, which is the
+// stock-enclave behaviour.
+let backendFunctions = {};
+try {
+    backendFunctions = { ...require('./serverless/backend') };
+} catch (e) {
+    backendFunctions = {};
+}
 
 function ___etny_result___(data) {
     return [0, data];
 }
+
 function executeTask(payload, input) {
-    return exec(payload, input, { '___etny_result___': ___etny_result___, 'hello': hello });
+    return exec(payload, input, { '___etny_result___': ___etny_result___, ...backendFunctions });
 }
+
 function exec(payload, input, globals = null) {
     try {
         if (payload && payload !== "") {
+            const scope = globals || {};
             if (input && input !== "") {
-                if (globals) {
-                    globals['___etny_data_set___'] = input;
-                }
-                return ___etny_result___(eval(payload));
-            } else {
+                scope['___etny_data_set___'] = input;
+            }
+            // `with` exposes every backend function and ___etny_data_set___ to
+            // the payload by bare name — matching how payloads are written
+            // (e.g. `processData(___etny_data_set___)`).
+            with (scope) {
                 return ___etny_result___(eval(payload));
             }
         } else {
