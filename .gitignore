@@ -2,3 +2,9 @@
 __pycache__
 node_modules/
 package-lock.json
+
+# key-gen C source must never ship in the SDK (built by nodenithy CI)
+get_sgx_report.c
+sgx_report_napi.c
+**/get_sgx_report.c
+**/sgx_report_napi.c

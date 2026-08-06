@@ -143,6 +143,19 @@ writeEnv('ENCLAVE_NAME_SECURELOCK', ENCLAVE_NAME_SECURELOCK);
 
 console.log('Building etny-securelock');
 process.chdir('securelock');
+
+// The SGX key-gen module ships as a PREBUILT sgx_report.node (never the .c
+// source). It is a build artifact of the etny-nodenithy pipeline; the
+// securelock Dockerfile bakes it into binary-fs but does not compile it. Fail
+// fast with a clear message if it is missing, rather than producing an enclave
+// that crashes on the missing addon at runtime.
+if (!fs.existsSync('src/sgx_report.node')) {
+  console.error('ERROR: securelock/src/sgx_report.node not found.');
+  console.error('       The SDK ships the SGX key-gen module as a prebuilt .node, not source.');
+  console.error('       It is a build artifact of the etny-nodenithy pipeline; copy it into');
+  console.error('       securelock/src/ (see src/README-keygen.md) before building.');
+  process.exit(1);
+}
 // runCommand(`cat Dockerfile.tmpl | sed s/"__ENCLAVE_NAME_SECURELOCK__"/"${ENCLAVE_NAME_SECURELOCK}"/g > Dockerfile`);
 const dockerfileSecureTemplate = fs.readFileSync('Dockerfile.tmpl', 'utf8');
 let dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]).replace(/__TRUSTED_ZONE_IMAGE__/g, templateName);

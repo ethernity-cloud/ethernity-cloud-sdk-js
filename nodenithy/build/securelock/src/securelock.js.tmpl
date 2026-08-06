@@ -1,3 +1,12 @@
+// Force stdout/stderr to be synchronous (blocking). Under SCONE 6 + Node, when
+// the process exits quickly (e.g. the PUBLIC_KEY cert-harvest run, which prints
+// the cert then returns) Node's pipe-buffered stdout can be torn down before it
+// flushes, so the harvested "PUBLIC_KEY:" line is lost and the CI cannot read
+// the certificate. Setting the fd handles to blocking makes every console.log
+// write synchronously.
+try { if (process.stdout._handle && process.stdout._handle.setBlocking) process.stdout._handle.setBlocking(true); } catch (e) {}
+try { if (process.stderr._handle && process.stderr._handle.setBlocking) process.stderr._handle.setBlocking(true); } catch (e) {}
+
 require('dotenv').config();
 require('dotenv').config({path: './app/.env'});
 require('dotenv').config({path: '/app/.env'});
@@ -14,6 +23,12 @@ const SwiftStreamService = require("./swift_stream_service");
 const contract_abi = require('./pox_abi');
 const image_registry_abi = require('./image_registry_abi');
 const {sha256} = require("./etny_crypto");
+const {generateCertFromMrEnclave} = require("./self_sign");
+
+// Baked per network by CI (render_network.sh): "mainnet" | "testnet". On testnet
+// the enclave self-signs its cert from MR_ENCLAVE (non-CAS mode); on mainnet the
+// cert/key are provisioned by CAS into the injection paths.
+const NETWORK_TYPE = "__ETNY_NETWORK_TYPE__";
 
 class EtnySecureLock {
     static debug = false;
@@ -22,7 +37,7 @@ class EtnySecureLock {
         console.log('Initializing...');
         this.version = 'v3';
         this.swiftStreamService = swiftStreamClient;
-        this.etny_bucket = "__BUCKET_NAME__";
+        this.etny_bucket = "__ETNY_BUCKET__";
         this.setInitializers();
     }
 
@@ -35,10 +50,10 @@ class EtnySecureLock {
         this.input = "input.txt.securelock";
         this.result_file = "/app/result.txt";
         this.transaction_file = "/app/transaction.txt";
-        this.smart_contract_address = "__SMART_CONTRACT_ADDRESS__";
-        this.image_registry_address = '__IMAGE_REGISTRY_ADDRESS__';
-        this.chain_id = __CHAIN_ID__;
-        this.web3_provider = "__RPC_URL__";
+        this.smart_contract_address = "__ETNY_SMART_CONTRACT_ADDRESS__";
+        this.image_registry_address = '__ETNY_IMAGE_REGISTRY_ADDRESS__';
+        this.chain_id = __ETNY_CHAIN_ID__;
+        this.web3_provider = "__ETNY_WEB3_PROVIDER__";
         this.signed_tx_as_bytes = null;
         this.client_challenge = "";
 
@@ -89,6 +104,14 @@ class EtnySecureLock {
             this.web3_provider = process.env.ETNY_WEB3_PROVIDER.trim();
         }
 
+        if (process.env.IMAGE_REGISTRY_ADDRESS) {
+            this.image_registry_address = process.env.IMAGE_REGISTRY_ADDRESS.trim();
+        }
+
+        if (process.env.ETNY_BUCKET) {
+            this.etny_bucket = process.env.ETNY_BUCKET.trim();
+        }
+
         if (process.env.ETNY_CLIENT_CHALLENGE) {
             this.client_challenge = process.env.ETNY_CLIENT_CHALLENGE.trim();
         }
@@ -134,50 +157,38 @@ class EtnySecureLock {
         }
     }
 
-    extractSigner(message, signature) {
-        try {
-            return ethers.utils.verifyMessage(message, signature);
-        } catch (e) {
-            console.log('extractSigner:', e)
-        }
-    }
-
+    // v4 checksum validation: the DO-request is submitted on-chain by the owner,
+    // so the metadata checksum is already authenticated by the transaction sender;
+    // we only confirm the file content hashes to that recorded checksum. Empty
+    // input carries no checksum (has_checksum === false) and is skipped. Kept
+    // identical across securelock / trustedzone / validator so all three agree.
     async validateClientPayload(payload_data, input_data) {
         await this.getDORequestMetadata();
-        if (this._metadata.payload_metadata_obj.checksum !== null) {
-            try {
-                const payload_checksum = sha256(payload_data);
-                //console.log('payload checksum: ', payload_checksum, "===", this._metadata.payload_metadata_obj.checksum);
-                // check the wallet address that signed payload checksum is the one from order metadata
-                const payload_signer = this.extractSigner(payload_checksum, this._metadata.payload_metadata_obj.checksum);
-                //console.log("payload_signer", payload_signer);
-                //console.log("this._order_metadata.do_owner.toLowerCase()", this._order_metadata.do_owner.toLowerCase());
-                if (payload_signer.toLowerCase() !== this._order_metadata.do_owner.toLowerCase()) {
-                    this.task_code = TaskStatus.PAYLOAD_CHECKSUM_ERROR;
-                    this.task_result = 'PAYLOAD CHECKSUM DOESN\'T MATCH';
-                    this.is_valid_client_data = false;
-                    return;
-                }
-            } catch (e) {
-                console.log(e);
-            }
 
+        const pmeta = this._metadata.payload_metadata_obj;
+        if (pmeta.has_checksum) {
+            const expected = pmeta.checksum.toLowerCase().replace(/^0x/, '');
+            if (sha256(payload_data) !== expected) {
+                this.task_code = TaskStatus.PAYLOAD_CHECKSUM_ERROR;
+                this.task_result = 'PAYLOAD CHECKSUM DOESN\'T MATCH';
+                this.is_valid_client_data = false;
+                return;
+            }
+        } else {
+            // payload is required and must carry a checksum
+            this.task_code = TaskStatus.PAYLOAD_CHECKSUM_ERROR;
+            this.task_result = 'PAYLOAD CHECKSUM DOESN\'T EXIST';
+            this.is_valid_client_data = false;
+            return;
         }
-        if (this._metadata.input_metadata_obj.checksum !== null) {
-            try {
-                const input_checksum = sha256(input_data);
-                //console.log('input checksum: ', input_checksum, '===', this._metadata.input_metadata_obj.checksum);
-                // check the wallet address that signed input checksum is the one from order metadata
-                const input_signer = this.extractSigner(input_checksum, this._metadata.input_metadata_obj.checksum);
-                //console.log("input_signer", input_signer);
-                //console.log("this._order_metadata.do_owner.toLowerCase()", this._order_metadata.do_owner.toLowerCase());
-                if (input_signer.toLowerCase() !== this._order_metadata.do_owner.toLowerCase()) {
-                    this.task_code = TaskStatus.INPUT_CHECKSUM_ERROR;
-                    this.task_result = 'INPUT CHECKSUM DOESN\'T MATCH';
-                    this.is_valid_client_data = false;
-                }
-            } catch (e) {
-                console.log(e);
+
+        const imeta = this._metadata.input_metadata_obj;
+        if (imeta.has_checksum) {
+            const expected = imeta.checksum.toLowerCase().replace(/^0x/, '');
+            if (sha256(input_data) !== expected) {
+                this.task_code = TaskStatus.INPUT_CHECKSUM_ERROR;
+                this.task_result = 'INPUT CHECKSUM DOESN\'T MATCH';
+                this.is_valid_client_data = false;
             }
         }
     }
@@ -242,16 +253,6 @@ class EtnySecureLock {
         }
     }
 
-    async getLatestTrustedZoneImageCertPublicKey() {
-        try {
-            console.log('Getting the public key of the trusted zone enclave');
-            this.trustedZonePublicKey = (await this.image_registry.getLatestTrustedZoneImageCertPublicKey("__TRUSTED_ZONE_IMAGE__", 'v3'))[1];
-            console.log('Public key of the TrustedZone enclave from smart contract:', this.trustedZonePublicKey);
-        } catch (e) {
-            console.log('getLatestTrustedZoneImageCertPublicKey', e);
-        }
-    }
-
     async encryptFileAndPushToSwiftStream(fileData, fileName) {
         try {
             console.log(`Started saving file ${fileName}.securelock...`);
@@ -295,6 +296,23 @@ class EtnySecureLock {
         //console.log('cert file content', content, '##################');
     }
 
+    // Testnet non-CAS mode: derive a deterministic self-signed cert/key from this
+    // enclave's MR_ENCLAVE and write them to the paths the rest of the code reads
+    // (key_file for decrypt, cert_file for savePublicCert). No-op on mainnet,
+    // where CAS injects the cert/key into those same paths. Idempotent: the key
+    // is a pure function of MR_ENCLAVE so it is identical across restarts.
+    generateSelfSignedCertIfTestnet() {
+        if (NETWORK_TYPE !== "testnet") return;
+        console.log("[SecureLock] TESTNET: self-signing certificate from MR_ENCLAVE (no CAS) [TESTNET-INSECURE]");
+        const {privateKeyPem, certPem, mrEnclaveHex} = generateCertFromMrEnclave("SecureLock Enclave");
+        console.log(`[SecureLock] MR_ENCLAVE: ${mrEnclaveHex}`);
+        for (const f of [this.key_file, this.cert_file, this.pub_cert_file]) {
+            try { fs.mkdirSync(require('path').dirname(f), {recursive: true}); } catch (e) {}
+        }
+        fs.writeFileSync(this.key_file, privateKeyPem);
+        fs.writeFileSync(this.cert_file, certPem);
+    }
+
     async savePublicCert() {
         try {
             const content = await fs.promises.readFile(this.cert_file, 'utf8');
@@ -311,7 +329,7 @@ class EtnySecureLock {
 
     async saveResult() {
         try {
-            await this.getLatestTrustedZoneImageCertPublicKey();
+            await this.getTrustedZonePublicKey();
             await this.encryptFileAndPushToSwiftStream(this.task_result, 'result.txt');
             await this.encryptFileAndPushToSwiftStream(this.task_code.toString(), 'result_code.txt');
 
@@ -373,6 +391,11 @@ async function execute() {
     const swiftStreamClient = initSwiftStreamClient();
 
     const app = new EtnySecureLock(swiftStreamClient);
+
+    // Testnet: materialize the self-signed cert/key from MR_ENCLAVE into the
+    // file paths before anything reads them (harvest + decrypt). No-op on mainnet
+    // (CAS provides those files).
+    app.generateSelfSignedCertIfTestnet();
 
     const hasReadEnvFile = await app.readEnv();
     if (!hasReadEnvFile && !EtnySecureLock.debug) {

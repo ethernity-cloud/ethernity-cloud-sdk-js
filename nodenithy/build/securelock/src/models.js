@@ -26,6 +26,13 @@ class MetadataBase {
     checksum() {
         throw new Error("Subclass must implement this method");
     }
+
+    // True when this metadata carries a real checksum to validate. Empty input
+    // carries no checksum (checksum is null), so callers can skip validation
+    // without inspecting raw metadata strings themselves.
+    get has_checksum() {
+        return this.checksum != null;
+    }
 }
 
 class PayloadFactory {
@@ -150,7 +157,11 @@ class PayloadMetadataV2 extends MetadataBase {
 class PayloadMetadataV3 extends MetadataBase {
     constructor(metadata) {
         super(metadata, "v3");
-        this._checksum = metadata.split(":")[2];
+        // An absent checksum (empty or "0" third field) is normalized to null so
+        // the rest of the code can rely on `has_checksum` instead of special-
+        // casing empty strings.
+        const c = (metadata.split(":")[2] || "").trim();
+        this._checksum = (c && c !== "0") ? c : null;
         this._ipfs_hash = metadata.split(":")[1];
     }
 
@@ -182,7 +193,10 @@ class InputMetadataV2 extends MetadataBase {
 class InputMetadataV3 extends MetadataBase {
     constructor(metadata) {
         super(metadata, "v3");
-        this._checksum = metadata.split(":")[2];
+        // Empty input carries an empty (or "0") checksum field; normalize it to
+        // null so `has_checksum` is false and validation is skipped.
+        const c = (metadata.split(":")[2] || "").trim();
+        this._checksum = (c && c !== "0") ? c : null;
         this._ipfs_hash = metadata.split(":")[1];
     }
 
@@ -191,7 +205,7 @@ class InputMetadataV3 extends MetadataBase {
     }
 
     get checksum() {
-        return this._checksum !== "0" ? this._checksum : this._checksum;
+        return this._checksum;
     }
 }
 
