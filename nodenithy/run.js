@@ -509,6 +509,11 @@ const main = async () => {
                     if (/^0x[0-9a-fA-F]{40}$/.test(esrAddr)) {
                         writeEnv('ESR_WALLET_ADDRESS', esrAddr);
                         console.log(`ESR_WALLET_ADDRESS: ${esrAddr}`);
+                        // Manual funding by the data owner is the default path;
+                        // publishing never transfers value on its own. Say so, or
+                        // the first task needing gas fails with no clue why.
+                        console.log('   This wallet starts EMPTY. Fund it from your own wallet with');
+                        console.log('   whatever your payload needs; publishing never transfers value.');
                     }
                 }
             } catch (e) {
