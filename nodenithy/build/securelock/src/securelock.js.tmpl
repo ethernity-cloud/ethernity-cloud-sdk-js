@@ -412,6 +412,37 @@ class EtnySecureLock {
         }
     }
 
+    // Make StateRegistry usable from payload code, if ESR is enabled.
+    //
+    // Wires ecld_state to this enclave's identity key, the SwiftStream client
+    // and bucket the node shares with us, the registry address baked in at build
+    // time, and the provider. Payload code then just does:
+    //
+    //     const {StateRegistry} = require('./ecld_state');
+    //     await new StateRegistry().commit('key', s => ...);
+    //
+    // No-op when ESR is disabled, so non-ESR enclaves are unaffected. Never
+    // throws: a setup problem must not stop the task from running -- payload
+    // code that then uses StateRegistry gets a clear error from the registry
+    // itself rather than a task that died before starting.
+    configureStateRegistry() {
+        const contractAddress = String(process.env.ESR_CONTRACT_ADDRESS || "").trim();
+        if (!contractAddress) return;
+        try {
+            const ecld_state = require("./ecld_state");
+            ecld_state.configure({
+                identityPriv: this.identity_private_key_pem || fs.readFileSync(this.key_file, 'utf8'),
+                swiftStreamService: this.swiftStreamService,
+                bucket: this.etny_bucket,
+                contractAddress: contractAddress,
+                provider: this.w3,
+            });
+            console.log(`StateRegistry ready (ESR ${contractAddress})`);
+        } catch (e) {
+            console.error(`ESR_STATE_ERROR: could not configure StateRegistry: ${e && e.message ? e.message : e}`);
+        }
+    }
+
     async execute() {
         const payload_data = await this.getFileContentAndDecrypt(this.etny_bucket, this.payload);
         const input_data = await this.getFileContentAndDecrypt(this.etny_bucket, this.input);
@@ -424,6 +455,8 @@ class EtnySecureLock {
             console.log('Client payload and input are NOT valid');
             return false;
         }
+
+        this.configureStateRegistry();
 
         const task_result = executeTask(payload_data, input_data);
         console.log('TASK RESULT (code, data):', task_result);

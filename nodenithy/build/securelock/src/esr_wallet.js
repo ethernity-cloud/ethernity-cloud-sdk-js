@@ -139,4 +139,9 @@ module.exports = {
   deriveWalletAddress,
   isSecretIdentity,
   INSECURE_IDENTITY_WARNING,
+  // Underscored to mark it private: it is exported ONLY so ecld_state can build
+  // the signing wallet, since duplicating the derivation there would risk the
+  // two copies drifting apart. Payload code must never call this -- the address
+  // is the public surface, the key is not.
+  _deriveWalletPrivateKey: deriveWalletPrivateKey,
 };
