@@ -129,9 +129,13 @@ const INSECURE_IDENTITY_WARNING =
   'and do not fund it with real value. (An attested testnet build can set ' +
   'ESR_IDENTITY_SECRET=1 to suppress this warning.)';
 
+// deriveWalletPrivateKey is deliberately NOT exported. The client payload is
+// eval'd inside etny_exec's module scope, where require() is reachable, so an
+// exported key-derivation helper would hand untrusted code a ready-made way to
+// materialize the ESR private key. Only the ADDRESS leaves this module (RFC
+// §5.2); the wallet key stays an implementation detail of deriveWalletAddress.
 module.exports = {
   DOMAIN_SEP,
-  deriveWalletPrivateKey,
   deriveWalletAddress,
   isSecretIdentity,
   INSECURE_IDENTITY_WARNING,
