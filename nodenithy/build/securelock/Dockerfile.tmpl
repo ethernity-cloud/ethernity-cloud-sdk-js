@@ -15,6 +15,11 @@ ENV IMAGE_REGISTRY_ADDRESS=__IMAGE_REGISTRY_ADDRESS__
 ENV RPC_URL=__RPC_URL__
 ENV CHAIN_ID=__CHAIN_ID__
 ENV TRUSTED_ZONE_IMAGE=__TRUSTED_ZONE_IMAGE__
+# ESR (RFC §5.4): rendered by build.mjs to `ENV ESR_CONTRACT_ADDRESS=0x...` only
+# when ESR is enabled, and to nothing otherwise -- so non-ESR images keep exactly
+# the layer content (and MRENCLAVE) they had before ESR existed. The securelock
+# gates all ESR behaviour on this variable being non-empty.
+__ESR_ENV__
 
 RUN mkdir binary-fs-dir
 

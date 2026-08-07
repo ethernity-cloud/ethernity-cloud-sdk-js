@@ -156,9 +156,27 @@ if (!fs.existsSync('src/sgx_report.node')) {
   console.error('       securelock/src/ (see src/README-keygen.md) before building.');
   process.exit(1);
 }
+// ESR fail-fast gate (RFC §5.4), mirroring the Python SDK's validate_esr_config:
+// never build an ESR-enabled enclave with an unresolved registry address. The
+// enclave is SEALED -- a missing value bakes in as empty, and every task then
+// fails at runtime after gas is already spent. ESR is opt-in: absent/false
+// ESR_ENABLED means the build behaves exactly as it did before ESR existed.
+const ESR_ENABLED = /^(1|true|yes)$/i.test(String(process.env.ESR_ENABLED || '').trim());
+const ESR_CONTRACT_ADDRESS = String(process.env.ESR_CONTRACT_ADDRESS || '').trim();
+if (ESR_ENABLED && !/^0x[0-9a-fA-F]{40}$/.test(ESR_CONTRACT_ADDRESS)) {
+  console.error('ERROR: ESR is enabled but ESR_CONTRACT_ADDRESS is not a valid address'
+    + ` (got ${JSON.stringify(ESR_CONTRACT_ADDRESS)}).`);
+  console.error('       The enclave is sealed: a missing value bakes in as EMPTY and every');
+  console.error('       task fails at runtime after gas is spent. Set it with:');
+  console.error('         ecld-init (ESR step) or ESR_CONTRACT_ADDRESS in .env');
+  process.exit(1);
+}
+// Rendered only when enabled, so non-ESR images keep byte-identical layers.
+const esrEnvBlock = ESR_ENABLED ? `ENV ESR_CONTRACT_ADDRESS=${ESR_CONTRACT_ADDRESS}` : '';
+
 // runCommand(`cat Dockerfile.tmpl | sed s/"__ENCLAVE_NAME_SECURELOCK__"/"${ENCLAVE_NAME_SECURELOCK}"/g > Dockerfile`);
 const dockerfileSecureTemplate = fs.readFileSync('Dockerfile.tmpl', 'utf8');
-let dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]).replace(/__TRUSTED_ZONE_IMAGE__/g, templateName);
+let dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]).replace(/__TRUSTED_ZONE_IMAGE__/g, templateName).replace(/^__ESR_ENV__\n/m, esrEnvBlock ? `${esrEnvBlock}\n` : '');
 
 // Amount of enclave heap to allocate (SCONE_HEAP). Kept in sync with the
 // run/docker-compose securelock service; overridable via ECLD_MEMORY_TO_ALLOCATE.

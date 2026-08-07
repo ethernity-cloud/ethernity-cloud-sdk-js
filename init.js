@@ -72,6 +72,53 @@ const promptOptions = (message, options, defaultOption) => {
   });
 };
 
+// Opt-in Enclave State Registry step (ESR RFC §8). Skippable; defaults to off,
+// so a project that never answers yes behaves exactly as it did before ESR.
+// Env equivalents for unattended runs (RFC §9): ECLD_ESR_ENABLE,
+// ECLD_ESR_CONTRACT. Values are persisted to .env, which is how this SDK
+// carries project settings (the Python SDK uses .config.json for the same job).
+const configureEsr = async () => {
+  const enableEnv = process.env.ECLD_ESR_ENABLE;
+  let enabled;
+  if (enableEnv !== undefined) {
+    enabled = /^(1|true|yes|y|on)$/i.test(String(enableEnv).trim());
+    console.log(
+      `Enable Enclave State Registry? [ECLD_ESR_ENABLE -> ${enabled ? "yes" : "no"}]`,
+    );
+  } else {
+    const answer = await promptOptions(
+      "Enable Enclave State Registry (persistent on-chain state)? (default is no): ",
+      ["yes", "no"],
+      "no",
+    );
+    enabled = answer === "yes";
+  }
+
+  if (!enabled) {
+    // Only write an explicit disable when the env var asked for it; re-running
+    // init must not silently switch off a previously configured ESR.
+    if (enableEnv !== undefined) writeEnv("ESR_ENABLED", "false");
+    return;
+  }
+
+  let address = process.env.ECLD_ESR_CONTRACT;
+  if (address === undefined) {
+    address = await new Promise((resolve) =>
+      rl.question("ESR registry contract address (0x...): ", resolve),
+    );
+  }
+  address = String(address || "").trim();
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+    console.error(`ERROR: ESR contract address ${JSON.stringify(address)} is not a valid address.`);
+    console.error("       Set a valid 0x… address (ECLD_ESR_CONTRACT) and re-run ecld-init.");
+    process.exit(1);
+  }
+
+  writeEnv("ESR_ENABLED", "true");
+  writeEnv("ESR_CONTRACT_ADDRESS", address);
+  console.log(`ESR enabled: contract ${address}`);
+};
+
 const printIntro = () => {
   const intro = `
     ╔───────────────────────────────────────────────────────────────────────────────────────────────────────────────╗
@@ -302,6 +349,8 @@ const main = async () => {
 
   writeEnv("BLOCKCHAIN_NETWORK", blockchainNetwork.replace(/ /g, "_"));
   writeEnv("IPFS_ENDPOINT", customUrl);
+  console.log();
+  await configureEsr();
   writeEnv("IPFS_TOKEN", ipfsToken || "");
   writeEnv("VERSION", "v1");
   console.log();

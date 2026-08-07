@@ -11,6 +11,10 @@ class TaskStatus {
     // Extended diagnostic (matches the trustedzone's extended enum): the
     // serverless backend failed to load, so none of its functions exist.
     static IMPORT_ERROR = 28;
+    // A required enclave config value is present but EMPTY (e.g. an ESR
+    // address that was never baked into the sealed image). Reported eagerly
+    // with the variable named, instead of a confusing downstream crash.
+    static CONFIG_ERROR = 32;
 }
 
 module.exports = {

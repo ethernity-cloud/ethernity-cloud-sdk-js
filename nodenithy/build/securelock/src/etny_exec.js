@@ -34,7 +34,29 @@ function ___etny_result___(data) {
     return [0, data];
 }
 
+// Names of *_ADDRESS-style enclave config vars that are set but EMPTY.
+// The enclave is sealed: env can only come from the image, so a present-but-
+// empty required value is always a build/render defect, never a runtime
+// choice. ESR_* vars only exist when the project enabled ESR at build time.
+function emptyRequiredConfig() {
+    const required = ['ESR_CONTRACT_ADDRESS'];
+    return required.filter(
+        (name) => name in process.env && !String(process.env[name]).trim()
+    );
+}
+
 function executeTask(payload, input) {
+    const missing = emptyRequiredConfig();
+    if (missing.length) {
+        return [
+            TaskStatus.CONFIG_ERROR,
+            'ENCLAVE CONFIG ERROR: required value(s) empty inside the enclave: ' +
+            missing.join(', ') +
+            ' | The enclave is sealed, so this value had to be baked at build' +
+            ' time and was not. Re-run ecld-build (it validates ESR config)' +
+            ' and republish.'
+        ];
+    }
     if (backendImportError !== null) {
         return [
             TaskStatus.IMPORT_ERROR,
