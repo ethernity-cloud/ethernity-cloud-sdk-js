@@ -44,6 +44,10 @@ class EtnySecureLock {
 
     setInitializers() {
         this.is_valid_client_data = true;
+        // Testnet holds the self-derived identity key HERE, in memory only, and
+        // never writes it. Stays null on mainnet, where CAS injects the key into
+        // key_file and every consumer reads that path exactly as before.
+        this.identity_private_key_pem = null;
         this.key_file = "/private/__ENCLAVE_NAME_SECURELOCK__/key.pem";
         this.cert_file = "/app/__ENCLAVE_NAME_SECURELOCK__/cert.pem";
         this.pub_cert_file = "/app/__ENCLAVE_NAME_SECURELOCK__/enclave_pub_cert.pem";
@@ -231,7 +235,7 @@ class EtnySecureLock {
             const encryptedBase64 = await this.swiftStreamService.getFileContent(bucketName, objectName);
 
             const encryptedTuple = etny_crypto.encryptedDataFromBase64Json(encryptedBase64);
-            const decryptedResult = etny_crypto.decrypt(this.key_file, encryptedTuple);
+            const decryptedResult = etny_crypto.decrypt(this.privateKeyMaterial(), encryptedTuple);
             return decryptedResult.toString();
         } catch (e) {
             console.log(`Failed to get ${objectName} file`);
@@ -283,35 +287,66 @@ class EtnySecureLock {
     }
 
     resetPrivateCertFile() {
-        //console.log('Resetting the cert file');
+        // Wipes the CAS-injected key from disk after it has been loaded
+        // (mainnet PRODUCTION hygiene). On testnet the key was never written --
+        // it lives only in memory -- so there is nothing on disk to wipe and the
+        // truncate/read below would throw on a file that does not exist.
+        //
+        // The in-memory key is deliberately NOT cleared here: waitForPayloadAndInput
+        // still needs it later to decrypt the payload/input, which runs after
+        // create() has called this. Clearing it would break the task on testnet only.
+        if (this.identity_private_key_pem) {
+            return;
+        }
         try {
-            // const fd = fs.openSync(this.private_key_file, 'w+');
             fs.truncate(this.key_file, 0, function () {
                 //console.log('Private certificate file was cleaned.')
             });
-            // fs.closeSync(fd);
         } catch (e) {
             //console.log('Error while removing the private key file content', e);
         }
-        const content = fs.readFileSync(this.key_file, 'utf8');
-        //console.log('cert file content', content, '##################');
+        try {
+            fs.readFileSync(this.key_file, 'utf8');
+        } catch (e) {
+            // Nothing to read back; the wipe above is what mattered.
+        }
     }
 
     // Testnet non-CAS mode: derive a deterministic self-signed cert/key from this
-    // enclave's MR_ENCLAVE and write them to the paths the rest of the code reads
-    // (key_file for decrypt, cert_file for savePublicCert). No-op on mainnet,
-    // where CAS injects the cert/key into those same paths. Idempotent: the key
-    // is a pure function of MR_ENCLAVE so it is identical across restarts.
+    // enclave's identity. The CERTIFICATE is written (it is public, and
+    // savePublicCert reads it back to publish it); the PRIVATE KEY is kept ONLY
+    // in memory and never touches the filesystem.
+    //
+    // Why memory-only: on testnet there is no CAS and no attestation, so nothing
+    // provisions or protects the key from outside the enclave. Not writing it at
+    // all removes every at-rest attack on it outright, instead of relying on the
+    // file protection being keyed by something trustworthy on this path.
+    //
+    // MAINNET IS UNCHANGED: this method returns immediately there, CAS still
+    // injects cert+key into key_file/cert_file, and every consumer still reads
+    // key_file exactly as before (this.identity_private_key_pem stays null, and
+    // privateKeyMaterial() falls back to the path).
+    //
+    // Idempotent: the key is a pure function of the enclave identity, so it is
+    // identical across restarts without needing to persist it.
     generateSelfSignedCertIfTestnet() {
         if (NETWORK_TYPE !== "testnet") return;
         console.log("[SecureLock] TESTNET: self-signing certificate from MR_ENCLAVE (no CAS) [TESTNET-INSECURE]");
         const {privateKeyPem, certPem, mrEnclaveHex} = generateCertFromMrEnclave("SecureLock Enclave");
         console.log(`[SecureLock] MR_ENCLAVE: ${mrEnclaveHex}`);
-        for (const f of [this.key_file, this.cert_file, this.pub_cert_file]) {
+        for (const f of [this.cert_file, this.pub_cert_file]) {
             try { fs.mkdirSync(require('path').dirname(f), {recursive: true}); } catch (e) {}
         }
-        fs.writeFileSync(this.key_file, privateKeyPem);
+        // Private key: memory only. Deliberately NOT written to this.key_file.
+        this.identity_private_key_pem = privateKeyPem;
         fs.writeFileSync(this.cert_file, certPem);
+    }
+
+    // The enclave's identity private key, in whatever form this network provides
+    // it: the in-memory PEM on testnet, or the CAS-injected key_file path on
+    // mainnet. etny_crypto accepts either, so callers do not branch on network.
+    privateKeyMaterial() {
+        return this.identity_private_key_pem || this.key_file;
     }
 
     async savePublicCert() {
@@ -344,13 +379,13 @@ class EtnySecureLock {
     emitEsrWalletAddress() {
         if (!String(process.env.ESR_CONTRACT_ADDRESS || "").trim()) return;
         try {
-            // Read the identity key the enclave actually holds. This is the ONLY
-            // correct source on both paths: on mainnet CAS provisions the cert +
-            // private key into key_file (nothing in-enclave can re-derive it), and
-            // on testnet generateSelfSignedCertIfTestnet() wrote the self-derived
-            // key to that same path. Hashed as-is, matching the Python SDK.
-            const identityPrivPem = fs.readFileSync(this.key_file, 'utf8');
-            const esrAddress = esr_wallet.deriveWalletAddress(identityPrivPem);
+            // The identity key the enclave actually holds: the CAS-provisioned
+            // key_file on mainnet (nothing in-enclave can re-derive it), or the
+            // in-memory PEM on testnet (never written to disk). Hashed as-is,
+            // matching the Python SDK.
+            const identityPriv = this.identity_private_key_pem
+                || fs.readFileSync(this.key_file, 'utf8');
+            const esrAddress = esr_wallet.deriveWalletAddress(identityPriv);
             console.log(`ESR_WALLET_ADDRESS: ${esrAddress}`);
             if (!esr_wallet.isSecretIdentity(NETWORK_TYPE)) {
                 console.warn(esr_wallet.INSECURE_IDENTITY_WARNING);

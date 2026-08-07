@@ -40,9 +40,19 @@ const loadCertificate = (certificate) => {
     return key;
 }
 
-function getPrivatePointFromPrivateKey(privateKeyFile) {
-    let privateKey = fs.readFileSync(privateKeyFile, 'utf8');
-    //console.log(privateKey);
+// Accepts EITHER a path to a PEM file or the PEM text itself.
+//
+// mainnet keeps passing a path: CAS injects the key into key_file after
+// attestation, and that flow is unchanged. On testnet the enclave self-derives
+// its key and now holds it only in memory (never writes it), so it passes the
+// PEM straight through -- nothing about the key ever reaches the filesystem.
+// Detection is on the PEM header, not on file existence, so a path that does
+// not exist still fails loudly instead of being mistaken for key material.
+function getPrivatePointFromPrivateKey(privateKeyOrFile) {
+    const value = String(privateKeyOrFile || '');
+    const privateKey = value.includes('-----BEGIN')
+        ? value
+        : fs.readFileSync(value, 'utf8');
     let privateKeyHex = rs.KEYUTIL.getKey(privateKey).prvKeyHex;
     const privateKeyObject = curve.keyFromPrivate(privateKeyHex, 'hex');
     return privateKeyObject.getPrivate();
