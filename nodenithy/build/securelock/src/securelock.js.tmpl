@@ -24,6 +24,7 @@ const contract_abi = require('./pox_abi');
 const image_registry_abi = require('./image_registry_abi');
 const {sha256} = require("./etny_crypto");
 const {generateCertFromMrEnclave} = require("./self_sign");
+const esr_wallet = require("./esr_wallet");
 
 // Baked per network by CI (render_network.sh): "mainnet" | "testnet". On testnet
 // the enclave self-signs its cert from MR_ENCLAVE (non-CAS mode); on mainnet the
@@ -321,9 +322,43 @@ class EtnySecureLock {
             console.log(`PUBLIC_KEY:`);
             console.log(content);
 
+            // ESR (RFC §5.2): emit the enclave's ESR wallet ADDRESS on the same
+            // harvest channel as the cert, so publish (or the remote extraction
+            // service) can capture it. It MUST be derived here rather than by the
+            // service: on mainnet the identity key is CAS-provisioned and exists
+            // only inside this enclave, so nobody outside can compute the address.
+            // Only the address is emitted — the private key never leaves.
+            this.emitEsrWalletAddress();
+
             await this.swiftStreamService.putFileContent(this.etny_bucket, 'cert.pem', this.pub_cert_file);
         } catch (err) {
             console.error(err);
+        }
+    }
+
+    // ESR wallet address emission (RFC §5.2). Gated on ESR_CONTRACT_ADDRESS being
+    // set, exactly like the Python securelock, so non-ESR images print nothing.
+    // Derived from the enclave's own identity private key (the certificate key);
+    // only the ADDRESS is logged, never the key. Any failure is reported as
+    // ESR_WALLET_ERROR and never breaks cert harvest or a task.
+    emitEsrWalletAddress() {
+        if (!String(process.env.ESR_CONTRACT_ADDRESS || "").trim()) return;
+        try {
+            // Read the identity key the enclave actually holds. This is the ONLY
+            // correct source on both paths: on mainnet CAS provisions the cert +
+            // private key into key_file (nothing in-enclave can re-derive it), and
+            // on testnet generateSelfSignedCertIfTestnet() wrote the self-derived
+            // key to that same path. Hashed as-is, matching the Python SDK.
+            const identityPrivPem = fs.readFileSync(this.key_file, 'utf8');
+            const esrAddress = esr_wallet.deriveWalletAddress(identityPrivPem);
+            console.log(`ESR_WALLET_ADDRESS: ${esrAddress}`);
+            if (!esr_wallet.isSecretIdentity(NETWORK_TYPE)) {
+                console.warn(esr_wallet.INSECURE_IDENTITY_WARNING);
+            }
+        } catch (e) {
+            // Never let ESR derivation break harvest/a task: report it the way
+            // every other enclave-side config problem is reported.
+            console.error(`ESR_WALLET_ERROR: ${e && e.message ? e.message : e}`);
         }
     }
 

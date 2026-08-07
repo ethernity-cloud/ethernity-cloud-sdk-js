@@ -78,6 +78,17 @@ console.log("Docker Composer Hash:", dockerComposerHash);
                 console.log("Public Key:", checkResponse.publicKey);
                 // Save public key to file
                 fs.writeFileSync('PUBLIC_KEY.txt', checkResponse.publicKey);
+                // ESR (RFC §5.2): the enclave also prints ESR_WALLET_ADDRESS on the
+                // cert channel. The service currently returns only "publicKey"; when
+                // it starts relaying the enclave's output (or adds an
+                // "esrWalletAddress" field) it is picked up here and written to a
+                // sibling file the caller reads -- no other changes needed. Until
+                // then, ESR projects extract locally on an SGX host once to learn
+                // the address (publish then persists it).
+                if (checkResponse.esrWalletAddress) {
+                    console.log("ESR Wallet Address:", checkResponse.esrWalletAddress);
+                    fs.writeFileSync('ESR_WALLET_ADDRESS.txt', checkResponse.esrWalletAddress);
+                }
                 break;
             }
         } else {

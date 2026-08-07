@@ -497,6 +497,23 @@ const main = async () => {
                 console.error("Error: Could not fetch PUBLIC_KEY_SECURELOCK");
                 process.exit(1);
             }
+            // ESR (RFC §5.2): if the extraction relayed the enclave's ESR wallet
+            // address (public_key_service writes ESR_WALLET_ADDRESS.txt when the
+            // service provides it), persist it to .env so a dApp can read/fund the
+            // enclave wallet. Absent file => not an ESR project, or the (mainnet)
+            // address must be learned from a local SGX extraction — either way,
+            // silently skip. Parity with the Python SDK's esr.wallet_address.
+            try {
+                if (fs.existsSync('ESR_WALLET_ADDRESS.txt')) {
+                    const esrAddr = fs.readFileSync('ESR_WALLET_ADDRESS.txt', 'utf8').trim();
+                    if (/^0x[0-9a-fA-F]{40}$/.test(esrAddr)) {
+                        writeEnv('ESR_WALLET_ADDRESS', esrAddr);
+                        console.log(`ESR_WALLET_ADDRESS: ${esrAddr}`);
+                    }
+                }
+            } catch (e) {
+                console.warn(`Could not persist ESR_WALLET_ADDRESS: ${e && e.message ? e.message : e}`);
+            }
         };
     }
 
