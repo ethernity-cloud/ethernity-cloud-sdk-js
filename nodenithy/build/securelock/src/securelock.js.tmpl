@@ -481,6 +481,40 @@ function initSwiftStreamClient() {
     return swiftStreamClient;
 }
 
+// Set as soon as the enclave object exists so the top-level catch can report a
+// failure result even when the throw happens deep inside execute().
+let currentApp = null;
+
+/**
+ * Best-effort: write a failure result so the trustedzone stops waiting.
+ *
+ * Securelock only publishes the result and its code; the trustedzone reads
+ * those and builds the signed transaction. Without them that wait runs to its
+ * timeout and the whole order stalls with no diagnosis.
+ *
+ * Guarded throughout: this runs while already handling a failure, so it must
+ * never throw or hang.
+ */
+async function reportFailure(app, err) {
+    if (!app) {
+        console.log('cannot report failure: enclave died before initialization');
+        return;
+    }
+    try {
+        // Keep a specific code if one was already set (checksum mismatch, ...).
+        if (app.task_code === undefined || app.task_code === null || app.task_code === '') {
+            app.task_code = TaskStatus.SYSTEM_ERROR;
+        }
+        if (!app.task_result) {
+            app.task_result = `ENCLAVE ERROR: ${err && err.message ? err.message : err}`;
+        }
+        await app.saveResult();
+        console.log(`failure reported (task_code=${app.task_code})`);
+    } catch (reportErr) {
+        console.log('could not report the failure result:', reportErr);
+    }
+}
+
 async function execute() {
     console.log('########################################');
     console.log('########################################');
@@ -494,6 +528,9 @@ async function execute() {
     const swiftStreamClient = initSwiftStreamClient();
 
     const app = new EtnySecureLock(swiftStreamClient);
+    // Exposed so the top-level handler can still publish a failure result if
+    // anything below throws (see reportFailure).
+    currentApp = app;
 
     // Testnet: materialize the self-signed cert/key from MR_ENCLAVE into the
     // file paths before anything reads them (harvest + decrypt). No-op on mainnet
@@ -543,5 +580,7 @@ async function execute() {
         await execute();
     } catch (e) {
         console.log(e);
+        await reportFailure(currentApp, e);
+        process.exitCode = 1;
     }
 })();
