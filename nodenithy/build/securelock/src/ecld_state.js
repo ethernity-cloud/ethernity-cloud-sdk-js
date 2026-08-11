@@ -60,6 +60,7 @@ function configure({ identityPriv, swiftStreamService, bucket, contractAddress, 
   _bucket = bucket;
   _contractAddress = contractAddress;
   _provider = provider;
+  _esrLedger = [];
 }
 
 function keccak256(buf) {
@@ -157,10 +158,19 @@ function keyHash(key) {
 
 const ESR_ABI = [
   'function commit(bytes32 key, string newCID, uint256 expectedVersion)',
+  'function commitFor(address enclave, bytes32 key, string newCID, uint256 expectedVersion, uint256 relayNonce, bytes signature)',
+  'function commitDigest(address enclave, bytes32 key, string newCID, uint256 expectedVersion, uint256 relayNonce) view returns (bytes32)',
+  'function relayNonce(address enclave) view returns (uint256)',
   'function getState(address enclave, bytes32 key) view returns (string cid, uint256 version, uint64 updatedAt)',
   'function getVersion(address enclave, bytes32 key) view returns (uint256)',
   'function exists(address enclave, bytes32 key) view returns (bool)'
 ];
+
+// Order-wide ledger of signed authorizations. ESR commits do NOT pay their own
+// gas (see contracts/esr/RELAY-DESIGN.md): the enclave only SIGNS each commit
+// (commitFor); the NODE relays it and pays, and does all gas accounting. The
+// securelock does no gas math -- nothing it could claim about cost is trusted.
+let _esrLedger = [];
 
 class StateRegistry {
   constructor() {
@@ -290,9 +300,39 @@ class StateRegistry {
   }
 
   async _sendCommit(keyHashHex, cid, expectedVersion) {
-    const contract = this._contract(this._signer());
-    const tx = await contract.commit(keyHashHex, cid, expectedVersion);
-    return tx.wait();
+    // The enclave never pays gas and does NO gas math: it SIGNS the commit
+    // (commitFor) and stages the signed authorization for the node, which
+    // relays it and pays. The trustedzone independently re-prices the whole
+    // ledger and adjudicates. Nothing the securelock could claim about cost is
+    // trusted, so it claims nothing.
+    const signer = this._signer();
+    const enclave = await signer.getAddress();
+    const contract = this._contract();
+
+    const relayNonce = await contract.relayNonce(enclave);
+    const digest = await contract.commitDigest(
+      enclave, keyHashHex, cid, expectedVersion, relayNonce);
+    // Sign the raw 32-byte digest as an eth_sign message (matches the
+    // contract's "\x19Ethereum Signed Message:\n32" recovery).
+    const signature = await signer.signMessage(ethers.utils.arrayify(digest));
+
+    const auth = {
+      enclave,
+      keyHash: keyHashHex,
+      cid,
+      expectedVersion: Number(expectedVersion),
+      relayNonce: Number(relayNonce),
+      signature
+    };
+
+    _esrLedger.push(auth);
+    await _swift.putFileContent(
+      _bucket, 'esr.authorizations.json', '',
+      Buffer.from(JSON.stringify(_esrLedger), 'utf8'));
+    await _swift.putFileContent(
+      _bucket, `esr.commit.${Number(relayNonce)}.json`, '',
+      Buffer.from(JSON.stringify(auth), 'utf8'));
+    return { relayed: true, relayNonce: Number(relayNonce) };
   }
 }
 
