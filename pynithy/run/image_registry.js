@@ -26,7 +26,7 @@ function setVars(network = "") {
             GAS = 20000000;
             GAS_PRICE = 40500500010;
         } else {
-            NETWORK_RPC = "https://rpc-amoy.polygon.technology";
+            NETWORK_RPC = "https://polygon-amoy-bor-rpc.publicnode.com";
             IMAGE_REGISTRY_ADDRESS = "0xF7F4eEb3d9a64387F4AcEb6d521b948E6E2fB049";
             CHAIN_ID = 80002;
             GAS = 20000000;
