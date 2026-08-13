@@ -54,7 +54,7 @@ let _provider = null;
  * Wire the registry to the enclave's identity, storage and chain access.
  * Called by securelock at task start; payload code never calls this.
  */
-function configure({ identityPriv, swiftStreamService, bucket, contractAddress, provider }) {
+function configure({ identityPriv, swiftStreamService, bucket, contractAddress, provider, caller = null }) {
   _identityPriv = identityPriv;
   _swift = swiftStreamService;
   _bucket = bucket;
@@ -62,6 +62,67 @@ function configure({ identityPriv, swiftStreamService, bucket, contractAddress, 
   _provider = provider;
   _esrLedger = [];
   _taskLedger = {};
+  _taskCaller = normAddr(caller);
+}
+
+// The authenticated task caller: the wallet that placed the DO request, read
+// from the PoX contract by the TRUSTEDZONE and forwarded over its signed
+// handoff (caller.securelock + .sig, verified by securelock before configure).
+// null when the trustedzone did not supply one -- anonymity is never a
+// privilege: null cannot claim ownership or touch owned state.
+let _taskCaller = null;
+
+function taskCaller() {
+  return _taskCaller;
+}
+
+function normAddr(addr) {
+  return typeof addr === 'string' && addr ? addr.toLowerCase() : null;
+}
+
+/**
+ * State container + ACL. Stored blobs are either legacy (raw state --
+ * "unowned") or an owned container:
+ *   { _ecld_state: 1, acl: {...}, data: <state> }
+ * acl = { owner, read: [], write: [], public_read: false }. Enforcement
+ * happens HERE, inside the enclave, against the trustedzone-attested caller.
+ */
+const CONTAINER_MARK = '_ecld_state';
+
+class StatePermissionError extends Error {}
+
+function unwrapStored(stored) {
+  if (stored && typeof stored === 'object' && stored[CONTAINER_MARK] === 1) {
+    return [stored.acl || null, stored.data];
+  }
+  return [null, stored];
+}
+
+function wrapStored(acl, data) {
+  if (!acl) return data;                 // unowned keeps the legacy shape
+  return { [CONTAINER_MARK]: 1, acl, data };
+}
+
+function aclMembers(acl, field) {
+  return new Set((acl[field] || []).map(normAddr).filter(Boolean));
+}
+
+function canRead(acl) {
+  if (!acl || acl.public_read) return true;
+  const c = _taskCaller;
+  if (!c) return false;
+  return c === normAddr(acl.owner) || aclMembers(acl, 'read').has(c) || aclMembers(acl, 'write').has(c);
+}
+
+function canWrite(acl) {
+  if (!acl) return true;                 // unowned: writable; claimed when a caller exists
+  const c = _taskCaller;
+  if (!c) return false;
+  return c === normAddr(acl.owner) || aclMembers(acl, 'write').has(c);
+}
+
+function newAcl(owner) {
+  return { owner, read: [], write: [], public_read: false };
 }
 
 // Task-scoped ledger of every state key this execution touched, recorded by
@@ -247,10 +308,22 @@ class StateRegistry {
    * state" would let the next commit overwrite data that is still recoverable.
    */
   async get(key, fallback = {}) {
+    const [acl, data, version, cid] = await this._readContainer(key, fallback);
+    if (!canRead(acl)) {
+      throw new StatePermissionError(
+        `caller ${_taskCaller || '<anonymous>'} has no read permission on ` +
+          `state key '${key}' (owner: ${acl.owner})`
+      );
+    }
+    ledgerRecord(key, version || 0, cid, data);
+    return data;
+  }
+
+  /** [acl, data, version, cid] for `key`; NO permission check here. */
+  async _readContainer(key, fallback = {}) {
     const [cid, version] = await this._contract().getState(this.walletAddress, keyHash(key));
     if (!version || !cid) {
-      ledgerRecord(key, 0, null, fallback);
-      return fallback;
+      return [null, fallback, 0, null];
     }
     if (!looksLikeCID(cid)) {
       throw new Error(
@@ -259,9 +332,9 @@ class StateRegistry {
       );
     }
     const blob = await this._fetch(key, cid);
-    const state = JSON.parse(decrypt(blob).toString('utf8'));
-    ledgerRecord(key, version, cid, state);
-    return state;
+    const stored = JSON.parse(decrypt(blob).toString('utf8'));
+    const [acl, data] = unwrapStored(stored);
+    return [acl, data, Number(version), cid];
   }
 
   /**
@@ -272,15 +345,37 @@ class StateRegistry {
    * retry, so concurrent tasks cannot silently lose updates.
    */
   async commit(key, mutate, attempts = 3) {
+    const transform = async (acl, data) => {
+      if (!canWrite(acl)) {
+        throw new StatePermissionError(
+          `caller ${_taskCaller || '<anonymous>'} has no write permission on ` +
+            `state key '${key}' (owner: ${acl.owner})`
+        );
+      }
+      let nextAcl = acl;
+      if (!nextAcl && _taskCaller) nextAcl = newAcl(_taskCaller); // first-writer-owns
+      return [nextAcl, await mutate(data)];
+    };
+    const [, newData] = await this._commitTransform(key, transform, attempts);
+    return newData;
+  }
+
+  /**
+   * Optimistic-concurrency commit of transform(acl, data, version) ->
+   * [newAcl, newData]. The stored blob is the wrapped container (or the bare
+   * data while unowned). On a version race we re-read and retry, so
+   * concurrent tasks cannot silently lose updates.
+   */
+  async _commitTransform(key, transform, attempts = 3) {
     let lastError = null;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       // eslint-disable-next-line no-await-in-loop
-      const currentVersion = await this.getVersion(key);
+      const [acl, data, currentVersion] = await this._readContainer(key);
       // eslint-disable-next-line no-await-in-loop
-      const current = currentVersion ? await this.get(key) : {};
-      const newState = await mutate(current);
+      const [nextAcl, newData] = await transform(acl, data, currentVersion);
+      const stored = wrapStored(nextAcl, newData);
 
-      const blob = encrypt(Buffer.from(JSON.stringify(newState), 'utf8'));
+      const blob = encrypt(Buffer.from(JSON.stringify(stored), 'utf8'));
       // Compute the CID from OUR bytes — never accept one from the node.
       const cid = cidv1Raw(blob);
 
@@ -292,10 +387,10 @@ class StateRegistry {
       try {
         // eslint-disable-next-line no-await-in-loop
         await this._sendCommit(keyHash(key), cid, currentVersion);
-        // Record the POST-commit values: this is what the chain will show
-        // once the node's relay lands (version increments by one).
-        ledgerRecord(key, currentVersion + 1, cid, newState);
-        return newState;
+        // Record the POST-commit values (the DATA -- the ACL never leaves in
+        // results): this is what the chain shows once the relay lands.
+        ledgerRecord(key, currentVersion + 1, cid, newData);
+        return [nextAcl, newData];
       } catch (e) {
         const msg = String(e && e.message ? e.message : e);
         if (/VersionMismatch/i.test(msg) || /version/i.test(msg)) {
@@ -376,10 +471,99 @@ class StateRegistry {
   }
 }
 
+/** Owner-only ACL mutation; an unowned key is claimed first (owner = caller). */
+async function ownerOp(key, mutator) {
+  if (!_taskCaller) {
+    throw new StatePermissionError(
+      'state management requires an authenticated caller (the trustedzone supplied none)'
+    );
+  }
+  const reg = new StateRegistry();
+  const transform = async (acl, data) => {
+    let nextAcl = acl || newAcl(_taskCaller);
+    if (normAddr(nextAcl.owner) !== _taskCaller) {
+      throw new StatePermissionError(
+        `caller ${_taskCaller} is not the owner of state key '${key}' (owner: ${nextAcl.owner})`
+      );
+    }
+    nextAcl = mutator({ ...nextAcl });
+    return [nextAcl, data];
+  };
+  const [acl] = await reg._commitTransform(key, transform);
+  return { ...acl };
+}
+
+function assertLevel(level) {
+  if (level !== 'read' && level !== 'write') throw new Error("level must be 'read' or 'write'");
+}
+
+async function esrGrant(key, address, level = 'read') {
+  assertLevel(level);
+  const addr = normAddr(address);
+  if (!addr) throw new Error('a grantee address is required');
+  return ownerOp(key, (acl) => {
+    const members = new Set((acl[level] || []).map(normAddr).filter(Boolean));
+    members.add(addr);
+    acl[level] = [...members].sort();
+    return acl;
+  });
+}
+
+async function esrRevoke(key, address, level = 'read') {
+  assertLevel(level);
+  const addr = normAddr(address);
+  return ownerOp(key, (acl) => {
+    acl[level] = (acl[level] || []).map(normAddr).filter((a) => a && a !== addr).sort();
+    return acl;
+  });
+}
+
+async function esrSetPublicRead(key, enabled = true) {
+  return ownerOp(key, (acl) => {
+    acl.public_read = Boolean(enabled);
+    return acl;
+  });
+}
+
+async function esrTransfer(key, newOwner) {
+  const addr = normAddr(newOwner);
+  if (!addr) throw new Error('a new owner address is required');
+  return ownerOp(key, (acl) => {
+    acl.owner = addr;
+    return acl;
+  });
+}
+
+/** Owner address of `key`, or null while unowned. Exposes nothing else. */
+async function esrOwner(key) {
+  const [acl] = await new StateRegistry()._readContainer(key);
+  return acl ? acl.owner : null;
+}
+
+/** Owner-only: the full ACL of `key`. */
+async function esrAcl(key) {
+  const [acl] = await new StateRegistry()._readContainer(key);
+  if (!acl) return null;
+  if (!_taskCaller || normAddr(acl.owner) !== _taskCaller) {
+    throw new StatePermissionError(
+      `caller ${_taskCaller || '<anonymous>'} is not the owner of state key '${key}'`
+    );
+  }
+  return { ...acl };
+}
+
 module.exports = {
   StateRegistry,
   configure,
   cidv1Raw,
   looksLikeCID,
-  ledgerSnapshot
+  ledgerSnapshot,
+  taskCaller,
+  StatePermissionError,
+  esrGrant,
+  esrRevoke,
+  esrSetPublicRead,
+  esrTransfer,
+  esrOwner,
+  esrAcl
 };

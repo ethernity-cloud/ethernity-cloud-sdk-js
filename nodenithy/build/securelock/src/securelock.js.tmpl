@@ -436,6 +436,7 @@ class EtnySecureLock {
                 bucket: this.etny_bucket,
                 contractAddress: contractAddress,
                 provider: this.w3,
+                caller: this.task_caller || null,
             });
             console.log(`StateRegistry ready (ESR ${contractAddress})`);
         } catch (e) {
@@ -454,6 +455,30 @@ class EtnySecureLock {
         } else {
             console.log('Client payload and input are NOT valid');
             return false;
+        }
+
+        // Attested task caller: the DO-request owner, forwarded by the
+        // trustedzone as caller.securelock + .sig. Accepted ONLY with a valid
+        // trustedzone signature -- this build's crypto module has no verify
+        // helper yet, so until one lands the caller stays unset (anonymous)
+        // rather than trusting an unverifiable value.
+        this.task_caller = null;
+        try {
+            const callerValue = await this.getFileContentAndDecrypt(this.etny_bucket, 'caller.securelock');
+            const callerSig = await this.getFileContentAndDecrypt(this.etny_bucket, 'caller.securelock.sig');
+            if (typeof etny_crypto.verifySignature === 'function') {
+                await this.getTrustedZonePublicKey();
+                if (etny_crypto.verifySignature(this.trustedZonePublicKey, callerValue, callerSig)) {
+                    this.task_caller = String(callerValue).trim();
+                    console.log(`Task caller attested by trustedzone: ${this.task_caller}`);
+                } else {
+                    console.error('caller.securelock signature validation FAILED; treating task as anonymous');
+                }
+            } else {
+                console.log('No signature-verify support in this build; ignoring caller.securelock (anonymous)');
+            }
+        } catch (e) {
+            console.log('No attested task caller supplied; treating task as anonymous');
         }
 
         this.configureStateRegistry();

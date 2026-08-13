@@ -142,12 +142,23 @@ function executeTask(payload, input) {
             ' image dependencies, or a bad require() inside backend.js.'
         ];
     }
-    return exec(payload, input, {
+    const scope = {
         '___etny_result___': ___etny_result___,   // legacy alias (no ESR)
         'ecldResult': ecldResult,                 // the result API
         'esrFetch': esrFetch,                     // standard state-fetch task
         ...backendFunctions,
-    });
+    };
+    // State ownership / ACL API (present only in ESR-enabled builds). Enforced
+    // inside ecld_state against the trustedzone-attested caller.
+    try {
+        // eslint-disable-next-line global-require
+        const ecldState = require('./ecld_state');
+        for (const name of ['taskCaller', 'esrGrant', 'esrRevoke',
+            'esrSetPublicRead', 'esrTransfer', 'esrOwner', 'esrAcl']) {
+            if (!(name in scope)) scope[name] = ecldState[name];
+        }
+    } catch (e) { /* non-ESR build */ }
+    return exec(payload, input, scope);
 }
 
 function exec(payload, input, globals = null) {
