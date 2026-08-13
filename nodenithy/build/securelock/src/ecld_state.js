@@ -386,7 +386,8 @@ class StateRegistry {
 
       try {
         // eslint-disable-next-line no-await-in-loop
-        await this._sendCommit(keyHash(key), cid, currentVersion);
+        await this._sendCommit(keyHash(key), cid, currentVersion,
+          nextAcl ? normAddr(nextAcl.owner) : null);
         // Record the POST-commit values (the DATA -- the ACL never leaves in
         // results): this is what the chain shows once the relay lands.
         ledgerRecord(key, currentVersion + 1, cid, newData);
@@ -434,7 +435,7 @@ class StateRegistry {
     throw new Error(`Could not read state object for '${key}' (${cid})`);
   }
 
-  async _sendCommit(keyHashHex, cid, expectedVersion) {
+  async _sendCommit(keyHashHex, cid, expectedVersion, ownerAddr = null) {
     // The enclave never pays gas and does NO gas math: it SIGNS the commit
     // (commitFor) and stages the signed authorization for the node, which
     // relays it and pays. The trustedzone independently re-prices the whole
@@ -457,7 +458,15 @@ class StateRegistry {
       cid,
       expectedVersion: Number(expectedVersion),
       relayNonce: Number(relayNonce),
-      signature
+      signature,
+      // IMPERSONATION GUARD: the trustedzone requires callerUsed to equal the
+      // DO owner it reads from the PoX contract, so a payload that forged the
+      // in-enclave caller to impersonate another user is rejected outside the
+      // payload's process. It does NOT verify the caller was a permitted
+      // writer (it cannot read the encrypted ACL). Unowned commits carry no
+      // constraint.
+      callerUsed: _taskCaller || '',
+      owned: Boolean(ownerAddr)
     };
 
     _esrLedger.push(auth);
