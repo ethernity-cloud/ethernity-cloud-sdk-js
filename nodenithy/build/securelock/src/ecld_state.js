@@ -61,6 +61,38 @@ function configure({ identityPriv, swiftStreamService, bucket, contractAddress, 
   _contractAddress = contractAddress;
   _provider = provider;
   _esrLedger = [];
+  _taskLedger = {};
+}
+
+// Task-scoped ledger of every state key this execution touched, recorded by
+// get()/commit(). ecldResult() snapshots it to attach fresh state to the task
+// result, so callers (and the runner's state cache) get current state in the
+// same result -- no separate read task needed. Reset per task in configure().
+let _taskLedger = {};
+
+function ledgerRecord(key, version, cid, state) {
+  _taskLedger[key] = { key, version: Number(version), cid, state };
+}
+
+/**
+ * The `esr` attachment for ecldResult: wallet + entries. Synchronous by
+ * design (the securelock consumes results synchronously): entries come from
+ * the in-memory ledger of keys this task already touched. To attach a key the
+ * task did not touch, use the async esrFetch() helper, which awaits the reads
+ * (populating the ledger) before building the result.
+ */
+function ledgerSnapshot(includeState = true, keys = null) {
+  const reg = new StateRegistry();
+  const wanted = keys ? keys : Object.keys(_taskLedger);
+  const entries = [];
+  for (const k of wanted) {
+    const e = _taskLedger[k];
+    if (!e) continue;
+    const entry = { ...e };
+    if (!includeState) delete entry.state;
+    entries.push(entry);
+  }
+  return { wallet: reg.walletAddress, entries };
 }
 
 function keccak256(buf) {
@@ -216,7 +248,10 @@ class StateRegistry {
    */
   async get(key, fallback = {}) {
     const [cid, version] = await this._contract().getState(this.walletAddress, keyHash(key));
-    if (!version || !cid) return fallback;
+    if (!version || !cid) {
+      ledgerRecord(key, 0, null, fallback);
+      return fallback;
+    }
     if (!looksLikeCID(cid)) {
       throw new Error(
         `ESR entry for '${key}' holds a pointer that is not a CID (${cid.slice(0, 32)}…). ` +
@@ -224,7 +259,9 @@ class StateRegistry {
       );
     }
     const blob = await this._fetch(key, cid);
-    return JSON.parse(decrypt(blob).toString('utf8'));
+    const state = JSON.parse(decrypt(blob).toString('utf8'));
+    ledgerRecord(key, version, cid, state);
+    return state;
   }
 
   /**
@@ -255,6 +292,9 @@ class StateRegistry {
       try {
         // eslint-disable-next-line no-await-in-loop
         await this._sendCommit(keyHash(key), cid, currentVersion);
+        // Record the POST-commit values: this is what the chain will show
+        // once the node's relay lands (version increments by one).
+        ledgerRecord(key, currentVersion + 1, cid, newState);
         return newState;
       } catch (e) {
         const msg = String(e && e.message ? e.message : e);
@@ -340,5 +380,6 @@ module.exports = {
   StateRegistry,
   configure,
   cidv1Raw,
-  looksLikeCID
+  looksLikeCID,
+  ledgerSnapshot
 };

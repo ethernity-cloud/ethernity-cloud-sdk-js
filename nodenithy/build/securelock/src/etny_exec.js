@@ -30,8 +30,84 @@ try {
     }
 }
 
+/**
+ * Automatic encoding for task results (single code path for all results):
+ * JSON-serializable values ride as JSON, strings as text, bytes-like as
+ * base64. Anything else is JSON-stringified with a String() fallback -- a
+ * task result never fails on encoding.
+ */
+function encodeResultData(data) {
+    if (Buffer.isBuffer(data) || data instanceof Uint8Array) {
+        return ['base64', Buffer.from(data).toString('base64')];
+    }
+    if (typeof data === 'string') {
+        return ['text', data];
+    }
+    try {
+        JSON.stringify(data);
+        return ['json', data === undefined ? null : data];
+    } catch (e) {
+        try {
+            return ['json', JSON.parse(JSON.stringify(data, (k, v) =>
+                typeof v === 'bigint' || typeof v === 'function' ? String(v) : v))];
+        } catch (e2) {
+            return ['text', String(data)];
+        }
+    }
+}
+
+/**
+ * Return a task result (THE way to end a task).
+ *
+ * Builds the structured result envelope:
+ *   { ecld: 1, type: 'json'|'text'|'base64', data: ..., esr: ... }
+ *
+ * - `data` is encoded automatically (see encodeResultData).
+ * - `state: true` (default) attaches the ESR state of every key this task
+ *   touched; `state: 'meta'` attaches {key, version, cid} without the state
+ *   payload; `state: false` attaches nothing.
+ * - `keys: [...]` restricts the attachment to those keys (already-touched
+ *   only -- to attach an untouched key, use the async esrFetch helper).
+ *
+ * ESR attachment is best-effort: an ESR-disabled build (or any attachment
+ * error) yields esr: null, never a failed task.
+ */
+function ecldResult(data = null, { state = true, keys = null } = {}) {
+    const [type, encoded] = encodeResultData(data);
+    const envelope = { ecld: 1, type, data: encoded, esr: null };
+    if (state || keys) {
+        try {
+            // eslint-disable-next-line global-require
+            const ecldState = require('./ecld_state');
+            envelope.esr = ecldState.ledgerSnapshot(state === true, keys);
+        } catch (e) {
+            envelope.esr = null;
+        }
+    }
+    return [0, JSON.stringify(envelope)];
+}
+
+/** Legacy alias: same builder, ESR attachment off -- today's behavior. */
 function ___etny_result___(data) {
-    return [0, data];
+    return ecldResult(data, { state: false });
+}
+
+/**
+ * Standard state-fetch task body: awaits the reads (populating the task
+ * ledger), then attaches them. The runner's cache-gated read submits this on
+ * a cache miss: `await esrFetch('profile-7')`.
+ */
+async function esrFetch(...keys) {
+    try {
+        // eslint-disable-next-line global-require
+        const { StateRegistry } = require('./ecld_state');
+        const reg = new StateRegistry();
+        for (const k of keys) {
+            // eslint-disable-next-line no-await-in-loop
+            await reg.get(k);
+        }
+    } catch (e) { /* ESR-disabled build: esr stays null */ }
+    return ecldResult(null, { keys: keys.length ? keys : null });
 }
 
 // Names of *_ADDRESS-style enclave config vars that are set but EMPTY.
@@ -66,7 +142,12 @@ function executeTask(payload, input) {
             ' image dependencies, or a bad require() inside backend.js.'
         ];
     }
-    return exec(payload, input, { '___etny_result___': ___etny_result___, ...backendFunctions });
+    return exec(payload, input, {
+        '___etny_result___': ___etny_result___,   // legacy alias (no ESR)
+        'ecldResult': ecldResult,                 // the result API
+        'esrFetch': esrFetch,                     // standard state-fetch task
+        ...backendFunctions,
+    });
 }
 
 function exec(payload, input, globals = null) {
@@ -80,7 +161,15 @@ function exec(payload, input, globals = null) {
             // the payload by bare name — matching how payloads are written
             // (e.g. `processData(___etny_data_set___)`).
             with (scope) {
-                return ___etny_result___(eval(payload));
+                const value = eval(payload);
+                // A payload that called ecldResult/___etny_result___ itself
+                // already holds the finished [0, envelopeJson] tuple -- pass
+                // it through instead of wrapping the result a second time.
+                if (Array.isArray(value) && value.length === 2 &&
+                    value[0] === 0 && typeof value[1] === 'string') {
+                    return value;
+                }
+                return ___etny_result___(value);
             }
         } else {
             return [TaskStatus.PAYLOAD_NOT_DEFINED, 'Could not find the source file to execute'];
