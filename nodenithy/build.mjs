@@ -115,6 +115,36 @@ try {
   process.exit(1);
 }
 
+// Safety lint: flag dynamic code execution -- especially of task input --
+// before the image is sealed. A hard error only for the case that actually
+// opens the enclave to a submitter (eval / Function of ___etny_data_set___);
+// everything else is a warning. See payloadLint.mjs for scope + opt-out.
+try {
+  const { analyze } = await import('../payloadLint.mjs');
+  const src = fs.readFileSync(backendFile, 'utf8');
+  const { findings, optedOut } = analyze(src, 'src/serverless/backend.js');
+  if (!optedOut) {
+    const warnings = findings.filter((f) => f.severity === 'warning');
+    const errors = findings.filter((f) => f.severity === 'error');
+    for (const f of warnings) {
+      console.warn(`WARNING: src/serverless/backend.js:${f.line}: ${f.message}`);
+    }
+    if (errors.length) {
+      console.error('');
+      console.error('ERROR: unsafe dynamic execution of task input in src/serverless/backend.js:');
+      for (const f of errors) console.error(`       line ${f.line}: ${f.message}`);
+      console.error('');
+      console.error('       This would let a task submitter run arbitrary code inside your enclave');
+      console.error('       and reach other users\' state. Fix it, or if the input is genuinely');
+      console.error('       trusted, add `// ecld: allow-eval` on that line to acknowledge the risk.');
+      process.exit(1);
+    }
+  }
+} catch (e) {
+  // The lint is best-effort; never block a build on the linter itself failing.
+  console.warn(`WARNING: payload safety lint skipped (${e && e.message ? e.message : e})`);
+}
+
 console.log(`Creating destination directory: ${destDir}`);
 fs.mkdirSync(destDir, { recursive: true });
 
