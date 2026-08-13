@@ -483,10 +483,31 @@ class EtnySecureLock {
 
         this.configureStateRegistry();
 
-        const task_result = executeTask(payload_data, input_data);
+        const task_result = await executeTask(payload_data, input_data);
         console.log('TASK RESULT (code, data):', task_result);
         this.task_code = task_result[0];
         this.task_result = task_result[1];
+
+        // Post-payload: re-assert the attested caller across the ESR ledger from
+        // THIS securelock's private copy (this.task_caller), captured before the
+        // payload ran and never handed to the payload. Corrects any callerUsed
+        // the payload may have forged (so the trustedzone reads the truth) and
+        // fails the task locally if a forgery is detected. Defence in depth;
+        // the trustedzone (separate enclave) and the CID-bound caller remain the
+        // authoritative layers.
+        try {
+            const ecld_state = require("./ecld_state");
+            if (typeof ecld_state.restampLedgerCaller === 'function') {
+                const tampered = await ecld_state.restampLedgerCaller(this.task_caller || null);
+                if (tampered) {
+                    console.error('ESR ledger caller was tampered with by the payload -- failing the task (SECURITY_VIOLATION).');
+                    this.task_code = TaskStatus.SECURITY_VIOLATION;
+                    this.task_result = 'SECURITY_VIOLATION: the task attempted to forge the state commit caller. The attested submitter was re-asserted and the task was terminated.';
+                }
+            }
+        } catch (e) {
+            console.error('ESR ledger re-stamp skipped:', e && e.message ? e.message : e);
+        }
 
         return true;
     }

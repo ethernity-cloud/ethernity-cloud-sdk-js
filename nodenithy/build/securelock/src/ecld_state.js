@@ -98,9 +98,46 @@ function unwrapStored(stored) {
   return [null, stored];
 }
 
-function wrapStored(acl, data) {
+function wrapStored(acl, data, committedBy = null) {
+  // For owned state, bind the authoring caller (committedBy) INTO the blob, so
+  // it lands in the CID -- the field the securelock signs -- making the caller
+  // cryptographically bound to the commit, not merely a re-stampable sidecar.
   if (!acl) return data;                 // unowned keeps the legacy shape
-  return { [CONTAINER_MARK]: 1, acl, data };
+  const container = { [CONTAINER_MARK]: 1, acl, data };
+  if (committedBy) container.committedBy = committedBy;
+  return container;
+}
+
+/**
+ * Post-payload: re-assert the trusted caller across the ESR ledger. Called by
+ * the securelock after the payload returns, with the attested caller captured
+ * before execution (outside the payload's reach). Overwrites callerUsed (and
+ * re-fixes enclave to the real signer) in every owned entry and RE-STAGES the
+ * ledger, so a forged callerUsed cannot reach the trustedzone. Returns true if
+ * any entry's callerUsed differed from the trusted value (tamper detected).
+ * Defence in depth -- the trustedzone and the CID-bound caller are the sound
+ * layers; this runs in the same process the payload subverted.
+ */
+async function restampLedgerCaller(trustedCaller) {
+  const trusted = normAddr(trustedCaller);
+  if (!_esrLedger.length) return false;
+  let tampered = false;
+  let signerAddr = null;
+  try {
+    signerAddr = await new StateRegistry()._signer().getAddress();
+  } catch (e) { signerAddr = null; }
+  for (const entry of _esrLedger) {
+    if (!entry.owned) continue;
+    if (normAddr(entry.callerUsed) !== trusted) tampered = true;
+    entry.callerUsed = trusted || '';
+    if (signerAddr) entry.enclave = signerAddr;
+  }
+  try {
+    await _swift.putFileContent(
+      _bucket, 'esr.authorizations.json', '',
+      Buffer.from(JSON.stringify(_esrLedger), 'utf8'));
+  } catch (e) { /* best-effort restage; trustedzone still adjudicates */ }
+  return tampered;
 }
 
 function aclMembers(acl, field) {
@@ -373,7 +410,9 @@ class StateRegistry {
       const [acl, data, currentVersion] = await this._readContainer(key);
       // eslint-disable-next-line no-await-in-loop
       const [nextAcl, newData] = await transform(acl, data, currentVersion);
-      const stored = wrapStored(nextAcl, newData);
+      // Bind the authoring caller into the blob (hence the CID/signature) for
+      // owned state.
+      const stored = wrapStored(nextAcl, newData, nextAcl ? _taskCaller : null);
 
       const blob = encrypt(Buffer.from(JSON.stringify(stored), 'utf8'));
       // Compute the CID from OUR bytes — never accept one from the node.
@@ -568,6 +607,7 @@ module.exports = {
   looksLikeCID,
   ledgerSnapshot,
   taskCaller,
+  restampLedgerCaller,
   StatePermissionError,
   esrGrant,
   esrRevoke,
