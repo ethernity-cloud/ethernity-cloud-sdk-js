@@ -1,6 +1,6 @@
 {
   "name": "@ethernity-cloud/sdk-js",
-  "version": "1.5.8",
+  "version": "1.5.9",
   "description": "A package to run ethernity cloud build scripts",
   "scripts": {
     "ecld-build": "cross-env node ./node_modules/@ethernity-cloud/sdk-js/build.js",
@@ -8,14 +8,16 @@
     "ecld-init": "cross-env node ./node_modules/@ethernity-cloud/sdk-js/init.js",
     "ecld-run": "cross-env ecld-run",
     "postinstall": "node postinstall.js",
-    "ecld-test": "cross-env node ./node_modules/@ethernity-cloud/sdk-js/test.js"
+    "ecld-test": "cross-env node ./node_modules/@ethernity-cloud/sdk-js/test.js",
+    "ecld-info": "cross-env node ./node_modules/@ethernity-cloud/sdk-js/info.js"
   },
   "bin": {
     "ecld-build": "./build.js",
     "ecld-publish": "./publish.js",
     "ecld-init": "./init.js",
     "postinstall": "./postinstall.js",
-    "ecld-test": "./test.js"
+    "ecld-test": "./test.js",
+    "ecld-info": "./info.js"
   },
   "files": [
     "nodenithy/*",
