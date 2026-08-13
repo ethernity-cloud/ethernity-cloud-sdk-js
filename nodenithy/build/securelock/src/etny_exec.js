@@ -121,7 +121,7 @@ function emptyRequiredConfig() {
     );
 }
 
-function executeTask(payload, input) {
+async function executeTask(payload, input) {
     const missing = emptyRequiredConfig();
     if (missing.length) {
         return [
@@ -161,7 +161,7 @@ function executeTask(payload, input) {
     return exec(payload, input, scope);
 }
 
-function exec(payload, input, globals = null) {
+async function exec(payload, input, globals = null) {
     try {
         if (payload && payload !== "") {
             const scope = globals || {};
@@ -172,7 +172,12 @@ function exec(payload, input, globals = null) {
             // the payload by bare name — matching how payloads are written
             // (e.g. `processData(___etny_data_set___)`).
             with (scope) {
-                const value = eval(payload);
+                // ESR reads/commits are async, so a state-using payload
+                // (`esrIncrement()`, `await reg.commit(...)`) evaluates to a
+                // Promise. Await it so the finished value -- not the pending
+                // Promise -- is what gets wrapped. Non-async payloads await to
+                // themselves, so this is transparent for plain results.
+                const value = await eval(payload);
                 // A payload that called ecldResult/___etny_result___ itself
                 // already holds the finished [0, envelopeJson] tuple -- pass
                 // it through instead of wrapping the result a second time.

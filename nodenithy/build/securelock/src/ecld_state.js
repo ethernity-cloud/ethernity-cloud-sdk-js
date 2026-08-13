@@ -50,6 +50,16 @@ let _bucket = null;
 let _contractAddress = null;
 let _provider = null;
 
+// LOCAL TESTING ONLY (esr_local). In the real enclave these stay null: the node
+// applies commitFor on-chain and _contract() builds a real ethers.Contract. The
+// local ESR emulator overrides the "contract" with an in-memory object and
+// applies commits itself, so ecld-test runs state-using backends with no chain.
+let _contractOverride = null;
+let _localCommitApply = null;
+
+function setContractOverride(obj) { _contractOverride = obj; }
+function setLocalCommitApply(fn) { _localCommitApply = fn; }
+
 /**
  * Wire the registry to the enclave's identity, storage and chain access.
  * Called by securelock at task start; payload code never calls this.
@@ -329,6 +339,8 @@ class StateRegistry {
   }
 
   _contract(signerOrProvider) {
+    // Local emulator: use the in-memory contract object instead of a real one.
+    if (_contractOverride) return _contractOverride;
     return new ethers.Contract(_contractAddress, ESR_ABI, signerOrProvider || _provider);
   }
 
@@ -515,6 +527,14 @@ class StateRegistry {
     await _swift.putFileContent(
       _bucket, `esr.commit.${Number(relayNonce)}.json`, '',
       Buffer.from(JSON.stringify(auth), 'utf8'));
+
+    // LOCAL TESTING: with no node to relay commitFor, apply the commit to the
+    // in-memory registry now so getState/getVersion reflect it. No-op in the
+    // real enclave (hook is null) -- there the node applies it on-chain.
+    if (_localCommitApply) {
+      await _localCommitApply(enclave, keyHashHex, cid, Number(expectedVersion));
+    }
+
     return { relayed: true, relayNonce: Number(relayNonce) };
   }
 }
@@ -600,6 +620,8 @@ async function esrAcl(key) {
   return { ...acl };
 }
 
+function setTaskCaller(caller) { _taskCaller = normAddr(caller); }
+
 module.exports = {
   StateRegistry,
   configure,
@@ -607,6 +629,7 @@ module.exports = {
   looksLikeCID,
   ledgerSnapshot,
   taskCaller,
+  setTaskCaller,
   restampLedgerCaller,
   StatePermissionError,
   esrGrant,
@@ -614,5 +637,9 @@ module.exports = {
   esrSetPublicRead,
   esrTransfer,
   esrOwner,
-  esrAcl
+  esrAcl,
+  // local-testing hooks (esr_local only)
+  setContractOverride,
+  setLocalCommitApply,
+  normAddr
 };

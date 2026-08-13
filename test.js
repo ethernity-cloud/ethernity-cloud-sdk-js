@@ -24,6 +24,14 @@
  * @ethernity-cloud/runner >= 0.3.6 executes every run() against this API
  * instead of the blockchain.
  *
+ * ESR (Enclave State Registry) is emulated locally and ON by default: a
+ * state-using backend -- `require('../ecld_state').StateRegistry`, get/commit,
+ * the ownership/ACL API -- runs fully in-process against an in-memory registry
+ * + store, with no chain, node, or SGX. State persists between runs in
+ * .ecld-esr-local.*.json so a counter advances exactly as it would on-chain.
+ * The task caller (the DO owner the trustedzone attests) defaults to your
+ * developer address and is set for every task; override with --caller.
+ *
  * Exit code 0 on TaskStatus SUCCESS, 1 otherwise.
  */
 
@@ -32,6 +40,7 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const crypto = require('crypto');
+const { ethers } = require('ethers');
 
 const TASK_STATUS_NAMES = {
   0: 'SUCCESS',
@@ -62,10 +71,21 @@ function copyDir(src, dest) {
 /* Stage the executor + the project's backend the way ecld-build does inside
  * the enclave image, then load the REAL executor from the staged copy. */
 function loadExecutor(projectSrc) {
-  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'ecld-test-'));
-  for (const f of ['etny_exec.js', 'task_status.js']) {
-    fs.copyFileSync(path.join(VENDORED_SRC, f), path.join(stage, f));
+  // Stage INSIDE the SDK tree (not the OS temp dir) so the executor's
+  // `require('ethers')` and other runtime deps resolve by walking up to the
+  // SDK's own node_modules -- exactly what binary-fs gives the enclave.
+  const stageRoot = path.join(VENDORED_SRC, '..', '.ecld-test-stage');
+  fs.mkdirSync(stageRoot, { recursive: true });
+  const stage = fs.mkdtempSync(path.join(stageRoot, 'run-'));
+  const cleanup = () => { try { fs.rmSync(stage, { recursive: true, force: true }); } catch (e) {} };
+  process.on('exit', cleanup);
+  // `serve` runs until interrupted -- clean the stage on Ctrl-C / kill too.
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(sig, () => { cleanup(); process.exit(130); });
   }
+  // Stage the ENTIRE vendored securelock src so `require('./ecld_state')`,
+  // esr_local, and their deps all resolve, exactly as inside the enclave image.
+  copyDir(VENDORED_SRC, stage);
   const backendDir = path.join(projectSrc, 'serverless');
   const backendJs = path.join(backendDir, 'backend.js');
   if (fs.existsSync(backendJs)) {
@@ -78,11 +98,56 @@ function loadExecutor(projectSrc) {
   } else {
     console.log('backend : none found — running with bare globals, like a stock enclave');
   }
-  return require(path.join(stage, 'etny_exec.js'));
+  const executor = require(path.join(stage, 'etny_exec.js'));
+  executor.__stageDir = stage;
+  return executor;
 }
 
-function runTask(executor, payload, input) {
-  const [code, resultRaw] = executor.executeTask(payload, input || '');
+/* The task caller for local runs -- the DEVELOPER'S address, mirroring the
+ * trustedzone-attested DO owner the real securelock receives. Resolution:
+ *   1. --caller / ECLD_TEST_CALLER
+ *   (a) WALLET_ADDRESS in .env (written at publish time)
+ *   (b) derive from ECLD_PRIVATE_KEY
+ *   else DEFAULT_TEST_CALLER (a well-known dev address). */
+const DEFAULT_TEST_CALLER = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
+
+function resolveCaller(explicit) {
+  const chosen = explicit || process.env.ECLD_TEST_CALLER;
+  if (chosen) return chosen.trim();
+  if (process.env.WALLET_ADDRESS) return process.env.WALLET_ADDRESS.trim();     // (a)
+  const pk = process.env.ECLD_PRIVATE_KEY;                                       // (b)
+  if (pk) {
+    try { return new ethers.Wallet(pk.startsWith('0x') ? pk : '0x' + pk).address; }
+    catch (e) { /* fall through */ }
+  }
+  console.log(`[ecld-test] no developer address configured; using default test caller `
+    + `${DEFAULT_TEST_CALLER} (set ECLD_TEST_CALLER or WALLET_ADDRESS)`);
+  return DEFAULT_TEST_CALLER;
+}
+
+/* Install the local ESR emulator + set the task caller (ON by default). */
+function installEsr(executor, caller) {
+  try {
+    const stage = executor.__stageDir;
+    const ecldState = require(path.join(stage, 'ecld_state.js'));
+    const esrLocal = require(path.join(stage, 'esr_local.js'));
+    esrLocal.install(ecldState, { caller, filePrefix: '.ecld-esr-local' });
+    return { ecldState };
+  } catch (e) {
+    console.log(`esr     : emulation unavailable (${e.message})`);
+    return null;
+  }
+}
+
+async function runTask(executor, payload, input, esr, caller) {
+  // Set the task caller EXACTLY as the real securelock does after the
+  // trustedzone hands it the DO owner -- for every task, ESR or not.
+  if (esr && esr.ecldState) {
+    try { esr.ecldState.setTaskCaller(caller || null); } catch (e) { /* ignore */ }
+  }
+  // executeTask is async (ESR reads/commits await); the real securelock awaits
+  // it too (securelock.js: `await executeTask(...)`).
+  const [code, resultRaw] = await executor.executeTask(payload, input || '');
   const result = typeof resultRaw === 'string' ? resultRaw : JSON.stringify(resultRaw);
   const checksum = crypto.createHash('sha256').update(result, 'utf8').digest('hex');
   const challenge = Array.from({ length: 20 }, () =>
@@ -98,7 +163,7 @@ function runTask(executor, payload, input) {
   };
 }
 
-function serve(executor, host, port) {
+function serve(executor, host, port, esr, defaultCaller) {
   const server = http.createServer((req, res) => {
     const send = (status, obj) => {
       const body = JSON.stringify(obj);
@@ -128,9 +193,13 @@ function serve(executor, host, port) {
           if (input !== undefined && input !== null && typeof input !== 'string') {
             input = JSON.stringify(input);
           }
-          const out = runTask(executor, body.payload, input);
-          console.log(`[local-api] task -> ${out.task_code} (${out.task_code_name})`);
-          return send(200, out);
+          const caller = body.caller !== undefined ? body.caller : defaultCaller;
+          runTask(executor, body.payload, input, esr, caller)
+            .then((out) => {
+              console.log(`[local-api] task -> ${out.task_code} (${out.task_code_name})`);
+              send(200, out);
+            })
+            .catch((e) => send(500, { error: e.message }));
         } catch (e) {
           if (e instanceof SyntaxError) return send(400, { error: 'invalid JSON body' });
           return send(500, { error: e.message });
@@ -145,7 +214,7 @@ function serve(executor, host, port) {
   });
 }
 
-function main() {
+async function main() {
   const argv = process.argv.slice(2);
   const opts = { src: 'src', host: '127.0.0.1', port: 8745 };
   const positional = [];
@@ -157,6 +226,7 @@ function main() {
     else if (a === '--src') opts.src = argv[++i];
     else if (a === '--host') opts.host = argv[++i];
     else if (a === '--port') opts.port = parseInt(argv[++i], 10);
+    else if (a === '--caller') opts.caller = argv[++i];
     else positional.push(a);
   }
 
@@ -169,8 +239,16 @@ function main() {
     serve.backendFunctions = [];
   }
 
+  // ESR emulation ON by default so a state-using backend runs locally exactly
+  // as in an ESR-enabled enclave (no chain/node/SGX). Caller (default: your dev
+  // address) is set for every task, so taskCaller() and the ACL behave as
+  // on-chain.
+  const caller = resolveCaller(opts.caller);
+  const esr = installEsr(executor, caller);
+  if (esr) console.log(`esr     : local emulation ON   caller ${caller}`);
+
   if (positional[0] === 'serve') {
-    return serve(executor, opts.host, opts.port);
+    return serve(executor, opts.host, opts.port, esr, caller);
   }
 
   let payload;
@@ -191,7 +269,7 @@ function main() {
 
   console.log(`payload : ${JSON.stringify(payload)}`);
   console.log(`input   : ${input === null ? '<empty>' : JSON.stringify(input.slice(0, 80))}`);
-  const out = runTask(executor, payload, input);
+  const out = await runTask(executor, payload, input, esr, caller);
   console.log(`task code: ${out.task_code} (${out.task_code_name})`);
   console.log(`result   : ${JSON.stringify(out.result)}`);
   if (out.task_code !== 0) {
@@ -201,4 +279,4 @@ function main() {
   process.exit(out.task_code === 0 ? 0 : 1);
 }
 
-main();
+main().catch((e) => { console.error(e && e.stack ? e.stack : String(e)); process.exit(1); });

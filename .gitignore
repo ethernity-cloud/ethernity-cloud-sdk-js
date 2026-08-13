@@ -8,3 +8,7 @@ get_sgx_report.c
 sgx_report_napi.c
 **/get_sgx_report.c
 **/sgx_report_napi.c
+
+# ecld-test local staging + local ESR emulator state
+**/.ecld-test-stage/
+.ecld-esr-local.*.json
