@@ -18,6 +18,8 @@ class TaskStatus {
     static EXECUTION_TIMEOUT = 33;      // Started but produced no result within the order duration.
     static ESR_GAS_LIMIT_EXCEEDED = 34; // ESR commits would exceed the per-order relayed-gas budget.
     static SECURITY_VIOLATION = 35;     // A state commit was authorized under a caller other than
+    static ESR_NONCE_VIOLATION = 36;    // A commit's idempotency nonce was already used -- duplicate
+                                        // suppressed, state unchanged (StateNonceError).
                                         // the task's submitter (the in-enclave ownership check was
                                         // bypassed). Set by the securelock on a detected forged
                                         // caller, and by the trustedzone re-adjudication.

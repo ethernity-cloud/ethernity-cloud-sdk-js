@@ -54,6 +54,10 @@ const TASK_STATUS_NAMES = {
   8: 'EVAL_ERROR',
   28: 'IMPORT_ERROR',
   32: 'CONFIG_ERROR',
+  33: 'EXECUTION_TIMEOUT',
+  34: 'ESR_GAS_LIMIT_EXCEEDED',
+  35: 'SECURITY_VIOLATION',
+  36: 'ESR_NONCE_VIOLATION',
 };
 
 const VENDORED_SRC = path.join(__dirname, 'nodenithy', 'build', 'securelock', 'src');

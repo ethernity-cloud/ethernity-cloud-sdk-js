@@ -101,6 +101,11 @@ const CONTAINER_MARK = '_ecld_state';
 
 class StatePermissionError extends Error {}
 
+// A commit's idempotency nonce was already used: the dApp supplied `nonce` on
+// commit() and it is not greater than the last accepted nonce for the key --
+// a duplicate (or out-of-order) submission. The state was NOT changed.
+class StateNonceError extends Error {}
+
 function unwrapStored(stored) {
   if (stored && typeof stored === 'object' && stored[CONTAINER_MARK] === 1) {
     return [stored.acl || null, stored.data];
@@ -108,13 +113,25 @@ function unwrapStored(stored) {
   return [null, stored];
 }
 
-function wrapStored(acl, data, committedBy = null) {
+/** Last accepted idempotency nonce carried by a stored blob (0 if none). */
+function storedNonce(stored) {
+  if (stored && typeof stored === 'object' && stored[CONTAINER_MARK] === 1) {
+    const n = parseInt(stored.nonce, 10);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+function wrapStored(acl, data, committedBy = null, nonce = null) {
   // For owned state, bind the authoring caller (committedBy) INTO the blob, so
   // it lands in the CID -- the field the securelock signs -- making the caller
   // cryptographically bound to the commit, not merely a re-stampable sidecar.
-  if (!acl) return data;                 // unowned keeps the legacy shape
-  const container = { [CONTAINER_MARK]: 1, acl, data };
+  // Unowned state keeps the legacy bare shape -- unless a nonce must be
+  // carried, which forces the container so the nonce survives in the blob.
+  if (!acl && nonce == null) return data;
+  const container = { [CONTAINER_MARK]: 1, acl: acl || null, data };
   if (committedBy) container.committedBy = committedBy;
+  if (nonce != null) container.nonce = Math.trunc(nonce);
   return container;
 }
 
@@ -328,6 +345,15 @@ class StateRegistry {
     return esr_wallet.deriveWalletAddress(_identityPriv);
   }
 
+  /**
+   * Alias of walletAddress — the ENCLAVE's own on-chain address (its identity,
+   * and the namespace all its state keys live under). Preferred name in new
+   * code; walletAddress remains for compatibility.
+   */
+  get enclaveAddress() {
+    return this.walletAddress;
+  }
+
   _signer() {
     // Reuse esr_wallet's derivation rather than repeating it here: two copies
     // would eventually disagree, and the address a client funds would stop
@@ -368,11 +394,11 @@ class StateRegistry {
     return data;
   }
 
-  /** [acl, data, version, cid] for `key`; NO permission check here. */
+  /** [acl, data, version, cid, nonce] for `key`; NO permission check here. */
   async _readContainer(key, fallback = {}) {
     const [cid, version] = await this._contract().getState(this.walletAddress, keyHash(key));
     if (!version || !cid) {
-      return [null, fallback, 0, null];
+      return [null, fallback, 0, null, 0];
     }
     if (!looksLikeCID(cid)) {
       throw new Error(
@@ -383,7 +409,23 @@ class StateRegistry {
     const blob = await this._fetch(key, cid);
     const stored = JSON.parse(decrypt(blob).toString('utf8'));
     const [acl, data] = unwrapStored(stored);
-    return [acl, data, Number(version), cid];
+    return [acl, data, Number(version), cid, storedNonce(stored)];
+  }
+
+  /**
+   * The last accepted idempotency nonce for `key` (0 if none was ever used).
+   * A dApp that wants duplicate suppression reads this, picks a greater value
+   * (e.g. +1, or a timestamp), and passes it to commit(..., { nonce }).
+   */
+  async getNonce(key) {
+    const [acl, , , , nonce] = await this._readContainer(key);
+    if (!canRead(acl)) {
+      throw new StatePermissionError(
+        `caller ${_taskCaller || '<anonymous>'} has no read permission on ` +
+          `state key '${key}' (owner: ${acl.owner})`
+      );
+    }
+    return nonce;
   }
 
   /**
@@ -393,7 +435,14 @@ class StateRegistry {
    * commit lands in between, the contract rejects ours and we re-read and
    * retry, so concurrent tasks cannot silently lose updates.
    */
-  async commit(key, mutate, attempts = 3) {
+  async commit(key, mutate, opts = 3) {
+    // Back-compat: the third arg used to be `attempts` (a number); it may now
+    // also be { attempts, nonce }. `nonce` is an idempotency guard the dApp
+    // controls: it must be STRICTLY GREATER than the last accepted nonce for
+    // the key (see getNonce). A duplicate or stale nonce throws
+    // StateNonceError and the state is NOT changed.
+    const { attempts = 3, nonce = null } =
+      typeof opts === 'number' ? { attempts: opts } : (opts || {});
     const transform = async (acl, data) => {
       if (!canWrite(acl)) {
         throw new StatePermissionError(
@@ -405,7 +454,7 @@ class StateRegistry {
       if (!nextAcl && _taskCaller) nextAcl = newAcl(_taskCaller); // first-writer-owns
       return [nextAcl, await mutate(data)];
     };
-    const [, newData] = await this._commitTransform(key, transform, attempts);
+    const [, newData] = await this._commitTransform(key, transform, attempts, nonce);
     return newData;
   }
 
@@ -415,16 +464,33 @@ class StateRegistry {
    * data while unowned). On a version race we re-read and retry, so
    * concurrent tasks cannot silently lose updates.
    */
-  async _commitTransform(key, transform, attempts = 3) {
+  async _commitTransform(key, transform, attempts = 3, nonce = null) {
     let lastError = null;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       // eslint-disable-next-line no-await-in-loop
-      const [acl, data, currentVersion] = await this._readContainer(key);
+      const [acl, data, currentVersion, , priorNonce] = await this._readContainer(key);
+      // The nonce check re-runs on every retry against the freshly read state,
+      // so a racing commit that consumed the same nonce fails this one.
+      let finalNonce;
+      if (nonce != null) {
+        const n = Math.trunc(nonce);
+        if (n <= priorNonce) {
+          throw new StateNonceError(
+            `nonce ${n} was already used for state key '${key}' (last accepted: ` +
+              `${priorNonce}); duplicate commit suppressed, state unchanged`
+          );
+        }
+        finalNonce = n;
+      } else {
+        // Preserve the stored nonce so a nonce-less commit cannot reset the
+        // guard and reopen replays.
+        finalNonce = priorNonce > 0 ? priorNonce : null;
+      }
       // eslint-disable-next-line no-await-in-loop
       const [nextAcl, newData] = await transform(acl, data, currentVersion);
       // Bind the authoring caller into the blob (hence the CID/signature) for
       // owned state.
-      const stored = wrapStored(nextAcl, newData, nextAcl ? _taskCaller : null);
+      const stored = wrapStored(nextAcl, newData, nextAcl ? _taskCaller : null, finalNonce);
 
       const blob = encrypt(Buffer.from(JSON.stringify(stored), 'utf8'));
       // Compute the CID from OUR bytes — never accept one from the node.
@@ -622,6 +688,14 @@ async function esrAcl(key) {
 
 function setTaskCaller(caller) { _taskCaller = normAddr(caller); }
 
+/**
+ * The last accepted idempotency nonce for `key` (0 if none). See
+ * StateRegistry.getNonce / commit(key, mutate, { nonce }).
+ */
+async function esrNonce(key) {
+  return new StateRegistry().getNonce(key);
+}
+
 module.exports = {
   StateRegistry,
   configure,
@@ -632,12 +706,14 @@ module.exports = {
   setTaskCaller,
   restampLedgerCaller,
   StatePermissionError,
+  StateNonceError,
   esrGrant,
   esrRevoke,
   esrSetPublicRead,
   esrTransfer,
   esrOwner,
   esrAcl,
+  esrNonce,
   // local-testing hooks (esr_local only)
   setContractOverride,
   setLocalCommitApply,

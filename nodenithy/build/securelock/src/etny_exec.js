@@ -154,7 +154,7 @@ async function executeTask(payload, input) {
         // eslint-disable-next-line global-require
         const ecldState = require('./ecld_state');
         for (const name of ['taskCaller', 'esrGrant', 'esrRevoke',
-            'esrSetPublicRead', 'esrTransfer', 'esrOwner', 'esrAcl']) {
+            'esrSetPublicRead', 'esrTransfer', 'esrOwner', 'esrAcl', 'esrNonce']) {
             if (!(name in scope)) scope[name] = ecldState[name];
         }
     } catch (e) { /* non-ESR build */ }
@@ -205,6 +205,11 @@ async function exec(payload, input, globals = null) {
             }
         } catch (e) { /* fall through to failure reporting */ }
 
+        // A duplicate-suppressed commit (StateNonceError) gets its own task
+        // code so the dApp can distinguish "already applied" from a failure.
+        if (error && error.constructor && error.constructor.name === 'StateNonceError') {
+            return [TaskStatus.ESR_NONCE_VIOLATION, 'ESR_NONCE_VIOLATION: ' + error.message];
+        }
         const detail = (error && (error.stack || error.message)) || String(error);
         console.error('Error in payload execution -- full stack follows:\n' + detail);
 
