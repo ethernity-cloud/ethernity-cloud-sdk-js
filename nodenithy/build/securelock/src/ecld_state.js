@@ -71,6 +71,7 @@ function configure({ identityPriv, swiftStreamService, bucket, contractAddress, 
   _contractAddress = contractAddress;
   _provider = provider;
   _esrLedger = [];
+  _taskNonces = {};
   _taskLedger = {};
   _taskCaller = normAddr(caller);
 }
@@ -314,12 +315,13 @@ function keyHash(key) {
 }
 
 const ESR_ABI = [
-  'function commit(bytes32 key, string newCID, uint256 expectedVersion)',
-  'function commitFor(address enclave, bytes32 key, string newCID, uint256 expectedVersion, uint256 relayNonce, bytes signature)',
-  'function commitDigest(address enclave, bytes32 key, string newCID, uint256 expectedVersion, uint256 relayNonce) view returns (bytes32)',
+  'function commit(bytes32 key, string newCID, uint256 expectedVersion, uint256 nonce)',
+  'function commitFor(address enclave, bytes32 key, string newCID, uint256 expectedVersion, uint256 relayNonce, uint256 nonce, bytes signature)',
+  'function commitDigest(address enclave, bytes32 key, string newCID, uint256 expectedVersion, uint256 relayNonce, uint256 nonce) view returns (bytes32)',
   'function relayNonce(address enclave) view returns (uint256)',
   'function getState(address enclave, bytes32 key) view returns (string cid, uint256 version, uint64 updatedAt)',
   'function getVersion(address enclave, bytes32 key) view returns (uint256)',
+  'function getNonce(address enclave, bytes32 key) view returns (uint256)',
   'function exists(address enclave, bytes32 key) view returns (bool)'
 ];
 
@@ -328,6 +330,11 @@ const ESR_ABI = [
 // (commitFor); the NODE relays it and pays, and does all gas accounting. The
 // securelock does no gas math -- nothing it could claim about cost is trusted.
 let _esrLedger = [];
+
+// Per-task memo of the last idempotency nonce ACCEPTED per key, so a
+// getNonce() right after a commit in the SAME task returns the fresh value
+// even before the node's relay lands on-chain.
+let _taskNonces = {};
 
 class StateRegistry {
   constructor() {
@@ -416,16 +423,33 @@ class StateRegistry {
    * The last accepted idempotency nonce for `key` (0 if none was ever used).
    * A dApp that wants duplicate suppression reads this, picks a greater value
    * (e.g. +1, or a timestamp), and passes it to commit(..., { nonce }).
+   *
+   * The nonce is PUBLIC data: the registry records it on-chain next to the
+   * version, and anyone can read it with a free eth_call (getNonce) -- so no
+   * read-ACL applies here, and web3 clients see the same value via the
+   * runner's esrNonce. Use opaque monotonic values (a counter or a
+   * timestamp), never secret-derived ones.
+   *
+   * Reads chain-first (authoritative, post-relay), merged with this task's
+   * own accepted commits so `commit(..., { nonce: N }); getNonce()` returns N
+   * even before the node's relay lands. Falls back to the in-blob value when
+   * the registry predates the on-chain field.
    */
   async getNonce(key) {
-    const [acl, , , , nonce] = await this._readContainer(key);
-    if (!canRead(acl)) {
-      throw new StatePermissionError(
-        `caller ${_taskCaller || '<anonymous>'} has no read permission on ` +
-          `state key '${key}' (owner: ${acl.owner})`
-      );
+    let chain = 0;
+    try {
+      const n = await this._contract().getNonce(this.walletAddress, keyHash(key));
+      chain = Number(n);
+    } catch (e) {
+      // Registry without getNonce (older deployment): in-blob fallback.
+      try {
+        const [, , , , blobNonce] = await this._readContainer(key);
+        chain = Number(blobNonce) || 0;
+      } catch (e2) {
+        chain = 0;
+      }
     }
-    return nonce;
+    return Math.max(Number(chain) || 0, Number(_taskNonces[key] || 0));
   }
 
   /**
@@ -502,12 +526,17 @@ class StateRegistry {
       await this._publish(key, blob, cid);
 
       try {
+        // On-chain, 0 means "no guard: preserve the stored nonce". Only a
+        // caller-supplied nonce is sent; the preserved value stays inside the
+        // blob for registries without nonce support.
         // eslint-disable-next-line no-await-in-loop
         await this._sendCommit(keyHash(key), cid, currentVersion,
-          nextAcl ? normAddr(nextAcl.owner) : null);
+          nextAcl ? normAddr(nextAcl.owner) : null,
+          nonce != null ? Math.trunc(nonce) : 0);
         // Record the POST-commit values (the DATA -- the ACL never leaves in
         // results): this is what the chain shows once the relay lands.
         ledgerRecord(key, currentVersion + 1, cid, newData);
+        if (finalNonce) _taskNonces[key] = Math.trunc(finalNonce);
         return [nextAcl, newData];
       } catch (e) {
         const msg = String(e && e.message ? e.message : e);
@@ -552,7 +581,7 @@ class StateRegistry {
     throw new Error(`Could not read state object for '${key}' (${cid})`);
   }
 
-  async _sendCommit(keyHashHex, cid, expectedVersion, ownerAddr = null) {
+  async _sendCommit(keyHashHex, cid, expectedVersion, ownerAddr = null, nonce = 0) {
     // The enclave never pays gas and does NO gas math: it SIGNS the commit
     // (commitFor) and stages the signed authorization for the node, which
     // relays it and pays. The trustedzone independently re-prices the whole
@@ -563,8 +592,10 @@ class StateRegistry {
     const contract = this._contract();
 
     const relayNonce = await contract.relayNonce(enclave);
+    // The idempotency nonce is signature-bound: it is part of the digest the
+    // enclave signs, so the relaying node cannot alter or strip it.
     const digest = await contract.commitDigest(
-      enclave, keyHashHex, cid, expectedVersion, relayNonce);
+      enclave, keyHashHex, cid, expectedVersion, relayNonce, Math.trunc(nonce || 0));
     // Sign the raw 32-byte digest as an eth_sign message (matches the
     // contract's "\x19Ethereum Signed Message:\n32" recovery).
     const signature = await signer.signMessage(ethers.utils.arrayify(digest));
@@ -575,6 +606,9 @@ class StateRegistry {
       cid,
       expectedVersion: Number(expectedVersion),
       relayNonce: Number(relayNonce),
+      // PUBLIC idempotency nonce (0 = no guard): recorded on-chain by
+      // commitFor, enforced strictly increasing per (enclave, key).
+      nonce: Math.trunc(nonce || 0),
       signature,
       // IMPERSONATION GUARD: the trustedzone requires callerUsed to equal the
       // DO owner it reads from the PoX contract, so a payload that forged the
@@ -598,7 +632,8 @@ class StateRegistry {
     // in-memory registry now so getState/getVersion reflect it. No-op in the
     // real enclave (hook is null) -- there the node applies it on-chain.
     if (_localCommitApply) {
-      await _localCommitApply(enclave, keyHashHex, cid, Number(expectedVersion));
+      await _localCommitApply(enclave, keyHashHex, cid, Number(expectedVersion),
+        Math.trunc(nonce || 0));
     }
 
     return { relayed: true, relayNonce: Number(relayNonce) };

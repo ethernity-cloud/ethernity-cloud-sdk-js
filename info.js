@@ -17,7 +17,7 @@
  *   ecld-info network               just the network section
  *   ecld-info trustedzone           just the trustedzone registration
  *   ecld-info securelock            just the securelock registration
- *   ecld-info esr address|count|state|version|list   ESR inspection
+ *   ecld-info esr address|count|state|version|nonce|list   ESR inspection
  *
  * Registration is keyed by the image's IPFS hash: pass --ipfs <hash> for an
  * exact record, or --name <n> to resolve the latest registered version of a
@@ -46,7 +46,7 @@ const NETWORKS = {
     type: 'testnet', chainId: 8995, rpc: 'https://core.bloxberg.org',
     protocol: '0x02882F03097fE8cD31afbdFbB5D72a498B41112c',
     imageRegistry: '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31',
-    esr: '0xda5e68Bb5e68ee14D73b8de2a4D3Ca15736fACfb',
+    esr: '0xdfDD088b9cB998280685aF4E93DC0b37952aB08e',
   },
   LITVM_LITEFORGE: {
     type: 'testnet', chainId: 0, rpc: 'https://liteforge.rpc.caldera.xyz/infra-partner-http',
@@ -65,8 +65,18 @@ const ESR_ABI = [
   'function getState(address enclave, bytes32 key) view returns (string cid, uint256 version, uint64 updatedAt)',
   'function getVersion(address enclave, bytes32 key) view returns (uint256)',
   'function exists(address enclave, bytes32 key) view returns (bool)',
+  // The idempotency nonce is PUBLIC on-chain data (recorded next to the
+  // version); pre-nonce registries simply have no getNonce view.
+  'function getNonce(address enclave, bytes32 key) view returns (uint256)',
   'function entryCount() view returns (uint256)',
   'function getEntriesFrom(uint256 start, uint256 limit) view returns (address[] enclaves, bytes32[] keys, string[] cids, uint256[] versions, uint64[] updatedAts, uint256 total)',
+  'event StateCommitted(address indexed enclave, bytes32 indexed key, string cid, uint256 version, uint256 seq, uint256 nonce)',
+];
+
+// Pre-nonce registries emit a 5-field StateCommitted (no trailing nonce);
+// decoding their logs with the 6-field ABI fails, so event reads fall back to
+// this shape when the primary decode errors out.
+const ESR_ABI_LEGACY_EVENT = [
   'event StateCommitted(address indexed enclave, bytes32 indexed key, string cid, uint256 version, uint256 seq)',
 ];
 
@@ -165,13 +175,22 @@ async function sectionEsr(prov, net, enclaveWallet, eventsN) {
       const flt = esr.filters.StateCommitted(ethers.utils.getAddress(enclaveWallet));
       let logs = await esr.queryFilter(flt, from, 'latest');
       logs = logs.slice(-eventsN);
-      out.recent_commits = logs.map((l) => ({
-        key_hash: l.args.key,
-        version: l.args.version.toNumber(),
-        cid: l.args.cid,
-        seq: l.args.seq.toNumber(),
-        block: l.blockNumber,
-      }));
+      // Pre-nonce registries emit 5-field events the 6-field ABI cannot
+      // decode (ethers leaves args undefined) -- re-parse those legacy-shaped.
+      const legacyIface = new ethers.utils.Interface(ESR_ABI_LEGACY_EVENT);
+      out.recent_commits = logs.map((l) => {
+        const args = l.args || legacyIface.parseLog(l).args;
+        const rec = {
+          key_hash: args.key,
+          version: args.version.toNumber(),
+          cid: args.cid,
+          seq: args.seq.toNumber(),
+          block: l.blockNumber,
+        };
+        // PUBLIC idempotency nonce; 0 = the commit carried no guard.
+        if (args.nonce != null) rec.nonce = args.nonce.toNumber();
+        return rec;
+      });
     } catch (e) {
       out.recent_commits_error = e.message;
     }
@@ -192,17 +211,31 @@ async function esrQuery(prov, name, net, args) {
     const v = (await c.getVersion(ethers.utils.getAddress(args.enclave), keyHash(args.key))).toNumber();
     return { enclave: args.enclave, key: args.key, version: v };
   }
+  if (sub === 'nonce') {
+    const n = (await c.getNonce(ethers.utils.getAddress(args.enclave), keyHash(args.key))).toNumber();
+    return {
+      enclave: args.enclave, key: args.key, nonce: n,
+      note: 'last accepted idempotency nonce (PUBLIC data, free eth_call); '
+        + '0 = no guarded commit yet. Pass any greater value to commit() to '
+        + 'guard against duplicates; the contract enforces in-order per key',
+    };
+  }
   if (sub === 'state') {
     const enclave = ethers.utils.getAddress(args.enclave);
     const kh = keyHash(args.key);
     const [cid, version, updated] = await c.getState(enclave, kh);
     const exists = await c.exists(enclave, kh);
-    return {
+    const out = {
       network: name, enclave: args.enclave, key: args.key, key_hash: kh,
       exists, version: version.toNumber(), cid: cid || null, cid_valid: looksLikeCID(cid),
       updated_at: updated.toNumber(),
       note: 'cid points at ENCRYPTED state; only the enclave can decrypt it',
     };
+    try {
+      // PUBLIC idempotency nonce; absent on pre-nonce registries.
+      out.nonce = (await c.getNonce(enclave, kh)).toNumber();
+    } catch (e) { /* pre-nonce registry */ }
+    return out;
   }
   if (sub === 'list') {
     const start = parseInt(args.start || 0, 10);
@@ -266,7 +299,7 @@ function printFull(info) {
   if ('total_registry_entries' in e) console.log(`  total keys:   ${e.total_registry_entries} (all enclaves)`);
   if (e.recent_commits) {
     console.log(`  recent state commits for this enclave: ${e.recent_commits.length}`);
-    e.recent_commits.forEach((c) => console.log(`    v${c.version}  seq ${c.seq}  ${c.key_hash}  ${c.cid}  (block ${c.block})`));
+    e.recent_commits.forEach((c) => console.log(`    v${c.version}  seq ${c.seq}${c.nonce ? `  nonce ${c.nonce}` : ''}  ${c.key_hash}  ${c.cid}  (block ${c.block})`));
   } else if (e.recent_commits_note) console.log(`  ${e.recent_commits_note}`);
   else if (e.recent_commits_error) console.log(`  (could not read commits: ${e.recent_commits_error})`);
 }

@@ -108,11 +108,19 @@ class MemContract {
     return ethers.BigNumber.from(this._nonce[String(enclave).toLowerCase()] || 0);
   }
 
-  async commitDigest(enclave, keyHash, cid, expectedVersion, relayNonce) {
+  async commitDigest(enclave, keyHash, cid, expectedVersion, relayNonce, nonce = 0) {
     // Deterministic 32-byte digest (no real signing needed locally; the
-    // securelock still signs it with the local test key).
+    // securelock still signs it with the local test key). The idempotency
+    // nonce is part of the digest, like on-chain.
     return ethers.utils.id(JSON.stringify([String(enclave).toLowerCase(), keyHash, cid,
-      Number(expectedVersion), Number(relayNonce)]));
+      Number(expectedVersion), Number(relayNonce), Number(nonce || 0)]));
+  }
+
+  /** Last accepted idempotency nonce for (enclave, key) -- public data,
+   * mirroring the on-chain getNonce view. */
+  async getNonce(enclave, keyHash) {
+    const e = this._entries[key(enclave, keyHash)];
+    return ethers.BigNumber.from(e && e.nonce ? e.nonce : 0);
   }
 
   async entryCount() {
@@ -120,13 +128,25 @@ class MemContract {
   }
 
   // ---- the on-chain commitFor, applied locally ----
-  applyCommit(enclave, keyHash, cid, expectedVersion) {
+  // Idempotency nonces are enforced IN ORDER per (enclave, key), exactly like
+  // the contract: nonce != 0 must be strictly greater than the stored value
+  // (gaps allowed) or NonceOutOfOrder is thrown; nonce == 0 preserves it.
+  applyCommit(enclave, keyHash, cid, expectedVersion, nonce = 0) {
     const k = key(enclave, keyHash);
-    const cur = this._entries[k] ? Number(this._entries[k].version) : 0;
+    const entry = this._entries[k] || {};
+    const cur = entry.version ? Number(entry.version) : 0;
     if (Number(expectedVersion) !== cur) {
       throw new Error(`VersionMismatch: expected ${expectedVersion} but current is ${cur}`);
     }
-    this._entries[k] = { cid, version: cur + 1, updatedAt: 0 };
+    let storedNonce = Number(entry.nonce || 0);
+    const n = Number(nonce || 0);
+    if (n !== 0) {
+      if (n <= storedNonce) {
+        throw new Error(`NonceOutOfOrder: stored ${storedNonce}, given ${n}`);
+      }
+      storedNonce = n;
+    }
+    this._entries[k] = { cid, version: cur + 1, updatedAt: 0, nonce: storedNonce };
     const e = String(enclave).toLowerCase();
     this._nonce[e] = (this._nonce[e] || 0) + 1;
     this._persist();
@@ -152,8 +172,8 @@ function install(ecldState, { caller = null, filePrefix = '.ecld-esr-local' } = 
   });
   ecldState.setContractOverride(contract);
   ecldState.setLocalCommitApply(
-    (enclave, keyHash, cid, expectedVersion) =>
-      contract.applyCommit(enclave, keyHash, cid, expectedVersion));
+    (enclave, keyHash, cid, expectedVersion, nonce = 0) =>
+      contract.applyCommit(enclave, keyHash, cid, expectedVersion, nonce));
 
   return { swift, contract };
 }
