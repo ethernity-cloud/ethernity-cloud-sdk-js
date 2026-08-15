@@ -40,17 +40,17 @@ const NETWORKS = {
     type: 'mainnet', chainId: 8995, rpc: 'https://core.bloxberg.org',
     protocol: '0x549A6E06BB2084100148D50F51CF77a3436C3Ae7',
     imageRegistry: '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31',
-    esr: '0xDaFa1e3CAF370765275d853cd86dDEd671Ce29Dd',
+    esr: '0x54e0dD4201F530703c7988427d3b7c70c1dCeC94',
   },
   BLOXBERG_TESTNET: {
     type: 'testnet', chainId: 8995, rpc: 'https://core.bloxberg.org',
     protocol: '0x02882F03097fE8cD31afbdFbB5D72a498B41112c',
     imageRegistry: '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31',
-    esr: '0xD7a7Cb9cbb0Ca1adFb2B8405382f299EA1c6132f',
+    esr: '0x421E216087eEc1e27b82188C23E490b0E2cA384d',
   },
   LITVM_LITEFORGE: {
     type: 'testnet', chainId: 0, rpc: 'https://liteforge.rpc.caldera.xyz/infra-partner-http',
-    protocol: '', imageRegistry: '', esr: '0x213aA794F29EA717B9226dF81F7317334Ac36169',
+    protocol: '', imageRegistry: '', esr: '0x5f427A78A0f2Bd7379b99A09C7D8fE51DD7E54D7',
   },
 };
 
@@ -173,7 +173,7 @@ async function sectionEsr(prov, net, enclaveWallet, eventsN) {
         version: l.args.version.toNumber(),
         cid: l.args.cid,
         seq: l.args.seq.toNumber(),
-        // PUBLIC idempotency nonce; 0 = the commit carried no guard.
+        // PUBLIC per-key nonce (advances by 1 on every commit).
         nonce: l.args.nonce.toNumber(),
         block: l.blockNumber,
       }));
@@ -201,10 +201,10 @@ async function esrQuery(prov, name, net, args) {
     const n = (await c.getNonce(ethers.utils.getAddress(args.enclave), keyHash(args.key))).toNumber();
     return {
       enclave: args.enclave, key: args.key, nonce: n,
-      note: 'last accepted idempotency nonce (PUBLIC data, free eth_call); '
-        + '0 = no guarded commit yet. Pass EXACTLY nonce + 1 to commit() to '
-        + 'guard against duplicates; the contract enforces the sequence '
-        + 'strictly per key (no gaps, no reuse)',
+      note: 'per-key nonce, PUBLIC data (free eth_call); advances by 1 on '
+        + 'every commit, 0 = key never committed. For exactly-once, pass '
+        + 'EXACTLY nonce + 1 to commit(); an omitted nonce is auto-assigned '
+        + 'the next value by the registry',
     };
   }
   if (sub === 'state') {
@@ -215,7 +215,7 @@ async function esrQuery(prov, name, net, args) {
     return {
       network: name, enclave: args.enclave, key: args.key, key_hash: kh,
       exists, version: version.toNumber(),
-      // PUBLIC idempotency nonce; 0 = no guarded commit yet.
+      // PUBLIC per-key nonce; 0 = key never committed.
       nonce: (await c.getNonce(enclave, kh)).toNumber(),
       cid: cid || null, cid_valid: looksLikeCID(cid),
       updated_at: updated.toNumber(),

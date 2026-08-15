@@ -128,9 +128,10 @@ class MemContract {
   }
 
   // ---- the on-chain commitFor, applied locally ----
-  // Idempotency nonces are enforced strictly sequentially per (enclave, key),
-  // exactly like the contract: nonce != 0 must be EXACTLY the stored value + 1
-  // (no gaps, no reuse) or NonceOutOfOrder is thrown; nonce == 0 preserves it.
+  // The per-key nonce advances by EXACTLY 1 on every commit, like the
+  // contract: nonce == 0 ("omitted") gets the next value assigned by the
+  // registry itself; a non-zero nonce is a client-pinned guard and must be
+  // EXACTLY the stored value + 1 (no gaps, no reuse) or NonceOutOfOrder.
   applyCommit(enclave, keyHash, cid, expectedVersion, nonce = 0) {
     const k = key(enclave, keyHash);
     const entry = this._entries[k] || {};
@@ -140,7 +141,9 @@ class MemContract {
     }
     let storedNonce = Number(entry.nonce || 0);
     const n = Number(nonce || 0);
-    if (n !== 0) {
+    if (n === 0) {
+      storedNonce += 1;
+    } else {
       if (n !== storedNonce + 1) {
         throw new Error(`NonceOutOfOrder: stored ${storedNonce}, given ${n}`);
       }

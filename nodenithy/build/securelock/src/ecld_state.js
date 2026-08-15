@@ -462,11 +462,15 @@ class StateRegistry {
    */
   async commit(key, mutate, opts = 3) {
     // Back-compat: the third arg used to be `attempts` (a number); it may now
-    // also be { attempts, nonce }. `nonce` is an idempotency guard the dApp
-    // controls: it must be EXACTLY the last accepted nonce for the key + 1
-    // (see getNonce; the sequence is 1, 2, 3, ... with no gaps and no
-    // reuse). Anything else throws StateNonceError and the state is NOT
-    // changed.
+    // also be { attempts, nonce }. The per-key nonce sequence advances by
+    // exactly 1 on EVERY commit (1, 2, 3, ... -- no gaps, no reuse; see
+    // getNonce).
+    //   - Omitted: the SDK takes the next value in sequence automatically.
+    //     Always succeeds (subject to permissions/versioning) but carries NO
+    //     exactly-once guarantee -- a resubmitted task picks a fresh number.
+    //   - Explicit: must be EXACTLY the last accepted nonce + 1, pinned by
+    //     the CLIENT before submitting. Anything else throws StateNonceError
+    //     (task code 36) and the state is NOT changed.
     const { attempts = 3, nonce = null } =
       typeof opts === 'number' ? { attempts: opts } : (opts || {});
     const transform = async (acl, data) => {
@@ -499,26 +503,40 @@ class StateRegistry {
       // nonce (chain merged with this task's own accepted commits), so a
       // duplicate fails in-enclave with task code 36 instead of as a failed
       // relay. The contract re-enforces the same rule on-chain either way.
+      let finalNonce;
       if (nonce != null) {
-        const n = Math.trunc(nonce);
+        finalNonce = Math.trunc(nonce);
+        if (finalNonce === 0) {
+          throw new StateNonceError(
+            `nonce=0 is reserved for 'not set' (the registry then assigns the ` +
+              `next value itself) -- omit the nonce on commit('${key}', ...) ` +
+              'instead of passing 0. Pinned nonces start at 1: use getNonce() + 1.'
+          );
+        }
         // eslint-disable-next-line no-await-in-loop
         const storedNonce = await this.getNonce(key);
-        if (n !== storedNonce + 1) {
+        if (finalNonce !== storedNonce + 1) {
           throw new StateNonceError(
-            `nonce ${n} is out of sequence for state key '${key}' (last accepted: ` +
+            `nonce ${finalNonce} is out of sequence for state key '${key}' (last accepted: ` +
               `${storedNonce}, expected: ${storedNonce + 1}); commit suppressed, ` +
               'state unchanged'
           );
         }
+      } else {
+        // No explicit nonce: the CONTRACT assigns the next value in sequence
+        // itself (wire nonce 0 = "omitted"); this predicted value feeds the
+        // blob's reporting copy and the task memo. The sequence advances on
+        // EVERY commit; only an EXPLICIT nonce carries the exactly-once
+        // guarantee (an omitted one is auto-assigned a fresh number, so it
+        // cannot deduplicate -- by design).
+        // eslint-disable-next-line no-await-in-loop
+        finalNonce = (await this.getNonce(key)) + 1;
       }
       // eslint-disable-next-line no-await-in-loop
       const [nextAcl, newData] = await transform(acl, data, currentVersion);
-      // The blob carries a REPORTING COPY of what the registry will store for
-      // this key after this commit: the supplied nonce, or the preserved
-      // current value for a nonce-less commit. Chain stays primary; reads
+      // The blob carries a REPORTING COPY of the nonce the registry will
+      // store for this key after this commit. Chain stays primary; reads
       // verify the two match.
-      // eslint-disable-next-line no-await-in-loop
-      const finalNonce = nonce != null ? Math.trunc(nonce) : ((await this.getNonce(key)) || null);
       // Bind the authoring caller into the blob (hence the CID/signature) for
       // owned state.
       const stored = wrapStored(nextAcl, newData, nextAcl ? _taskCaller : null, finalNonce);
@@ -533,7 +551,8 @@ class StateRegistry {
       await this._publish(key, blob, cid);
 
       try {
-        // On-chain, 0 means "no guard: preserve the stored nonce".
+        // Wire value: the pinned nonce, or 0 = "omitted" -- the contract
+        // then assigns the next value atomically on-chain.
         // eslint-disable-next-line no-await-in-loop
         await this._sendCommit(keyHash(key), cid, currentVersion,
           nextAcl ? normAddr(nextAcl.owner) : null,
@@ -541,7 +560,7 @@ class StateRegistry {
         // Record the POST-commit values (the DATA -- the ACL never leaves in
         // results): this is what the chain shows once the relay lands.
         ledgerRecord(key, currentVersion + 1, cid, newData);
-        if (nonce != null) _taskNonces[key] = Math.trunc(nonce);
+        _taskNonces[key] = finalNonce;
         return [nextAcl, newData];
       } catch (e) {
         const msg = String(e && e.message ? e.message : e);
