@@ -114,21 +114,17 @@ function unwrapStored(stored) {
   return [null, stored];
 }
 
-/** Last accepted idempotency nonce carried by a stored blob (0 if none). */
-function storedNonce(stored) {
-  if (stored && typeof stored === 'object' && stored[CONTAINER_MARK] === 1) {
-    const n = parseInt(stored.nonce, 10);
-    return Number.isFinite(n) ? n : 0;
-  }
-  return 0;
-}
-
 function wrapStored(acl, data, committedBy = null, nonce = null) {
   // For owned state, bind the authoring caller (committedBy) INTO the blob, so
   // it lands in the CID -- the field the securelock signs -- making the caller
   // cryptographically bound to the commit, not merely a re-stampable sidecar.
-  // Unowned state keeps the legacy bare shape -- unless a nonce must be
-  // carried, which forces the container so the nonce survives in the blob.
+  // Unowned state keeps the bare shape (no ACL, no binding) -- unless a nonce
+  // must be carried, which forces the container shape.
+  //
+  // `nonce` is a REPORTING COPY of the registry's stored idempotency nonce as
+  // of this commit. The on-chain value (getNonce) is always the primary; the
+  // blob copy exists so the signed CID cryptographically commits to the nonce
+  // the enclave intended, and reads verify the two match (_readContainer).
   if (!acl && nonce == null) return data;
   const container = { [CONTAINER_MARK]: 1, acl: acl || null, data };
   if (committedBy) container.committedBy = committedBy;
@@ -401,11 +397,11 @@ class StateRegistry {
     return data;
   }
 
-  /** [acl, data, version, cid, nonce] for `key`; NO permission check here. */
+  /** [acl, data, version, cid] for `key`; NO permission check here. */
   async _readContainer(key, fallback = {}) {
     const [cid, version] = await this._contract().getState(this.walletAddress, keyHash(key));
     if (!version || !cid) {
-      return [null, fallback, 0, null, 0];
+      return [null, fallback, 0, null];
     }
     if (!looksLikeCID(cid)) {
       throw new Error(
@@ -416,7 +412,25 @@ class StateRegistry {
     const blob = await this._fetch(key, cid);
     const stored = JSON.parse(decrypt(blob).toString('utf8'));
     const [acl, data] = unwrapStored(stored);
-    return [acl, data, Number(version), cid, storedNonce(stored)];
+    if (stored && typeof stored === 'object' && stored[CONTAINER_MARK] === 1
+        && stored.nonce != null) {
+      // The blob carries a REPORTING COPY of the idempotency nonce; the chain
+      // is primary. Both were written by the same commit (the CID the chain
+      // points at IS this blob), so they must agree -- a mismatch means the
+      // registry entry and the state object have been tampered with or torn
+      // apart. Compare against the RAW chain value (not the task memo): the
+      // blob we fetched is the chain's cid.
+      const chainNonce = Number(await this._contract().getNonce(this.walletAddress, keyHash(key)));
+      const blobNonce = Math.trunc(Number(stored.nonce));
+      if (blobNonce !== chainNonce) {
+        throw new Error(
+          `ESR nonce mismatch for '${key}': the state object reports nonce ` +
+            `${blobNonce} but the registry records ${chainNonce} -- refusing ` +
+            'to use this state'
+        );
+      }
+    }
+    return [acl, data, Number(version), cid];
   }
 
   /**
@@ -430,26 +444,13 @@ class StateRegistry {
    * runner's esrNonce. Use opaque monotonic values (a counter or a
    * timestamp), never secret-derived ones.
    *
-   * Reads chain-first (authoritative, post-relay), merged with this task's
+   * Reads the chain (authoritative, post-relay), merged with this task's
    * own accepted commits so `commit(..., { nonce: N }); getNonce()` returns N
-   * even before the node's relay lands. Falls back to the in-blob value when
-   * the registry predates the on-chain field.
+   * even before the node's relay lands.
    */
   async getNonce(key) {
-    let chain = 0;
-    try {
-      const n = await this._contract().getNonce(this.walletAddress, keyHash(key));
-      chain = Number(n);
-    } catch (e) {
-      // Registry without getNonce (older deployment): in-blob fallback.
-      try {
-        const [, , , , blobNonce] = await this._readContainer(key);
-        chain = Number(blobNonce) || 0;
-      } catch (e2) {
-        chain = 0;
-      }
-    }
-    return Math.max(Number(chain) || 0, Number(_taskNonces[key] || 0));
+    const chain = Number(await this._contract().getNonce(this.walletAddress, keyHash(key)));
+    return Math.max(chain || 0, Number(_taskNonces[key] || 0));
   }
 
   /**
@@ -492,26 +493,30 @@ class StateRegistry {
     let lastError = null;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       // eslint-disable-next-line no-await-in-loop
-      const [acl, data, currentVersion, , priorNonce] = await this._readContainer(key);
-      // The nonce check re-runs on every retry against the freshly read state,
-      // so a racing commit that consumed the same nonce fails this one.
-      let finalNonce;
+      const [acl, data, currentVersion] = await this._readContainer(key);
+      // The nonce check re-runs on every retry against the freshest visible
+      // nonce (chain merged with this task's own accepted commits), so a
+      // duplicate fails in-enclave with task code 36 instead of as a failed
+      // relay. The contract re-enforces the same rule on-chain either way.
       if (nonce != null) {
         const n = Math.trunc(nonce);
-        if (n <= priorNonce) {
+        // eslint-disable-next-line no-await-in-loop
+        const storedNonce = await this.getNonce(key);
+        if (n <= storedNonce) {
           throw new StateNonceError(
             `nonce ${n} was already used for state key '${key}' (last accepted: ` +
-              `${priorNonce}); duplicate commit suppressed, state unchanged`
+              `${storedNonce}); duplicate commit suppressed, state unchanged`
           );
         }
-        finalNonce = n;
-      } else {
-        // Preserve the stored nonce so a nonce-less commit cannot reset the
-        // guard and reopen replays.
-        finalNonce = priorNonce > 0 ? priorNonce : null;
       }
       // eslint-disable-next-line no-await-in-loop
       const [nextAcl, newData] = await transform(acl, data, currentVersion);
+      // The blob carries a REPORTING COPY of what the registry will store for
+      // this key after this commit: the supplied nonce, or the preserved
+      // current value for a nonce-less commit. Chain stays primary; reads
+      // verify the two match.
+      // eslint-disable-next-line no-await-in-loop
+      const finalNonce = nonce != null ? Math.trunc(nonce) : ((await this.getNonce(key)) || null);
       // Bind the authoring caller into the blob (hence the CID/signature) for
       // owned state.
       const stored = wrapStored(nextAcl, newData, nextAcl ? _taskCaller : null, finalNonce);
@@ -526,9 +531,7 @@ class StateRegistry {
       await this._publish(key, blob, cid);
 
       try {
-        // On-chain, 0 means "no guard: preserve the stored nonce". Only a
-        // caller-supplied nonce is sent; the preserved value stays inside the
-        // blob for registries without nonce support.
+        // On-chain, 0 means "no guard: preserve the stored nonce".
         // eslint-disable-next-line no-await-in-loop
         await this._sendCommit(keyHash(key), cid, currentVersion,
           nextAcl ? normAddr(nextAcl.owner) : null,
@@ -536,7 +539,7 @@ class StateRegistry {
         // Record the POST-commit values (the DATA -- the ACL never leaves in
         // results): this is what the chain shows once the relay lands.
         ledgerRecord(key, currentVersion + 1, cid, newData);
-        if (finalNonce) _taskNonces[key] = Math.trunc(finalNonce);
+        if (nonce != null) _taskNonces[key] = Math.trunc(nonce);
         return [nextAcl, newData];
       } catch (e) {
         const msg = String(e && e.message ? e.message : e);
