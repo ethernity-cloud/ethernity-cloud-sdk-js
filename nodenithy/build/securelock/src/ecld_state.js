@@ -435,14 +435,14 @@ class StateRegistry {
 
   /**
    * The last accepted idempotency nonce for `key` (0 if none was ever used).
-   * A dApp that wants duplicate suppression reads this, picks a greater value
-   * (e.g. +1, or a timestamp), and passes it to commit(..., { nonce }).
+   * A dApp that wants duplicate suppression reads this and passes
+   * getNonce(key) + 1 to commit(..., { nonce }) -- the contract accepts
+   * EXACTLY the next value in sequence, nothing else.
    *
    * The nonce is PUBLIC data: the registry records it on-chain next to the
    * version, and anyone can read it with a free eth_call (getNonce) -- so no
    * read-ACL applies here, and web3 clients see the same value via the
-   * runner's esrNonce. Use opaque monotonic values (a counter or a
-   * timestamp), never secret-derived ones.
+   * runner's esrNonce.
    *
    * Reads the chain (authoritative, post-relay), merged with this task's
    * own accepted commits so `commit(..., { nonce: N }); getNonce()` returns N
@@ -463,9 +463,10 @@ class StateRegistry {
   async commit(key, mutate, opts = 3) {
     // Back-compat: the third arg used to be `attempts` (a number); it may now
     // also be { attempts, nonce }. `nonce` is an idempotency guard the dApp
-    // controls: it must be STRICTLY GREATER than the last accepted nonce for
-    // the key (see getNonce). A duplicate or stale nonce throws
-    // StateNonceError and the state is NOT changed.
+    // controls: it must be EXACTLY the last accepted nonce for the key + 1
+    // (see getNonce; the sequence is 1, 2, 3, ... with no gaps and no
+    // reuse). Anything else throws StateNonceError and the state is NOT
+    // changed.
     const { attempts = 3, nonce = null } =
       typeof opts === 'number' ? { attempts: opts } : (opts || {});
     const transform = async (acl, data) => {
@@ -502,10 +503,11 @@ class StateRegistry {
         const n = Math.trunc(nonce);
         // eslint-disable-next-line no-await-in-loop
         const storedNonce = await this.getNonce(key);
-        if (n <= storedNonce) {
+        if (n !== storedNonce + 1) {
           throw new StateNonceError(
-            `nonce ${n} was already used for state key '${key}' (last accepted: ` +
-              `${storedNonce}); duplicate commit suppressed, state unchanged`
+            `nonce ${n} is out of sequence for state key '${key}' (last accepted: ` +
+              `${storedNonce}, expected: ${storedNonce + 1}); commit suppressed, ` +
+              'state unchanged'
           );
         }
       }

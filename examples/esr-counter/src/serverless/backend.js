@@ -47,8 +47,10 @@ async function esrIncrement(key = 'e2e-counter') {
  *
  * Call it twice with the same nonce — the second run fails with task code 36
  * (ESR_NONCE_VIOLATION) and the state is untouched: "already applied", not a
- * failure. Pick the next nonce with `esrNonce(key) + 1` (esrNonce is in the
- * payload scope), or use any strictly-increasing number (e.g. a timestamp).
+ * failure. The nonce must be EXACTLY the last accepted one + 1 (the sequence
+ * is 1, 2, 3, ... per key; no gaps, no reuse): pick it with
+ * `esrNonce(key) + 1` in the payload scope, or read it for free from the
+ * chain (getNonce) before submitting.
  */
 async function esrIncrementOnce(nonce, key = 'e2e-counter') {
   const { StateRegistry } = require('../ecld_state');

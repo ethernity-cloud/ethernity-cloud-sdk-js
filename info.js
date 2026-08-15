@@ -40,17 +40,17 @@ const NETWORKS = {
     type: 'mainnet', chainId: 8995, rpc: 'https://core.bloxberg.org',
     protocol: '0x549A6E06BB2084100148D50F51CF77a3436C3Ae7',
     imageRegistry: '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31',
-    esr: '0x39d6f2A98f7FFF9866AAaa0EAa9aEd8bcf6f728E',
+    esr: '0xDaFa1e3CAF370765275d853cd86dDEd671Ce29Dd',
   },
   BLOXBERG_TESTNET: {
     type: 'testnet', chainId: 8995, rpc: 'https://core.bloxberg.org',
     protocol: '0x02882F03097fE8cD31afbdFbB5D72a498B41112c',
     imageRegistry: '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31',
-    esr: '0xdfDD088b9cB998280685aF4E93DC0b37952aB08e',
+    esr: '0xD7a7Cb9cbb0Ca1adFb2B8405382f299EA1c6132f',
   },
   LITVM_LITEFORGE: {
     type: 'testnet', chainId: 0, rpc: 'https://liteforge.rpc.caldera.xyz/infra-partner-http',
-    protocol: '', imageRegistry: '', esr: '0x71a4bb5AC4c8F37ea0d9394fB29bBC06eEC28000',
+    protocol: '', imageRegistry: '', esr: '0x213aA794F29EA717B9226dF81F7317334Ac36169',
   },
 };
 
@@ -202,8 +202,9 @@ async function esrQuery(prov, name, net, args) {
     return {
       enclave: args.enclave, key: args.key, nonce: n,
       note: 'last accepted idempotency nonce (PUBLIC data, free eth_call); '
-        + '0 = no guarded commit yet. Pass any greater value to commit() to '
-        + 'guard against duplicates; the contract enforces in-order per key',
+        + '0 = no guarded commit yet. Pass EXACTLY nonce + 1 to commit() to '
+        + 'guard against duplicates; the contract enforces the sequence '
+        + 'strictly per key (no gaps, no reuse)',
     };
   }
   if (sub === 'state') {
