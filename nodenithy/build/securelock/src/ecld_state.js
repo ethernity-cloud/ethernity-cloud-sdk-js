@@ -72,6 +72,7 @@ function configure({ identityPriv, swiftStreamService, bucket, contractAddress, 
   _provider = provider;
   _esrLedger = [];
   _taskNonces = {};
+  _taskRelayNonces = {};
   _taskLedger = {};
   _taskCaller = normAddr(caller);
 }
@@ -106,6 +107,16 @@ class StatePermissionError extends Error {}
 // commit() and it is not greater than the last accepted nonce for the key --
 // a duplicate (or out-of-order) submission. The state was NOT changed.
 class StateNonceError extends Error {}
+
+// Per-run cap on state commits: bounds the number of relayed transactions the
+// node must track/pay and the size of the adjudicated ledger bound into the
+// result transaction. 256 so the on-chain count fits ONE BYTE (bias-1:
+// 0x00 = 1 commit ... 0xFF = 256; an all-zero root means no commits at all).
+// The over-limit commit is NOT applied; earlier commits stand. Surfaces as
+// task code 38 (ESR_COMMIT_LIMIT_EXCEEDED).
+const MAX_COMMITS_PER_TASK = 256;
+
+class StateLimitError extends Error {}
 
 function unwrapStored(stored) {
   if (stored && typeof stored === 'object' && stored[CONTAINER_MARK] === 1) {
@@ -314,7 +325,7 @@ const ESR_ABI = [
   'function commit(bytes32 key, string newCID, uint256 expectedVersion, uint256 nonce)',
   'function commitFor(address enclave, bytes32 key, string newCID, uint256 expectedVersion, uint256 relayNonce, uint256 nonce, bytes signature)',
   'function commitDigest(address enclave, bytes32 key, string newCID, uint256 expectedVersion, uint256 relayNonce, uint256 nonce) view returns (bytes32)',
-  'function relayNonce(address enclave) view returns (uint256)',
+  'function relayNonce(address enclave, bytes32 key) view returns (uint256)',
   'function getState(address enclave, bytes32 key) view returns (string cid, uint256 version, uint64 updatedAt)',
   'function getVersion(address enclave, bytes32 key) view returns (uint256)',
   'function getNonce(address enclave, bytes32 key) view returns (uint256)',
@@ -331,6 +342,11 @@ let _esrLedger = [];
 // getNonce() right after a commit in the SAME task returns the fresh value
 // even before the node's relay lands on-chain.
 let _taskNonces = {};
+
+// Per-task memo of the NEXT relay nonce per key hash, so multiple commits to
+// the same key within one task sign sequential relay nonces even while the
+// node is still relaying the earlier ones.
+let _taskRelayNonces = {};
 
 class StateRegistry {
   constructor() {
@@ -495,6 +511,13 @@ class StateRegistry {
    * concurrent tasks cannot silently lose updates.
    */
   async _commitTransform(key, transform, attempts = 3, nonce = null) {
+    if (_esrLedger.length >= MAX_COMMITS_PER_TASK) {
+      throw new StateLimitError(
+        `this task already made ${_esrLedger.length} state commits -- the ` +
+          `per-run limit is ${MAX_COMMITS_PER_TASK}. Batch your writes (one ` +
+          'commit can update a whole object) or split the work across tasks.'
+      );
+    }
     let lastError = null;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       // eslint-disable-next-line no-await-in-loop
@@ -615,7 +638,14 @@ class StateRegistry {
     const enclave = await signer.getAddress();
     const contract = this._contract();
 
-    const relayNonce = await contract.relayNonce(enclave);
+    // Relay nonce is PER (enclave, key): same-key commits are strictly
+    // serialized network-wide, different keys relay in parallel. Merge the
+    // chain value with this task's own staged commits so a second commit to
+    // the same key in ONE task signs the next number even before (or while)
+    // the node relays the first.
+    const khHex = String(keyHashHex).toLowerCase();
+    const chainRn = Number(await contract.relayNonce(enclave, keyHashHex));
+    const relayNonce = Math.max(chainRn, Number(_taskRelayNonces[khHex] || 0));
     // The idempotency nonce is signature-bound: it is part of the digest the
     // enclave signs, so the relaying node cannot alter or strip it.
     const digest = await contract.commitDigest(
@@ -648,9 +678,13 @@ class StateRegistry {
     await _swift.putFileContent(
       _bucket, 'esr.authorizations.json', '',
       Buffer.from(JSON.stringify(_esrLedger), 'utf8'));
+    // The staged filename carries the key prefix so commits to different keys
+    // within one task never collide, and the per-key relay order is explicit.
+    const kh16 = khHex.replace(/^0x/, '').slice(0, 16);
     await _swift.putFileContent(
-      _bucket, `esr.commit.${Number(relayNonce)}.json`, '',
+      _bucket, `esr.commit.${kh16}.${Number(relayNonce)}.json`, '',
       Buffer.from(JSON.stringify(auth), 'utf8'));
+    _taskRelayNonces[khHex] = Number(relayNonce) + 1;
 
     // LOCAL TESTING: with no node to relay commitFor, apply the commit to the
     // in-memory registry now so getState/getVersion reflect it. No-op in the
@@ -766,6 +800,7 @@ module.exports = {
   restampLedgerCaller,
   StatePermissionError,
   StateNonceError,
+  StateLimitError,
   esrGrant,
   esrRevoke,
   esrSetPublicRead,

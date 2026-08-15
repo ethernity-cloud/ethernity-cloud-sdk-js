@@ -104,8 +104,10 @@ class MemContract {
     return ethers.BigNumber.from(e ? e.version : 0);
   }
 
-  async relayNonce(enclave) {
-    return ethers.BigNumber.from(this._nonce[String(enclave).toLowerCase()] || 0);
+  async relayNonce(enclave, keyHash) {
+    // Per (enclave, key), like the contract: same-key commits serialize,
+    // different keys are independent.
+    return ethers.BigNumber.from(this._nonce[key(enclave, keyHash)] || 0);
   }
 
   async commitDigest(enclave, keyHash, cid, expectedVersion, relayNonce, nonce = 0) {
@@ -150,8 +152,7 @@ class MemContract {
       storedNonce = n;
     }
     this._entries[k] = { cid, version: cur + 1, updatedAt: 0, nonce: storedNonce };
-    const e = String(enclave).toLowerCase();
-    this._nonce[e] = (this._nonce[e] || 0) + 1;
+    this._nonce[k] = (this._nonce[k] || 0) + 1;
     this._persist();
   }
 }

@@ -19,6 +19,12 @@ class TaskStatus {
     static ESR_GAS_LIMIT_EXCEEDED = 34; // ESR commits would exceed the per-order relayed-gas budget.
     static SECURITY_VIOLATION = 35;     // A state commit was authorized under a caller other than
     static ESR_NONCE_VIOLATION = 36;    // A commit's idempotency nonce was already used -- duplicate
+    // The enclave signed state commits but they did not land on the registry
+    // within 5 blocks -- the node did not relay them. The validator REFUNDS.
+    static ESR_RELAY_TIMEOUT = 37;
+    // More than 100 state commits in one run -- the per-run cap that bounds
+    // relayed transactions and the result size. dApp-side fault: NO refund.
+    static ESR_COMMIT_LIMIT_EXCEEDED = 38;
                                         // suppressed, state unchanged (StateNonceError).
                                         // the task's submitter (the in-enclave ownership check was
                                         // bypassed). Set by the securelock on a detected forged

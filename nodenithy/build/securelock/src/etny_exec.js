@@ -210,6 +210,11 @@ async function exec(payload, input, globals = null) {
         if (error && error.constructor && error.constructor.name === 'StateNonceError') {
             return [TaskStatus.ESR_NONCE_VIOLATION, 'ESR_NONCE_VIOLATION: ' + error.message];
         }
+        // Over the per-run commit cap (100): the over-limit commit was NOT
+        // applied; the earlier commits stand and will be relayed.
+        if (error && error.constructor && error.constructor.name === 'StateLimitError') {
+            return [TaskStatus.ESR_COMMIT_LIMIT_EXCEEDED, 'ESR_COMMIT_LIMIT_EXCEEDED: ' + error.message];
+        }
         const detail = (error && (error.stack || error.message)) || String(error);
         console.error('Error in payload execution -- full stack follows:\n' + detail);
 
