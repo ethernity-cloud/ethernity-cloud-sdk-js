@@ -40,17 +40,17 @@ const NETWORKS = {
     type: 'mainnet', chainId: 8995, rpc: 'https://core.bloxberg.org',
     protocol: '0x549A6E06BB2084100148D50F51CF77a3436C3Ae7',
     imageRegistry: '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31',
-    esr: '0x54e0dD4201F530703c7988427d3b7c70c1dCeC94',
+    esr: '0x4Bf5cDE3BFD73dd10B707f8B123Ba631D2EBEAD2',
   },
   BLOXBERG_TESTNET: {
     type: 'testnet', chainId: 8995, rpc: 'https://core.bloxberg.org',
     protocol: '0x02882F03097fE8cD31afbdFbB5D72a498B41112c',
     imageRegistry: '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31',
-    esr: '0x421E216087eEc1e27b82188C23E490b0E2cA384d',
+    esr: '0x0Ea1728EAE108FD3B9340ae91451348E2Cc6b4E4',
   },
   LITVM_LITEFORGE: {
     type: 'testnet', chainId: 0, rpc: 'https://liteforge.rpc.caldera.xyz/infra-partner-http',
-    protocol: '', imageRegistry: '', esr: '0x5f427A78A0f2Bd7379b99A09C7D8fE51DD7E54D7',
+    protocol: '', imageRegistry: '', esr: '0x709052Fe77Af543d3d9FE2Ac06a15c635c8D4Be5',
   },
 };
 
