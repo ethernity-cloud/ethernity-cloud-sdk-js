@@ -142,10 +142,21 @@ async function executeTask(payload, input) {
             ' image dependencies, or a bad require() inside backend.js.'
         ];
     }
+    const scope = sessionBaseScope();
+    return exec(payload, input, scope);
+}
+
+// The eval scope every payload run receives. Public so the session executor
+// (etny_session_exec) builds ONE persistent scope and keeps handler/state
+// alive across streamed inputs. ___etny_on_input___ is PRE-SEEDED so a
+// payload assignment to that bare name lands in the scope (with-semantics)
+// instead of leaking to the global object.
+function sessionBaseScope() {
     const scope = {
         '___etny_result___': ___etny_result___,   // legacy alias (no ESR)
         'ecldResult': ecldResult,                 // the result API
         'esrFetch': esrFetch,                     // standard state-fetch task
+        '___etny_on_input___': null,              // session handler slot
         ...backendFunctions,
     };
     // State ownership / ACL API (present only in ESR-enabled builds). Enforced
@@ -158,7 +169,7 @@ async function executeTask(payload, input) {
             if (!(name in scope)) scope[name] = ecldState[name];
         }
     } catch (e) { /* non-ESR build */ }
-    return exec(payload, input, scope);
+    return scope;
 }
 
 async function exec(payload, input, globals = null) {
@@ -231,5 +242,7 @@ async function exec(payload, input, globals = null) {
 }
 
 module.exports = {
-    executeTask
+    executeTask,
+    exec,
+    sessionBaseScope
 };

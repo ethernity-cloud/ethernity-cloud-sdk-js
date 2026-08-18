@@ -483,7 +483,24 @@ class EtnySecureLock {
 
         this.configureStateRegistry();
 
-        const task_result = await executeTask(payload_data, input_data);
+        // Interactive session: the trustedzone stages session.config when the
+        // request asked for one; the executor keeps the payload context alive,
+        // streams inputs/outputs, and finalizes with a SUCCESS summary when
+        // the running period completes (see etny_session_exec).
+        let task_result;
+        let sessionMode = false;
+        try {
+            const r = await this.swiftStreamService.isObjectInBucket(
+                this.etny_bucket, 'session.config.securelock');
+            sessionMode = Boolean(r[1]);
+        } catch (e) { sessionMode = false; }
+        if (sessionMode) {
+            const { runSession } = require('./etny_session_exec');
+            console.log('Interactive session mode');
+            task_result = await runSession(this, payload_data, input_data);
+        } else {
+            task_result = await executeTask(payload_data, input_data);
+        }
         console.log('TASK RESULT (code, data):', task_result);
         this.task_code = task_result[0];
         this.task_result = task_result[1];
