@@ -7,10 +7,10 @@
  *
  *     ___etny_on_input___ = async (data) => { ...; return "reply"; }
  *
- * is invoked per streamed input. Without a handler the payload re-executes
- * per input with ___etny_data_set___ bound to the new message -- note that
- * unlike the Python stack, re-executed JS payloads persist state only on
- * globalThis, so the handler pattern is the recommended one here.
+ * is invoked per streamed input. A payload that defines no handler is not
+ * session-aware: each input is answered with an explicit error output (no
+ * silent re-execution fallback), so the developer sees the problem on the
+ * first message.
  *
  * The TIMEOUT GUARD makes the running period ending a COMPLETION, not a
  * failure: armed from the attested close_after_seconds delta on the local
@@ -63,13 +63,18 @@ class SecureLockSession {
 
     async handle(seq, data, payloadData) {
         const handler = this.scope[HANDLER_NAME];
+        if (typeof handler !== 'function') {
+            // No silent fallback: a payload without a handler is not
+            // session-aware, so every input gets an explicit, acked error.
+            return [Number(TaskStatus.PAYLOAD_NOT_DEFINED),
+                'SESSION_HANDLER_NOT_DEFINED: this payload defines no ' +
+                '___etny_on_input___ handler, so streamed inputs cannot be ' +
+                'processed. Define ___etny_on_input___ = async (data) => ... ' +
+                'in the payload and republish.'];
+        }
         const budget = Math.max(HANDLER_GRACE_MS, this.closeAt - Date.now());
         const work = (async () => {
-            if (typeof handler === 'function') {
-                return [Number(TaskStatus.SUCCESS), render(await handler(data))];
-            }
-            const [code, result] = await etny_exec.exec(payloadData, data, this.scope);
-            return [Number(code), render(result)];
+            return [Number(TaskStatus.SUCCESS), render(await handler(data))];
         })();
         const timeout = sleep(budget).then(() => 'TIMEOUT');
         let outcome;
@@ -134,7 +139,9 @@ class SecureLockSession {
             const outcome = await this.handle(nextSeq, String(data), payloadData);
             if (outcome !== null) {
                 const [code, out] = outcome;
-                this.processed += 1;
+                // Only successful handling counts as processed; error outputs
+                // are still emitted+acked so the dApp sees them.
+                if (Number(code) === Number(TaskStatus.SUCCESS)) this.processed += 1;
                 await this.emit(nextSeq, code, out);
             }
             nextSeq += 1;
