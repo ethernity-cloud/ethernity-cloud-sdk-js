@@ -199,6 +199,32 @@ function encryptWithPublicKey(publicKey, data) {
 //
 // })();
 
+// ECDSA-SHA256 over the exact string bytes; DER signature as hex. The key is
+// a PEM string or a path to one (same convention as decrypt()). Mirrors the
+// Python chain's sign_data so both stacks' handoffs carry the same proof.
+function signData(privateKeyOrFile, data) {
+    const value = String(privateKeyOrFile || '');
+    const pem = value.includes('-----BEGIN') ? value : fs.readFileSync(value, 'utf8');
+    const sig = new rs.Signature({alg: 'SHA256withECDSA'});
+    sig.init(pem);
+    sig.updateString(String(data));
+    return sig.sign(); // DER, hex-encoded
+}
+
+// Verifies a DER-hex ECDSA signature against a certificate PEM (or public
+// key PEM). Returns a boolean; never throws. Also activates the securelock's
+// attested-caller verification path, which probes for this export.
+function verifySignature(certOrPublicKeyPem, data, sigHex) {
+    try {
+        const sig = new rs.Signature({alg: 'SHA256withECDSA'});
+        sig.init(String(certOrPublicKeyPem));
+        sig.updateString(String(data));
+        return sig.verify(String(sigHex));
+    } catch (e) {
+        return false;
+    }
+}
+
 module.exports = {
     encryptedDataFromBase64Json,
     encryptedDataToBase64Json,
@@ -207,5 +233,7 @@ module.exports = {
     encrypt,
     sha256,
     fileChecksum,
-    fileChecksumFromSwiftStream
+    fileChecksumFromSwiftStream,
+    signData,
+    verifySignature
 };

@@ -22,6 +22,7 @@
  */
 
 const etny_exec = require('./etny_exec');
+const etny_crypto = require('./etny_crypto');
 const { TaskStatus } = require('./task_status');
 
 const HANDLER_NAME = '___etny_on_input___';
@@ -29,6 +30,33 @@ const HANDLER_GRACE_MS = 30000;
 const TICK_MS = 2000;
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+/* THE HANDOFF INVARIANT (mirror of the trustedzone side): everything this
+   enclave pushes for the trustedzone is SIGNED with its identity key, so the
+   trustedzone authors metadata rows only from verified securelock material;
+   everything read from the trustedzone is verified against the trustedzone's
+   registry certificate before it is trusted. */
+
+async function pushSignedForTrustedzone(app, data, baseName) {
+    await app.encryptFileAndPushToSwiftStream(data, baseName);
+    const sigHex = etny_crypto.signData(app.privateKeyMaterial(), data);
+    await app.encryptFileAndPushToSwiftStream(sigHex, baseName + '.sig');
+}
+
+async function getVerifiedTrustedzoneObject(app, baseName) {
+    const data = await app.getFileContentAndDecrypt(app.etny_bucket, baseName + '.securelock');
+    if (data === false || data === null || data === undefined) return false;
+    const sigHex = await app.getFileContentAndDecrypt(app.etny_bucket, baseName + '.sig.securelock');
+    if (sigHex === false || sigHex === null || sigHex === undefined) {
+        console.log(`session: no signature for ${baseName} -- refusing`);
+        return false;
+    }
+    if (!etny_crypto.verifySignature(app.trustedZonePublicKey, String(data), String(sigHex))) {
+        console.log(`session: trustedzone signature INVALID for ${baseName} -- refusing`);
+        return false;
+    }
+    return String(data);
+}
 
 function render(value) {
     if (value === null || value === undefined) return '';
@@ -93,7 +121,7 @@ class SecureLockSession {
 
     async emit(ackSeq, code, data) {
         const envelope = JSON.stringify({ ack: ackSeq, code: Number(code), data });
-        await this.app.encryptFileAndPushToSwiftStream(envelope, `session.output.${this.emitted}`);
+        await pushSignedForTrustedzone(this.app, envelope, `session.output.${this.emitted}`);
         this.emitted += 1;
     }
 
@@ -101,10 +129,14 @@ class SecureLockSession {
         try {
             const r = await this.app.swiftStreamService.isObjectInBucket(
                 this.app.etny_bucket, 'session.control.securelock');
-            return Boolean(r[1]);
+            if (!r[1]) return false;
         } catch (e) {
             return false;
         }
+        // An unauthenticated close signal is ignored: the node could place an
+        // object in the bucket, but only the trustedzone can SIGN one.
+        const control = await getVerifiedTrustedzoneObject(this.app, 'session.control');
+        return control !== false && String(control).trim() === 'close';
     }
 
     async run(payloadData, inputData) {
@@ -122,7 +154,7 @@ class SecureLockSession {
                 ready: true,
                 handler: typeof this.scope[HANDLER_NAME] === 'function',
             });
-            await this.app.encryptFileAndPushToSwiftStream(ready, 'session.ready');
+            await pushSignedForTrustedzone(this.app, ready, 'session.ready');
         } catch (e) {
             console.error('session: could not publish readiness:', e && e.message ? e.message : e);
         }
@@ -145,9 +177,9 @@ class SecureLockSession {
                 this.reason = 'RUNNING_PERIOD_COMPLETE';
                 break;
             }
-            const data = await this.app.getFileContentAndDecrypt(this.app.etny_bucket, obj);
+            const data = await getVerifiedTrustedzoneObject(this.app, `session.input.${nextSeq}`);
             if (data === false) {
-                console.log(`session: input ${nextSeq} failed to decrypt; retrying`);
+                console.log(`session: input ${nextSeq} not verifiable yet; retrying`);
                 await sleep(TICK_MS);
                 continue;
             }
@@ -179,8 +211,12 @@ class SecureLockSession {
    to an ordinary task error, never a hang. */
 async function runSession(app, payloadData, inputData) {
     try {
-        const raw = await app.getFileContentAndDecrypt(app.etny_bucket, 'session.config.securelock');
-        if (raw === false) throw new Error('session config not readable');
+        // The trustedzone certificate anchors every verification below.
+        if (!app.trustedZonePublicKey) {
+            await app.getTrustedZonePublicKey();
+        }
+        const raw = await getVerifiedTrustedzoneObject(app, 'session.config');
+        if (raw === false) throw new Error('session config not verifiable');
         const config = JSON.parse(String(raw));
         return await new SecureLockSession(app, config).run(payloadData, inputData);
     } catch (e) {
