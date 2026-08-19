@@ -110,6 +110,22 @@ class SecureLockSession {
     async run(payloadData, inputData) {
         const setupFailure = await this.initialRun(payloadData, inputData);
         if (setupFailure !== null) return setupFailure;
+        // READINESS HANDSHAKE: tell the trustedzone this securelock speaks
+        // the session protocol AND whether the payload defined an input
+        // handler. A pre-session securelock never writes this (the
+        // trustedzone answers every input with an explicit error), and a
+        // handler-less payload is announced by the trustedzone as a signed
+        // code-5 error row on the DP-request metadata side before any input
+        // is even sent.
+        try {
+            const ready = JSON.stringify({
+                ready: true,
+                handler: typeof this.scope[HANDLER_NAME] === 'function',
+            });
+            await this.app.encryptFileAndPushToSwiftStream(ready, 'session.ready');
+        } catch (e) {
+            console.error('session: could not publish readiness:', e && e.message ? e.message : e);
+        }
         let nextSeq = 0;
         for (;;) {
             const now = Date.now();
