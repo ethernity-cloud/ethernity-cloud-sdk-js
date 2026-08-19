@@ -400,8 +400,17 @@ class EtnySecureLock {
     async saveResult() {
         try {
             await this.getTrustedZonePublicKey();
+            // THE HANDOVER IS ALWAYS SIGNED: the trustedzone refuses an
+            // unverifiable result/result-code, so the operator's storage
+            // layer between the enclaves can never substitute either value.
             await this.encryptFileAndPushToSwiftStream(this.task_result, 'result.txt');
+            await this.encryptFileAndPushToSwiftStream(
+                etny_crypto.signData(this.privateKeyMaterial(), String(this.task_result)),
+                'result.txt.sig');
             await this.encryptFileAndPushToSwiftStream(this.task_code.toString(), 'result_code.txt');
+            await this.encryptFileAndPushToSwiftStream(
+                etny_crypto.signData(this.privateKeyMaterial(), this.task_code.toString()),
+                'result_code.txt.sig');
 
             const encrypted = etny_crypto.encryptWithPublicKey(this._metadata.public_key, this.task_result);
             //console.log('Encrypted result:', encrypted.toString('hex'));
@@ -447,6 +456,31 @@ class EtnySecureLock {
     async execute() {
         const payload_data = await this.getFileContentAndDecrypt(this.etny_bucket, this.payload);
         const input_data = await this.getFileContentAndDecrypt(this.etny_bucket, this.input);
+
+        // THE HANDOVER IS ALWAYS SIGNED: the trustedzone signs the payload
+        // and input it forwards, and this enclave refuses an unverifiable
+        // handover -- the operator's storage layer between the enclaves must
+        // not be able to substitute either. Mirrors the pynithy
+        // validate_trustedzone_data behavior.
+        await this.getTrustedZonePublicKey();
+        const payloadSig = await this.getFileContentAndDecrypt(this.etny_bucket, this.payload + '.sig');
+        const inputSig = await this.getFileContentAndDecrypt(this.etny_bucket, this.input + '.sig');
+        if (payloadSig === false ||
+            !etny_crypto.verifySignature(this.trustedZonePublicKey, String(payload_data), String(payloadSig))) {
+            console.log('Payload signature validation FAILED');
+            this.task_code = TaskStatus.SIGNATURE_ERROR;
+            this.task_result = 'INVALID PAYLOAD SIGNATURE';
+            return false;
+        }
+        if (inputSig === false ||
+            !etny_crypto.verifySignature(this.trustedZonePublicKey, String(input_data), String(inputSig))) {
+            console.log('Input signature validation FAILED');
+            this.task_code = TaskStatus.SIGNATURE_ERROR;
+            this.task_result = 'INVALID INPUT SIGNATURE';
+            return false;
+        }
+        console.log('Trustedzone handover signatures validated successfully');
+
         console.log('Validating client payload and input...');
         await this.validateClientPayload(payload_data, input_data);
 
@@ -626,6 +660,10 @@ async function execute() {
             const wasExecuted = await app.execute();
             if (!wasExecuted) {
                 console.log('Failed execution of SecureLock enclave.')
+                // Still hand over the (signed) failure result -- the
+                // trustedzone must see the task code (e.g. SIGNATURE_ERROR)
+                // instead of waiting for a result that never comes.
+                await app.saveResult();
                 return;
             }
         } else {

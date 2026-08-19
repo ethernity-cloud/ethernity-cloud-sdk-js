@@ -10,6 +10,7 @@ class TaskStatus {
     static EVAL_ERROR = 8;
     // Extended diagnostic (matches the trustedzone's extended enum): the
     // serverless backend failed to load, so none of its functions exist.
+    static SIGNATURE_ERROR = 20;        // Trustedzone handover signature failed to verify.
     static IMPORT_ERROR = 28;
     // A required enclave config value is present but EMPTY (e.g. an ESR
     // address that was never baked into the sealed image). Reported eagerly
