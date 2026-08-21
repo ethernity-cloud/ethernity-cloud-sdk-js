@@ -151,25 +151,81 @@ async function executeTask(payload, input) {
 // alive across streamed inputs. ___etny_on_input___ is PRE-SEEDED so a
 // payload assignment to that bare name lands in the scope (with-semantics)
 // instead of leaking to the global object.
+// Build the single dApp-facing `ecld` handle: a namespaced front door over
+// the same primitives a payload used to reach by bare magic names, chosen to
+// read like a contract object to Web3 devs:
+//
+//   ecld.result(value)      // end the task with a result (+ESR state)
+//   ecld.input              // the request payload (was ___etny_data_set___)
+//   ecld.caller             // the data owner's wallet (msg.sender-style)
+//   ecld.onInput = fn       // session input handler (was ___etny_on_input___)
+//   ecld.state.get(k) / .commit(k, v) / .grant(...) / ...   // ESR
+//   ecld.fetch('k1', 'k2')  // standard state-fetch task body
+//
+// Every legacy name still works unchanged; this adds a coherent surface
+// without removing anything. `input` and `onInput` are populated per-run.
+function buildEcld(ecldState) {
+    const ecld = {
+        result: ecldResult,
+        fetch: esrFetch,
+        input: null,      // set by exec() when input is present
+        onInput: null,    // session handler slot; payload assigns it
+        state: null,      // StateRegistry handle if ESR present
+    };
+    // `caller` is a LIVE getter -> reads the attested caller at access time
+    // (msg.sender-style), or null in a non-ESR build / local test.
+    Object.defineProperty(ecld, 'caller', {
+        enumerable: true,
+        get() {
+            try {
+                return ecldState && typeof ecldState.taskCaller === 'function'
+                    ? ecldState.taskCaller() : null;
+            } catch (e) { return null; }
+        },
+    });
+    if (ecldState) {
+        try { ecld.state = new ecldState.StateRegistry(); } catch (e) { ecld.state = null; }
+    }
+    return ecld;
+}
+
 function sessionBaseScope() {
+    let ecldState = null;
+    try {
+        // eslint-disable-next-line global-require
+        ecldState = require('./ecld_state');
+    } catch (e) { /* non-ESR build */ }
+
     const scope = {
         '___etny_result___': ___etny_result___,   // legacy alias (no ESR)
-        'ecldResult': ecldResult,                 // the result API
+        'ecldResult': ecldResult,                 // the result API (bare)
         'esrFetch': esrFetch,                     // standard state-fetch task
-        '___etny_on_input___': null,              // session handler slot
+        '___etny_on_input___': null,              // legacy session handler slot
+        'ecld': buildEcld(ecldState),             // the namespaced handle
         ...backendFunctions,
     };
     // State ownership / ACL API (present only in ESR-enabled builds). Enforced
     // inside ecld_state against the trustedzone-attested caller.
-    try {
-        // eslint-disable-next-line global-require
-        const ecldState = require('./ecld_state');
+    if (ecldState) {
         for (const name of ['taskCaller', 'esrGrant', 'esrRevoke',
             'esrSetPublicRead', 'esrTransfer', 'esrOwner', 'esrAcl', 'esrNonce']) {
             if (!(name in scope)) scope[name] = ecldState[name];
         }
-    } catch (e) { /* non-ESR build */ }
+    }
     return scope;
+}
+
+// The session input handler, from EITHER the namespaced `ecld.onInput` /
+// `ecld.on_input` or the legacy bare `___etny_on_input___`. The namespaced
+// name wins; returns null if none is a function (handler-less payload).
+function resolveSessionHandler(scope) {
+    const ecld = scope && scope.ecld;
+    if (ecld) {
+        if (typeof ecld.onInput === 'function') return ecld.onInput;
+        if (typeof ecld.on_input === 'function') return ecld.on_input;
+    }
+    const legacy = scope && scope['___etny_on_input___'];
+    return typeof legacy === 'function' ? legacy : null;
 }
 
 async function exec(payload, input, globals = null) {
@@ -177,7 +233,8 @@ async function exec(payload, input, globals = null) {
         if (payload && payload !== "") {
             const scope = globals || {};
             if (input && input !== "") {
-                scope['___etny_data_set___'] = input;
+                scope['___etny_data_set___'] = input;   // legacy name
+                if (scope.ecld) scope.ecld.input = input;   // ecld.input
             }
             // `with` exposes every backend function and ___etny_data_set___ to
             // the payload by bare name — matching how payloads are written
@@ -244,5 +301,6 @@ async function exec(payload, input, globals = null) {
 module.exports = {
     executeTask,
     exec,
-    sessionBaseScope
+    sessionBaseScope,
+    resolveSessionHandler
 };

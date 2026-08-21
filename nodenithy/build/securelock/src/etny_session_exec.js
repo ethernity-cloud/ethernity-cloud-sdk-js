@@ -90,15 +90,15 @@ class SecureLockSession {
     }
 
     async handle(seq, data, payloadData) {
-        const handler = this.scope[HANDLER_NAME];
+        const handler = etny_exec.resolveSessionHandler(this.scope);
         if (typeof handler !== 'function') {
             // No silent fallback: a payload without a handler is not
             // session-aware, so every input gets an explicit, acked error.
             return [Number(TaskStatus.PAYLOAD_NOT_DEFINED),
-                'SESSION_HANDLER_NOT_DEFINED: this payload defines no ' +
-                '___etny_on_input___ handler, so streamed inputs cannot be ' +
-                'processed. Define ___etny_on_input___ = async (data) => ... ' +
-                'in the payload and republish.'];
+                'SESSION_HANDLER_NOT_DEFINED: this payload defines no session ' +
+                'input handler, so streamed inputs cannot be processed. Set ' +
+                'ecld.onInput = async (data) => ... (or the legacy ' +
+                '___etny_on_input___) in the payload and republish.'];
         }
         const budget = Math.max(HANDLER_GRACE_MS, this.closeAt - Date.now());
         const work = (async () => {
@@ -152,7 +152,7 @@ class SecureLockSession {
         try {
             const ready = JSON.stringify({
                 ready: true,
-                handler: typeof this.scope[HANDLER_NAME] === 'function',
+                handler: typeof etny_exec.resolveSessionHandler(this.scope) === 'function',
             });
             await pushSignedForTrustedzone(this.app, ready, 'session.ready');
         } catch (e) {
