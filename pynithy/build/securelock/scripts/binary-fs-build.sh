@@ -15,6 +15,7 @@ sed -i "s/__IMAGE_REGISTRY_ADDRESS__/${IMAGE_REGISTRY_ADDRESS}/g" securelock.py.
 sed -i "s/__RPC_URL__/${RPC_URL}/g" securelock.py.tmp
 sed -i "s/__CHAIN_ID__/${CHAIN_ID}/g" securelock.py.tmp
 sed -i "s/__TRUSTED_ZONE_IMAGE__/${TRUSTED_ZONE_IMAGE}/g" securelock.py.tmp
+sed -i "s/__VALIDATOR_REGISTRY_ADDRESS__/${VALIDATOR_REGISTRY_ADDRESS}/g" securelock.py.tmp
 mv securelock.py.tmp securelock.py
 
 pyinstaller securelock.py

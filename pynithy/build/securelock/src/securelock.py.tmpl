@@ -9,6 +9,7 @@ import string
 import random
 import io
 import time
+import base64  # CAS self-attestation quote decoding
 
 from etny_crypto import etny_crypto as crypto
 from web3 import Web3
@@ -39,6 +40,7 @@ class EtnySecureLock:
         # print('private = ', self.privatekey)
         self.read_contract_abi()
         self.init_web3()
+        self.verify_cas_attestation()
         self.print_env()
         # if not EtnySecureLock.debug:
         #    self.reset_cert_file()
@@ -78,6 +80,10 @@ class EtnySecureLock:
         self.transaction_file = '/app/transaction.txt'
         self.smart_contract_address = '__SMART_CONTRACT_ADDRESS__'
         self.image_registry_address = '__IMAGE_REGISTRY_ADDRESS__'
+        # ethernity-cas ValidatorRegistry, substituted at BUILD (never CAS- or
+        # session-supplied: a rogue CAS must not choose the registry that
+        # judges it). Empty = skip CAS self-attestation.
+        self.validator_registry_address = '__VALIDATOR_REGISTRY_ADDRESS__'
         self.chain_id = __CHAIN_ID__
         self.web3_provider = '__RPC_URL__'
         self.etny_bucket = "__BUCKET_NAME__"
@@ -196,6 +202,80 @@ class EtnySecureLock:
                                          abi=self.contract_abi)
         self.image_registry = self.w3.eth.contract(address=self.w3.toChecksumAddress(self.image_registry_address),
                                                    abi=self.image_registry_abi)
+
+    def verify_cas_attestation(self):
+        """
+        Verify the CAS that provisioned this enclave. The CAS injects
+        ECAS_CAS_QUOTE (a DCAP quote binding its EGETKEY validator address at
+        report_data[0:20] and the SHA-256 of its certificate at [20:52]); we
+        check it against the ValidatorRegistry baked into this build: active
+        validator, registered MRENCLAVE match, registered certHash match.
+        Evicting a CAS on-chain revokes it here on the next task. LOG-ONLY by
+        default; ECAS_CAS_ATTEST_MODE=enforce refuses. The quote's ECDSA/PCK
+        chain is not verified in-enclave yet; the binding is quote-contents
+        <-> on-chain record (the revocation path).
+        """
+        registry = self.validator_registry_address
+        mode = os.environ.get('ECAS_CAS_ATTEST_MODE', 'log').lower()
+
+        def fail(reason):
+            if mode == 'enforce':
+                print(f'CAS ATTESTATION FAILED: {reason}')
+                raise SystemExit(f'refusing to run: CAS attestation failed ({reason})')
+            print(f'CAS ATTESTATION (log-only) FAILED: {reason}')
+
+        if not registry or registry.startswith('__'):
+            print('CAS attestation: no ValidatorRegistry for this network; skipping')
+            return
+        quote_b64 = os.environ.get('ECAS_CAS_QUOTE', '')
+        if not quote_b64:
+            return fail('no ECAS_CAS_QUOTE in the session environment (unattested CAS)')
+        try:
+            quote = base64.b64decode(quote_b64)
+        except Exception as e:
+            return fail(f'ECAS_CAS_QUOTE is not valid base64: {e}')
+        # DCAP quote layout: 48-byte header; report body: ATTRIBUTES at
+        # body+48 (16), MRENCLAVE at body+64 (32), report_data at body+320 (64).
+        if len(quote) < 48 + 384:
+            return fail(f'quote too short ({len(quote)} bytes)')
+        attributes = quote[96:112]
+        quote_mrenclave = quote[112:144].hex()
+        report_data = quote[368:432]
+        cas_address = self.w3.toChecksumAddress('0x' + report_data[0:20].hex())
+        bound_cert = report_data[20:52].hex()
+
+        vr_abi = [
+            {"name": "isValidator", "type": "function", "stateMutability": "view",
+             "inputs": [{"type": "address"}], "outputs": [{"type": "bool"}]},
+            {"name": "validators", "type": "function", "stateMutability": "view",
+             "inputs": [{"type": "address"}],
+             "outputs": [{"name": "mrenclave", "type": "bytes32"},
+                         {"name": "certHash", "type": "bytes32"},
+                         {"name": "active", "type": "bool"},
+                         {"name": "admittedBlock", "type": "uint64"},
+                         {"name": "lastVoteBlock", "type": "uint64"}]},
+        ]
+        try:
+            vr = self.w3.eth.contract(address=self.w3.toChecksumAddress(registry),
+                                      abi=vr_abi)
+            active = vr.caller().isValidator(cas_address)
+            record = vr.caller().validators(cas_address)
+        except Exception as e:
+            return fail(f'ValidatorRegistry {registry} unreachable: {e}')
+        if not active:
+            return fail(f'CAS {cas_address} is NOT an active validator')
+        registered_mr = record[0].hex()
+        if registered_mr != quote_mrenclave:
+            return fail(f'CAS quote MRENCLAVE {quote_mrenclave} != registered {registered_mr}')
+        registered_cert = record[1].hex()
+        if registered_cert != '00' * 32 and registered_cert != bound_cert:
+            return fail(f'CAS quote cert hash {bound_cert} != registered {registered_cert}')
+        # SGX ATTRIBUTES.FLAGS bit 1 = DEBUG. Tolerated only when the session
+        # explicitly says so (testnet debug CAS).
+        if (attributes[0] & 0x02) and os.environ.get('ECAS_CAS_TOLERATE_DEBUG', '') != '1':
+            return fail('CAS enclave runs in SGX DEBUG mode')
+        print(f'CAS ATTESTATION VERIFIED: validator {cas_address}, '
+              f'MRENCLAVE {quote_mrenclave[:16]}..., certificate bound on-chain')
 
     def read_contract_abi(self):
         self.contract_abi = self.__read_contract_abi('pox.abi')

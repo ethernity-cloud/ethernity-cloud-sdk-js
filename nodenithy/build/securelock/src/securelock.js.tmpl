@@ -57,6 +57,10 @@ class EtnySecureLock {
         this.transaction_file = "/app/transaction.txt";
         this.smart_contract_address = "__ETNY_SMART_CONTRACT_ADDRESS__";
         this.image_registry_address = '__ETNY_IMAGE_REGISTRY_ADDRESS__';
+        // ethernity-cas ValidatorRegistry, substituted at BUILD (never CAS- or
+        // session-supplied: a rogue CAS must not choose the registry that
+        // judges it). Empty = skip CAS self-attestation.
+        this.validator_registry_address = '__ETNY_VALIDATOR_REGISTRY_ADDRESS__';
         this.chain_id = __ETNY_CHAIN_ID__;
         this.web3_provider = "__ETNY_WEB3_PROVIDER__";
         this.signed_tx_as_bytes = null;
@@ -89,11 +93,86 @@ class EtnySecureLock {
         this.printEnv();
         await this.savePublicCert();
         this.initWeb3();
+        await this.verifyCasAttestation();
         if (this.etny_mode === "PRODUCTION") {
             this.resetPrivateCertFile();
         }
 
         return true;
+    }
+
+    /**
+     * Verify the CAS that provisioned this enclave. The CAS injects
+     * ECAS_CAS_QUOTE (a DCAP quote binding its EGETKEY validator address at
+     * report_data[0:20] and the SHA-256 of its certificate at [20:52]); we
+     * check it against the ValidatorRegistry baked into this build: active
+     * validator, registered MRENCLAVE match, registered certHash match.
+     * Evicting a CAS on-chain revokes it here on the next task. LOG-ONLY by
+     * default; ECAS_CAS_ATTEST_MODE=enforce refuses. The quote's ECDSA/PCK
+     * chain is not verified in-enclave yet; the binding is quote-contents
+     * <-> on-chain record (the revocation path).
+     */
+    async verifyCasAttestation() {
+        const registry = this.validator_registry_address;
+        const mode = (process.env.ECAS_CAS_ATTEST_MODE || 'log').toLowerCase();
+        const fail = (reason) => {
+            if (mode === 'enforce') {
+                console.error(`CAS ATTESTATION FAILED: ${reason}`);
+                process.exit(27);
+            }
+            console.warn(`CAS ATTESTATION (log-only) FAILED: ${reason}`);
+        };
+
+        if (!registry || registry.startsWith('__')) {
+            console.log('CAS attestation: no ValidatorRegistry for this network; skipping');
+            return;
+        }
+        const quoteB64 = process.env.ECAS_CAS_QUOTE || '';
+        if (!quoteB64) {
+            return fail('no ECAS_CAS_QUOTE in the session environment (unattested CAS)');
+        }
+        const quote = Buffer.from(quoteB64, 'base64');
+        // DCAP quote layout: 48-byte header; report body: ATTRIBUTES at
+        // body+48 (16), MRENCLAVE at body+64 (32), report_data at body+320 (64).
+        if (quote.length < 48 + 384) {
+            return fail(`quote too short (${quote.length} bytes)`);
+        }
+        const attributes = quote.slice(96, 112);
+        const quoteMrenclave = quote.slice(112, 144).toString('hex');
+        const reportData = quote.slice(368, 432);
+        const casAddress = ethers.utils.getAddress('0x' + reportData.slice(0, 20).toString('hex'));
+        const boundCert = reportData.slice(20, 52).toString('hex');
+
+        const vrAbi = [
+            'function isValidator(address) view returns (bool)',
+            'function validators(address) view returns (bytes32 mrenclave, bytes32 certHash, bool active, uint64 admittedBlock, uint64 lastVoteBlock)',
+        ];
+        let active, record;
+        try {
+            const vr = new ethers.Contract(registry, vrAbi, this.w3);
+            active = await vr.isValidator(casAddress);
+            record = await vr.validators(casAddress);
+        } catch (e) {
+            return fail(`ValidatorRegistry ${registry} unreachable: ${e.message || e}`);
+        }
+        if (!active) {
+            return fail(`CAS ${casAddress} is NOT an active validator`);
+        }
+        const registeredMr = record.mrenclave.replace(/^0x/, '');
+        if (registeredMr !== quoteMrenclave) {
+            return fail(`CAS quote MRENCLAVE ${quoteMrenclave} != registered ${registeredMr}`);
+        }
+        const registeredCert = record.certHash.replace(/^0x/, '');
+        if (registeredCert !== '0'.repeat(64) && registeredCert !== boundCert) {
+            return fail(`CAS quote cert hash ${boundCert} != registered ${registeredCert}`);
+        }
+        // SGX ATTRIBUTES.FLAGS bit 1 = DEBUG. Tolerated only when the session
+        // explicitly says so (testnet debug CAS).
+        if ((attributes[0] & 0x02) && process.env.ECAS_CAS_TOLERATE_DEBUG !== '1') {
+            return fail('CAS enclave runs in SGX DEBUG mode');
+        }
+        console.log(`CAS ATTESTATION VERIFIED: validator ${casAddress}, ` +
+                    `MRENCLAVE ${quoteMrenclave.slice(0, 16)}..., certificate bound on-chain`);
     }
 
     loadEnv() {

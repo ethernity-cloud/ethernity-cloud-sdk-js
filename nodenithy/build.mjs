@@ -52,6 +52,15 @@ export const ECRunner = {
   'ecld-nodenithy-litvm-testnet': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441]
 };
 
+// ethernity-cas ValidatorRegistry per template, baked into the enclave so it
+// can verify the CAS that provisions it (ECAS_CAS_QUOTE self-attestation).
+// Build-side on purpose: a rogue CAS must not choose the registry that judges
+// it. Missing key = no registry on that network; the enclave skips the check.
+export const VALIDATOR_REGISTRY = {
+  'etny-pynithy-testnet': '0xC4Fcd83743b76fB3081328cFe354De89995eaECD',
+  'etny-nodenithy-testnet': '0xC4Fcd83743b76fB3081328cFe354De89995eaECD',
+};
+
 const runCommand = (command, canPass = false) => {
   if (shell.exec(command).code !== 0 && !canPass) {
     console.error(`Error executing command: ${command}`);
@@ -206,7 +215,7 @@ const esrEnvBlock = ESR_ENABLED ? `ENV ESR_CONTRACT_ADDRESS=${ESR_CONTRACT_ADDRE
 
 // runCommand(`cat Dockerfile.tmpl | sed s/"__ENCLAVE_NAME_SECURELOCK__"/"${ENCLAVE_NAME_SECURELOCK}"/g > Dockerfile`);
 const dockerfileSecureTemplate = fs.readFileSync('Dockerfile.tmpl', 'utf8');
-let dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]).replace(/__TRUSTED_ZONE_IMAGE__/g, templateName).replace(/^__ESR_ENV__\n/m, esrEnvBlock ? `${esrEnvBlock}\n` : '');
+let dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]).replace(/__TRUSTED_ZONE_IMAGE__/g, templateName).replace(/__ETNY_VALIDATOR_REGISTRY_ADDRESS__/g, VALIDATOR_REGISTRY[templateName] || '').replace(/^__ESR_ENV__\n/m, esrEnvBlock ? `${esrEnvBlock}\n` : '');
 
 // Amount of enclave heap to allocate (SCONE_HEAP). Kept in sync with the
 // run/docker-compose securelock service; overridable via ECLD_MEMORY_TO_ALLOCATE.
