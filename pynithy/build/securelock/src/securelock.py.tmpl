@@ -210,37 +210,30 @@ class EtnySecureLock:
         report_data[0:20] and the SHA-256 of its certificate at [20:52]); we
         check it against the ValidatorRegistry baked into this build: active
         validator, registered MRENCLAVE match, registered certHash match.
-        Evicting a CAS on-chain revokes it here on the next task. LOG-ONLY by
-        default; ECAS_CAS_ATTEST_MODE=enforce refuses. The quote's ECDSA/PCK
+        Evicting a CAS on-chain revokes it here on the next task. STRICT: a
+        missing quote, an invalid one, and an unreachable registry are all
+        the same terminal fault (refund); there is no softening knob. The quote's ECDSA/PCK
         chain is not verified in-enclave yet; the binding is quote-contents
         <-> on-chain record (the revocation path).
         """
         registry = self.validator_registry_address
-        mode = os.environ.get('ECAS_CAS_ATTEST_MODE', 'log').lower()
         self.cas_attestation_fault = None
 
         def fault(reason):
-            # INVALID evidence: the operator provisioned this task through an
+            # TERMINAL: registry present -> a CAS quote is MANDATORY, so a
+            # MISSING quote is as damning as a wrong one. The operator provisioned this task through an
             # impostor CAS. Recorded here and adjudicated before the payload
             # runs -- the task then terminates with CAS_ATTESTATION_FAULT
             # (40) and the order is refunded.
             print(f'CAS ATTESTATION INVALID: {reason}')
             self.cas_attestation_fault = reason
 
-        def soft(reason):
-            # Absence or unreachability: a rollout gap or a chain outage, not
-            # proof of malice. Log-only, unless enforcement is on.
-            if mode == 'enforce':
-                fault(reason)
-            else:
-                print(f'CAS ATTESTATION (log-only) FAILED: {reason}')
-
         if not registry or registry.startswith('__'):
             print('CAS attestation: no ValidatorRegistry for this network; skipping')
             return
         quote_b64 = os.environ.get('ECAS_CAS_QUOTE', '')
         if not quote_b64:
-            return soft('no ECAS_CAS_QUOTE in the session environment (unattested CAS)')
+            return fault('no ECAS_CAS_QUOTE in the session environment (unattested CAS)')
         try:
             quote = base64.b64decode(quote_b64)
         except Exception as e:
@@ -266,13 +259,24 @@ class EtnySecureLock:
                          {"name": "admittedBlock", "type": "uint64"},
                          {"name": "lastVoteBlock", "type": "uint64"}]},
         ]
-        try:
-            vr = self.w3.eth.contract(address=self.w3.toChecksumAddress(registry),
-                                      abi=vr_abi)
-            active = vr.caller().isValidator(cas_address)
-            record = vr.caller().validators(cas_address)
-        except Exception as e:
-            return soft(f'ValidatorRegistry {registry} unreachable: {e}')
+        last_err = None
+        for _attempt in range(3):
+            try:
+                vr = self.w3.eth.contract(address=self.w3.toChecksumAddress(registry),
+                                          abi=vr_abi)
+                active = vr.caller().isValidator(cas_address)
+                record = vr.caller().validators(cas_address)
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                time.sleep(5)
+        if last_err is not None:
+            # The enclave already depends on this chain for its order
+            # metadata, so an unreachable registry is not a new fragility --
+            # and treating it softly would let an operator bypass the check
+            # by firewalling the RPC.
+            return fault(f'ValidatorRegistry {registry} unreachable after 3 attempts: {last_err}')
         if not active:
             return fault(f'CAS {cas_address} is NOT an active validator')
         registered_mr = record[0].hex()
@@ -283,7 +287,7 @@ class EtnySecureLock:
             return fault(f'CAS quote cert hash {bound_cert} != registered {registered_cert}')
         # SGX ATTRIBUTES.FLAGS bit 1 = DEBUG. Tolerated only when the session
         # explicitly says so (testnet debug CAS).
-        if (attributes[0] & 0x02) and os.environ.get('ECAS_CAS_TOLERATE_DEBUG', '') != '1':
+        if (attributes[0] & 0x02) and '__NETWORK_TYPE__' != 'testnet':
             return fault('CAS enclave runs in SGX DEBUG mode')
         print(f'CAS ATTESTATION VERIFIED: validator {cas_address}, '
               f'MRENCLAVE {quote_mrenclave[:16]}..., certificate bound on-chain')
