@@ -30,6 +30,12 @@ class TaskStatus {
                                         // the task's submitter (the in-enclave ownership check was
                                         // bypassed). Set by the securelock on a detected forged
                                         // caller, and by the trustedzone re-adjudication.
+    // The CAS that provisioned this enclave presented an INVALID
+    // self-attestation quote (ECAS_CAS_QUOTE failing the ValidatorRegistry
+    // checks). A missing quote is a rollout gap and only logs; an INCORRECT
+    // one means the operator provisioned the task through an impostor CAS.
+    // Operator fault; the order terminates and the validator REFUNDS it.
+    static CAS_ATTESTATION_FAULT = 40;
 }
 
 module.exports = {

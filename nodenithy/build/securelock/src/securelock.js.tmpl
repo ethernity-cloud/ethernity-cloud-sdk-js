@@ -115,12 +115,23 @@ class EtnySecureLock {
     async verifyCasAttestation() {
         const registry = this.validator_registry_address;
         const mode = (process.env.ECAS_CAS_ATTEST_MODE || 'log').toLowerCase();
-        const fail = (reason) => {
+        this.cas_attestation_fault = null;
+        const fault = (reason) => {
+            // INVALID evidence: the operator provisioned this task through an
+            // impostor CAS. Recorded here and adjudicated before the payload
+            // is handled -- the task then terminates with
+            // CAS_ATTESTATION_FAULT (40) and the order is refunded.
+            console.error(`CAS ATTESTATION INVALID: ${reason}`);
+            this.cas_attestation_fault = reason;
+        };
+        const soft = (reason) => {
+            // Absence or unreachability: a rollout gap or a chain outage, not
+            // proof of malice. Log-only, unless enforcement is on.
             if (mode === 'enforce') {
-                console.error(`CAS ATTESTATION FAILED: ${reason}`);
-                process.exit(27);
+                fault(reason);
+            } else {
+                console.warn(`CAS ATTESTATION (log-only) FAILED: ${reason}`);
             }
-            console.warn(`CAS ATTESTATION (log-only) FAILED: ${reason}`);
         };
 
         if (!registry || registry.startsWith('__')) {
@@ -129,13 +140,13 @@ class EtnySecureLock {
         }
         const quoteB64 = process.env.ECAS_CAS_QUOTE || '';
         if (!quoteB64) {
-            return fail('no ECAS_CAS_QUOTE in the session environment (unattested CAS)');
+            return soft('no ECAS_CAS_QUOTE in the session environment (unattested CAS)');
         }
         const quote = Buffer.from(quoteB64, 'base64');
         // DCAP quote layout: 48-byte header; report body: ATTRIBUTES at
         // body+48 (16), MRENCLAVE at body+64 (32), report_data at body+320 (64).
         if (quote.length < 48 + 384) {
-            return fail(`quote too short (${quote.length} bytes)`);
+            return fault(`quote too short (${quote.length} bytes)`);
         }
         const attributes = quote.slice(96, 112);
         const quoteMrenclave = quote.slice(112, 144).toString('hex');
@@ -153,23 +164,23 @@ class EtnySecureLock {
             active = await vr.isValidator(casAddress);
             record = await vr.validators(casAddress);
         } catch (e) {
-            return fail(`ValidatorRegistry ${registry} unreachable: ${e.message || e}`);
+            return soft(`ValidatorRegistry ${registry} unreachable: ${e.message || e}`);
         }
         if (!active) {
-            return fail(`CAS ${casAddress} is NOT an active validator`);
+            return fault(`CAS ${casAddress} is NOT an active validator`);
         }
         const registeredMr = record.mrenclave.replace(/^0x/, '');
         if (registeredMr !== quoteMrenclave) {
-            return fail(`CAS quote MRENCLAVE ${quoteMrenclave} != registered ${registeredMr}`);
+            return fault(`CAS quote MRENCLAVE ${quoteMrenclave} != registered ${registeredMr}`);
         }
         const registeredCert = record.certHash.replace(/^0x/, '');
         if (registeredCert !== '0'.repeat(64) && registeredCert !== boundCert) {
-            return fail(`CAS quote cert hash ${boundCert} != registered ${registeredCert}`);
+            return fault(`CAS quote cert hash ${boundCert} != registered ${registeredCert}`);
         }
         // SGX ATTRIBUTES.FLAGS bit 1 = DEBUG. Tolerated only when the session
         // explicitly says so (testnet debug CAS).
         if ((attributes[0] & 0x02) && process.env.ECAS_CAS_TOLERATE_DEBUG !== '1') {
-            return fail('CAS enclave runs in SGX DEBUG mode');
+            return fault('CAS enclave runs in SGX DEBUG mode');
         }
         console.log(`CAS ATTESTATION VERIFIED: validator ${casAddress}, ` +
                     `MRENCLAVE ${quoteMrenclave.slice(0, 16)}..., certificate bound on-chain`);
@@ -533,6 +544,17 @@ class EtnySecureLock {
     }
 
     async execute() {
+        // ADJUDICATE the CAS attestation verdict recorded at startup. An
+        // INVALID CAS quote terminates the task before the payload is
+        // handled; the failure result (CAS_ATTESTATION_FAULT, 40) reaches
+        // the chain -- the refundable operator-fault path.
+        if (this.cas_attestation_fault) {
+            this.task_code = String(TaskStatus.CAS_ATTESTATION_FAULT);
+            this.task_result = `CAS_ATTESTATION_FAULT: ${this.cas_attestation_fault} -- ` +
+                `the operator provisioned this task through a CAS that failed ` +
+                `self-attestation; order terminated for refund.`;
+            return;
+        }
         const payload_data = await this.getFileContentAndDecrypt(this.etny_bucket, this.payload);
         const input_data = await this.getFileContentAndDecrypt(this.etny_bucket, this.input);
 
