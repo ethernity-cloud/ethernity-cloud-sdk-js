@@ -169,7 +169,13 @@ class EtnySecureLock {
             return 'no ECAS_ATTEST_SESSION in the environment (CAS cannot be challenged)';
         }
         const nonce = crypto.randomBytes(32);
-        const payload = JSON.stringify({session: sessionId, nonce: nonce.toString('hex')});
+        // Echo back the nonce the CAS injected, so the SAME fresh quote also
+        // re-attests the environment we were handed (report_data[52:64]). The
+        // CAS recomputes the injected commitment from its own address and cert
+        // -- we supply only the nonce -- so this cannot be steered.
+        const envNonceHex = process.env.ECAS_ENCLAVE_NONCE || '';
+        const payload = JSON.stringify({session: sessionId, nonce: nonce.toString('hex'),
+                                        env_nonce: envNonceHex});
 
         const endpoints = await this.casEndpointsFromChain(casAddress);
         if (!endpoints.length) {
@@ -203,6 +209,26 @@ class EtnySecureLock {
             if (!expect.equals(rd.slice(0, 32))) {
                 return 'challenge commitment mismatch: the CAS did not sign our ' +
                        'session+nonce (stale or replayed response)';
+            }
+            // ENVIRONMENT RE-ATTESTATION. When we sent env_nonce, the fresh
+            // quote must also carry the head of the commitment that went into
+            // ECAS_CAS_QUOTE. This is what ties the two quotes together: a live
+            // CAS confirming, under a NEW signature, that the environment we
+            // hold is the one it sent. Without it the challenge proved only
+            // that some CAS was alive.
+            if (envNonceHex) {
+                const envExpect = crypto.createHash('sha256')
+                    .update(Buffer.from(sessionId, 'utf8'))
+                    .update(Buffer.from(envNonceHex, 'hex'))
+                    .update(Buffer.from(casAddress.replace(/^0x/, ''), 'hex'))
+                    .update(Buffer.from(registeredCert, 'hex'))
+                    .digest();
+                if (!rd.slice(52, 64).equals(envExpect.slice(0, 12))) {
+                    return 'the CAS did not confirm the environment it sent: ' +
+                           `fresh quote carries ${rd.slice(52, 64).toString('hex')}, ` +
+                           `expected ${envExpect.slice(0, 12).toString('hex')}`;
+                }
+                console.log('CAS re-attested the injected environment under a fresh signature');
             }
             const qmr = quote.slice(112, 144).toString('hex');
             if (qmr.toLowerCase() !== registeredMrenclave.toLowerCase()) {
