@@ -12,6 +12,7 @@ require('dotenv').config({path: './app/.env'});
 require('dotenv').config({path: '/app/.env'});
 
 const ethers = require('ethers');
+const crypto = require('crypto');
 const fs = require("fs");
 const etny_crypto = require("./etny_crypto");
 const {DOReqMetadata, Order} = require("./models");
@@ -102,17 +103,165 @@ class EtnySecureLock {
     }
 
     /**
+     * Endpoints for a CAS, read FROM CHAIN -- never from the environment.
+     *
+     * The node operator controls the host and everything the enclave is
+     * handed, so the address we dial must come from the ValidatorRegistry
+     * itself. ENS names are tried first, then literal multiaddrs, /onion3
+     * preferred (matching the node-side resolver). Returns REST base URLs.
+     */
+    async casEndpointsFromChain(casAddress) {
+        const vrAbi = [
+            'function multiaddrsOf(address) view returns (string[])',
+            'function ensNamesOf(address) view returns (string[])',
+        ];
+        const vr = new ethers.Contract(this.validator_registry_address, vrAbi, this.w3);
+        let mas;
+        try {
+            mas = await vr.multiaddrsOf(casAddress);
+        } catch (e) {
+            console.warn(`CAS attestation: multiaddrsOf failed: ${e.message || e}`);
+            return [];
+        }
+        const onion = [], rest = [];
+        for (const ma of mas) {
+            const parts = String(ma).split('/').filter((p) => p);
+            if (parts.length !== 4 || parts[2] !== 'tcp') continue;
+            const kind = parts[0];
+            let host = parts[1];
+            const port = parseInt(parts[3], 10);
+            if (!Number.isInteger(port)) continue;
+            // REST pairing convention: rest = 8081 + (enclave - 18765)
+            const restPort = (port >= 18765 && port < 18965) ? 8081 + (port - 18765) : 8081;
+            if (kind === 'onion3') {
+                if (!host.endsWith('.onion')) host += '.onion';
+                onion.push(`http://${host}:${restPort}`);
+            } else if (['dns4', 'dns6', 'dns', 'ip4', 'ip6'].includes(kind)) {
+                rest.push(`http://${host}:${restPort}`);
+            }
+        }
+        return onion.concat(rest);
+    }
+
+    /**
+     * ENCLAVE-INITIATED CAS attestation: prove the CAS is live NOW.
+     *
+     * The CAS runs on a separate, remote system, so the operator sits on the
+     * network path. Stock SCONE offers the enclave no way to challenge the
+     * CAS, so we run the challenge on our own channel:
+     *
+     *   - the CAS injected ECAS_ATTEST_SESSION, a RANDOM 128-hex session id it
+     *     minted for THIS enclave and holds OPEN;
+     *   - we resolve its endpoint FROM CHAIN (so the operator cannot redirect
+     *     us), present that id with a nonce WE choose, and the CAS returns a
+     *     FRESH DCAP quote whose report_data binds
+     *     sha256(session || nonce || casAddr || certHash);
+     *   - we recompute that commitment and compare, and re-check the quote's
+     *     MRENCLAVE against the registry.
+     *
+     * A captured environment is useless once its session closes (the CAS
+     * refuses to mint), and a captured RESPONSE is useless because our nonce
+     * differs every time. Resolves to null on success, else a failure reason.
+     */
+    async challengeCas(casAddress, registeredMrenclave, registeredCert) {
+        const sessionId = process.env.ECAS_ATTEST_SESSION || '';
+        if (!sessionId) {
+            return 'no ECAS_ATTEST_SESSION in the environment (CAS cannot be challenged)';
+        }
+        const nonce = crypto.randomBytes(32);
+        const payload = JSON.stringify({session: sessionId, nonce: nonce.toString('hex')});
+
+        const endpoints = await this.casEndpointsFromChain(casAddress);
+        if (!endpoints.length) {
+            return 'the CAS publishes no dialable endpoint on chain';
+        }
+        let last = 'no endpoint answered';
+        for (const base of endpoints) {
+            const url = `${base}/attest/session`;
+            let doc;
+            try {
+                doc = await this.postJson(url, payload, 20000);
+            } catch (e) {
+                last = `${url}: ${e.message || e}`;
+                continue;
+            }
+            const quote = Buffer.from(String(doc.quote || ''), 'hex');
+            if (quote.length < 48 + 384) {
+                return `${url}: challenge quote too short (${quote.length} bytes)`;
+            }
+            const rd = quote.slice(368, 432);
+            const gotAddr = '0x' + rd.slice(32, 52).toString('hex');
+            if (gotAddr.toLowerCase() !== casAddress.toLowerCase()) {
+                return `challenge quote names ${gotAddr}, not the CAS ${casAddress} we verified on chain`;
+            }
+            const expect = crypto.createHash('sha256')
+                .update(Buffer.from(sessionId, 'utf8'))
+                .update(nonce)
+                .update(Buffer.from(casAddress.replace(/^0x/, ''), 'hex'))
+                .update(Buffer.from(registeredCert, 'hex'))
+                .digest();
+            if (!expect.equals(rd.slice(0, 32))) {
+                return 'challenge commitment mismatch: the CAS did not sign our ' +
+                       'session+nonce (stale or replayed response)';
+            }
+            const qmr = quote.slice(112, 144).toString('hex');
+            if (qmr.toLowerCase() !== registeredMrenclave.toLowerCase()) {
+                return `challenge quote MRENCLAVE ${qmr} != registered ${registeredMrenclave}`;
+            }
+            console.log(`CAS CHALLENGE PASSED: ${base} signed our session+nonce with a ` +
+                        `fresh quote (MRENCLAVE ${qmr.slice(0, 16)}...)`);
+            return null;
+        }
+        return `CAS challenge failed: ${last}`;
+    }
+
+    /** Minimal JSON POST over plain http -- the CAS REST port is http. */
+    postJson(url, body, timeoutMs) {
+        return new Promise((resolve, reject) => {
+            const http = require('http');
+            const u = new URL(url);
+            const req = http.request({
+                hostname: u.hostname,
+                port: u.port || 80,
+                path: u.pathname,
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(body),
+                },
+                timeout: timeoutMs,
+            }, (res) => {
+                const chunks = [];
+                res.on('data', (c) => chunks.push(c));
+                res.on('end', () => {
+                    const text = Buffer.concat(chunks).toString('utf8');
+                    try {
+                        resolve(JSON.parse(text));
+                    } catch (e) {
+                        reject(new Error(`HTTP ${res.statusCode}: ${text.slice(0, 200)}`));
+                    }
+                });
+            });
+            req.on('timeout', () => req.destroy(new Error('timeout')));
+            req.on('error', reject);
+            req.write(body);
+            req.end();
+        });
+    }
+
+    /**
      * Verify the CAS that provisioned this enclave. The CAS injects
-     * ECAS_CAS_QUOTE (a DCAP quote binding its EGETKEY validator address at
-     * report_data[0:20] and the SHA-256 of its certificate at [20:52]); we
-     * check it against the ValidatorRegistry baked into this build: active
-     * validator, registered MRENCLAVE match, registered certHash match.
-     * Evicting a CAS on-chain revokes it here on the next task. STRICT: a
-     * missing quote, an invalid one, and an unreachable registry (after
-     * retries) are all the same terminal fault (refund); there is no
-     * softening knob -- the session env comes from the CAS itself. The
-     * quote's ECDSA/PCK chain is not verified in-enclave yet; the binding is
-     * quote-contents <-> on-chain record (the revocation path).
+     * ECAS_CAS_QUOTE, a DCAP quote of itself, in one of two report_data
+     * layouts (fresh: commitment at [0:32], address at [32:52]; legacy:
+     * address at [0:20], cert hash at [20:52]). We check it against the
+     * ValidatorRegistry baked into this build: active validator, registered
+     * MRENCLAVE match, registered certHash match. Evicting a CAS on-chain
+     * revokes it here on the next task. STRICT: a missing quote, an invalid
+     * one, and an unreachable registry (after retries) are all the same
+     * terminal fault (refund); there is no softening knob -- the session env
+     * comes from the CAS itself. The quote's ECDSA/PCK chain is not verified
+     * in-enclave yet; the binding is quote-contents <-> on-chain record (the
+     * revocation path).
      */
     async verifyCasAttestation() {
         const registry = this.validator_registry_address;
@@ -145,19 +294,31 @@ class EtnySecureLock {
         const attributes = quote.slice(96, 112);
         const quoteMrenclave = quote.slice(112, 144).toString('hex');
         const reportData = quote.slice(368, 432);
-        const casAddress = ethers.utils.getAddress('0x' + reportData.slice(0, 20).toString('hex'));
-        const boundCert = reportData.slice(20, 52).toString('hex');
 
         const vrAbi = [
             'function isValidator(address) view returns (bool)',
             'function validators(address) view returns (bytes32 mrenclave, bytes32 certHash, bool active, uint64 admittedBlock, uint64 lastVoteBlock)',
         ];
-        let active, record, lastErr = null;
+        let active = false, record = null, lastErr = null;
+        let casAddress = null, boundCert = null;
         for (let attempt = 0; attempt < 3; attempt++) {
             try {
                 const vr = new ethers.Contract(registry, vrAbi, this.w3);
-                active = await vr.isValidator(casAddress);
-                record = await vr.validators(casAddress);
+                // Whichever layout names an ACTIVE validator is the real one.
+                for (const [candAddr, candCert] of casCandidates) {
+                    if (await vr.isValidator(candAddr)) {
+                        casAddress = candAddr;
+                        boundCert = candCert;
+                        active = true;
+                        record = await vr.validators(candAddr);
+                        break;
+                    }
+                }
+                if (!active) {
+                    // Both layouts resolved to non-validators: report the
+                    // fresh-layout address, which is what a current CAS sends.
+                    [casAddress, boundCert] = casCandidates[0];
+                }
                 lastErr = null;
                 break;
             } catch (e) {
@@ -180,8 +341,61 @@ class EtnySecureLock {
             return fault(`CAS quote MRENCLAVE ${quoteMrenclave} != registered ${registeredMr}`);
         }
         const registeredCert = record.certHash.replace(/^0x/, '');
-        if (registeredCert !== '0'.repeat(64) && registeredCert !== boundCert) {
-            return fault(`CAS quote cert hash ${boundCert} != registered ${registeredCert}`);
+        if (boundCert !== null) {
+            // Legacy layout: the cert hash is a readable field, compare it.
+            if (registeredCert !== '0'.repeat(64) && registeredCert !== boundCert) {
+                return fault(`CAS quote cert hash ${boundCert} != registered ${registeredCert}`);
+            }
+        } else {
+            // FRESH layout: the cert hash is not a readable field -- it is
+            // folded into report_data[0:32] together with the attestation
+            // SESSION ID and this enclave's own nonce. Recomputing that
+            // commitment is what binds the injected ENVIRONMENT AS ONE UNIT:
+            // ECAS_ATTEST_SESSION, ECAS_ENCLAVE_NONCE and ECAS_CAS_QUOTE only
+            // agree if the CAS minted all three together for THIS session. An
+            // operator who strips the session id, swaps in another enclave's
+            // id, or pairs a captured quote with a fresh session breaks the
+            // hash -- and cannot repair it, because the commitment is inside
+            // an SGX signature.
+            //
+            // The nonce is echoed by the CAS because SCONE gives the enclave
+            // no way to read its own attestation report_data. Echoing costs
+            // nothing: a tampered nonce simply fails to reproduce [0:32].
+            if (registeredCert === '0'.repeat(64)) {
+                // Without a registered cert there is nothing to recompute
+                // against, so the binding cannot be proven. Tolerating that
+                // would hand every CAS an opt-out: leave certHash unset and
+                // the strongest check silently disappears.
+                return fault(`CAS ${casAddress} has no certHash registered; ` +
+                             'the fresh quote binding cannot be verified');
+            }
+            const sessionId = process.env.ECAS_ATTEST_SESSION || '';
+            const nonceHex = process.env.ECAS_ENCLAVE_NONCE || '';
+            if (!sessionId) {
+                return fault('fresh CAS quote but no ECAS_ATTEST_SESSION ' +
+                             '(environment was tampered with)');
+            }
+            if (!nonceHex) {
+                return fault('fresh CAS quote but no ECAS_ENCLAVE_NONCE ' +
+                             '(environment was tampered with)');
+            }
+            if (!/^[0-9a-fA-F]*$/.test(nonceHex) || nonceHex.length % 2 !== 0) {
+                return fault('ECAS_ENCLAVE_NONCE is not hex');
+            }
+            const expected = crypto.createHash('sha256')
+                .update(Buffer.from(sessionId, 'utf8'))
+                .update(Buffer.from(nonceHex, 'hex'))
+                .update(Buffer.from(casAddress.replace(/^0x/, ''), 'hex'))
+                .update(Buffer.from(registeredCert, 'hex'))
+                .digest();
+            if (!expected.equals(reportData.slice(0, 32))) {
+                return fault('CAS quote does not commit to the injected environment ' +
+                             `(session ${sessionId.slice(0, 16)}..., expected ` +
+                             `${expected.toString('hex').slice(0, 16)}..., quote carries ` +
+                             `${reportData.slice(0, 32).toString('hex').slice(0, 16)}...)`);
+            }
+            console.log('CAS environment binding OK: quote commits to ' +
+                        `attestation session ${sessionId.slice(0, 16)}...`);
         }
         // SGX ATTRIBUTES.FLAGS bit 1 = DEBUG. Tolerated only when the session
         // explicitly says so (testnet debug CAS).
@@ -190,6 +404,17 @@ class EtnySecureLock {
         }
         console.log(`CAS ATTESTATION VERIFIED: validator ${casAddress}, ` +
                     `MRENCLAVE ${quoteMrenclave.slice(0, 16)}..., certificate bound on-chain`);
+
+        // LIVENESS. Everything above proves the injected quote matches an
+        // on-chain record -- but the environment was handed to us by the node.
+        // Challenge the CAS ourselves over an endpoint resolved FROM CHAIN,
+        // with a nonce we pick, so nothing replayed can pass. Same terminal
+        // fault (refund) as any other CAS-attestation failure.
+        const challengeError = await this.challengeCas(
+            casAddress, registeredMr, registeredCert);
+        if (challengeError !== null) {
+            return fault(challengeError);
+        }
     }
 
     loadEnv() {
