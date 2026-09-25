@@ -750,13 +750,20 @@ class EtnySecureLock {
             // THE HANDOVER IS ALWAYS SIGNED: the trustedzone refuses an
             // unverifiable result/result-code, so the operator's storage
             // layer between the enclaves can never substitute either value.
+            // Signed over the task binding when the trustedzone supplied one
+            // ("<challenge>:<order_id>:" ahead of the data), so each signature
+            // attests this order and this run's challenge; the data itself is
+            // pushed unchanged. Without a binding (older trustedzone) the bare
+            // data is signed, which that trustedzone verifies.
+            const binding = this.task_binding
+                ? `${this.task_binding.challenge}:${this.task_binding.order_id}:` : '';
             await this.encryptFileAndPushToSwiftStream(this.task_result, 'result.txt');
             await this.encryptFileAndPushToSwiftStream(
-                etny_crypto.signData(this.privateKeyMaterial(), String(this.task_result)),
+                etny_crypto.signData(this.privateKeyMaterial(), binding + String(this.task_result)),
                 'result.txt.sig');
             await this.encryptFileAndPushToSwiftStream(this.task_code.toString(), 'result_code.txt');
             await this.encryptFileAndPushToSwiftStream(
-                etny_crypto.signData(this.privateKeyMaterial(), this.task_code.toString()),
+                etny_crypto.signData(this.privateKeyMaterial(), binding + this.task_code.toString()),
                 'result_code.txt.sig');
 
             const encrypted = etny_crypto.encryptWithPublicKey(this._metadata.public_key, this.task_result);
@@ -873,6 +880,31 @@ class EtnySecureLock {
             console.log('No attested task caller supplied; treating task as anonymous');
         }
 
+        // Task binding: the order id and enclave challenge the trustedzone
+        // generated for this task, forwarded as task.securelock + .sig. When
+        // present (and only with a valid trustedzone signature) the result and
+        // the code are signed over "<challenge>:<order_id>:" and the envelope
+        // carries both, so the trustedzone can refuse a result captured from
+        // any other run. Absent with an older trustedzone, which then verifies
+        // the bare result as before.
+        this.task_binding = null;
+        try {
+            const taskValue = await this.getFileContentAndDecrypt(this.etny_bucket, 'task.securelock');
+            const taskSig = await this.getFileContentAndDecrypt(this.etny_bucket, 'task.securelock.sig');
+            await this.getTrustedZonePublicKey();
+            if (etny_crypto.verifySignature(this.trustedZonePublicKey, taskValue, taskSig)) {
+                const task = JSON.parse(String(taskValue));
+                if (Number.isInteger(Number(task.order_id)) && typeof task.challenge === 'string' && task.challenge) {
+                    this.task_binding = { order_id: Number(task.order_id), challenge: task.challenge };
+                    console.log(`Task binding attested by trustedzone: order ${this.task_binding.order_id}`);
+                }
+            } else {
+                console.error('task.securelock signature validation FAILED; result will not be bound');
+            }
+        } catch (e) {
+            console.log('No task binding supplied; result will not be bound');
+        }
+
         this.configureStateRegistry();
 
         // Interactive session: the trustedzone stages session.config when the
@@ -903,9 +935,11 @@ class EtnySecureLock {
         // the payload may have forged (so the trustedzone reads the truth) and
         // fails the task locally if a forgery is detected. Defence in depth;
         // the trustedzone (separate enclave) and the CID-bound caller remain the
-        // authoritative layers. The re-stamped ledger is then attested inside
-        // the result envelope saveResult() signs, so the trustedzone reads it
-        // from the signature rather than from the node's storage.
+        // authoritative layers. The re-stamped ledger and the task binding are
+        // then attested inside the result envelope saveResult() signs, so the
+        // trustedzone reads them from the signature rather than from the
+        // node's storage.
+        let ledgerAttestation = null;
         try {
             const ecld_state = require("./ecld_state");
             if (typeof ecld_state.restampLedgerCaller === 'function') {
@@ -917,33 +951,42 @@ class EtnySecureLock {
                 }
             }
             if (typeof ecld_state.ledgerAttestation === 'function') {
-                this.task_result = attachLedgerAttestation(this.task_result, ecld_state.ledgerAttestation());
+                ledgerAttestation = ecld_state.ledgerAttestation();
             }
         } catch (e) {
             console.error('ESR ledger re-stamp skipped:', e && e.message ? e.message : e);
         }
+        this.task_result = attachTaskAttestation(this.task_result, ledgerAttestation, this.task_binding);
 
         return true;
     }
 
 }
 
-// Attests the ESR ledger this securelock staged inside the result envelope the
-// identity key signs in saveResult(), so the trustedzone adjudicates from a
-// copy the node's storage cannot delete, truncate or edit: esr.wallet is the
-// enclave's ESR address and esr.commits the signed authorization records (the
-// same objects staged to esr.authorizations.json), taken AFTER
-// restampLedgerCaller so they carry the attested caller. The payload's own
-// entries are kept. Only an ecld envelope can carry the attestation; any other
-// result (legacy plain text, or the SECURITY_VIOLATION text) is returned
-// unchanged, as is an envelope when the registry was never configured.
-function attachLedgerAttestation(taskResult, attestation) {
-    if (!attestation || !attestation.wallet) return taskResult;
+// Attests this securelock's view of the task inside the result envelope the
+// identity key signs in saveResult(). esr.wallet is the enclave's ESR address
+// and esr.commits the signed authorization records it staged (the same
+// objects staged to esr.authorizations.json), taken AFTER restampLedgerCaller
+// so they carry the attested caller; the payload's own entries are kept.
+// order_id and challenge are the task binding the trustedzone forwarded, so a
+// client can check the decrypted result against the on-chain result record.
+// Only an ecld envelope can carry them; any other result (legacy plain text,
+// or the SECURITY_VIOLATION text) is returned unchanged, as is an envelope
+// when there is nothing to attest.
+function attachTaskAttestation(taskResult, attestation, binding) {
+    const hasLedger = !!(attestation && attestation.wallet);
+    if (!hasLedger && !binding) return taskResult;
     let envelope;
     try { envelope = JSON.parse(String(taskResult)); } catch (e) { return taskResult; }
     if (!envelope || typeof envelope !== 'object' || envelope.ecld !== 1) return taskResult;
-    const entries = envelope.esr && Array.isArray(envelope.esr.entries) ? envelope.esr.entries : [];
-    envelope.esr = { wallet: attestation.wallet, entries, commits: attestation.commits };
+    if (hasLedger) {
+        const entries = envelope.esr && Array.isArray(envelope.esr.entries) ? envelope.esr.entries : [];
+        envelope.esr = { wallet: attestation.wallet, entries, commits: attestation.commits };
+    }
+    if (binding) {
+        envelope.order_id = binding.order_id;
+        envelope.challenge = binding.challenge;
+    }
     return JSON.stringify(envelope);
 }
 
