@@ -228,6 +228,19 @@ function ledgerSnapshot(includeState = true, keys = null) {
   return { wallet: reg.walletAddress, entries };
 }
 
+/**
+ * The ledger this securelock staged, for the securelock to attest inside the
+ * signed result envelope AFTER restampLedgerCaller: the enclave's ESR wallet
+ * plus the signed authorization records (the same objects written to
+ * esr.authorizations.json). The trustedzone adjudicates from this copy, which
+ * the node's storage cannot delete, truncate or edit. Never called from
+ * payload code. wallet is null when the registry was never configured.
+ */
+function ledgerAttestation() {
+  const wallet = _identityPriv ? esr_wallet.deriveWalletAddress(_identityPriv) : null;
+  return { wallet, commits: _esrLedger.map((e) => ({ ...e })) };
+}
+
 function keccak256(buf) {
   return Buffer.from(ethers.utils.keccak256(buf).slice(2), 'hex');
 }
@@ -798,6 +811,7 @@ module.exports = {
   taskCaller,
   setTaskCaller,
   restampLedgerCaller,
+  ledgerAttestation,
   StatePermissionError,
   StateNonceError,
   StateLimitError,
