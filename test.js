@@ -74,15 +74,30 @@ function copyDir(src, dest) {
   }
 }
 
+/* Every node_modules directory from the SDK's own location upwards: the SDK's
+ * checkout node_modules when run from a clone, the project's hoisted
+ * node_modules when installed as a dependency. */
+function nodeModulesPaths() {
+  const found = [];
+  let dir = __dirname;
+  for (;;) {
+    const nm = path.join(dir, 'node_modules');
+    if (fs.existsSync(nm)) found.push(nm);
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return found;
+}
+
 /* Stage the executor + the project's backend the way ecld-build does inside
  * the enclave image, then load the REAL executor from the staged copy. */
 function loadExecutor(projectSrc) {
-  // Stage INSIDE the SDK tree (not the OS temp dir) so the executor's
-  // `require('ethers')` and other runtime deps resolve by walking up to the
-  // SDK's own node_modules -- exactly what binary-fs gives the enclave.
-  const stageRoot = path.join(VENDORED_SRC, '..', '.ecld-test-stage');
-  fs.mkdirSync(stageRoot, { recursive: true });
-  const stage = fs.mkdtempSync(path.join(stageRoot, 'run-'));
+  // The stage lives under the OS temp dir, never inside the SDK package. The
+  // executor's runtime deps (ethers, ...) resolve through NODE_PATH, which is
+  // pointed at the SDK's node_modules, so the staged copy sees the same
+  // modules binary-fs gives the enclave.
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'ecld-test-'));
   const cleanup = () => { try { fs.rmSync(stage, { recursive: true, force: true }); } catch (e) {} };
   process.on('exit', cleanup);
   // `serve` runs until interrupted -- clean the stage on Ctrl-C / kill too.
@@ -104,6 +119,9 @@ function loadExecutor(projectSrc) {
   } else {
     console.log('backend : none found — running with bare globals, like a stock enclave');
   }
+  process.env.NODE_PATH = [...nodeModulesPaths(), process.env.NODE_PATH]
+    .filter(Boolean).join(path.delimiter);
+  require('module').Module._initPaths();
   const executor = require(path.join(stage, 'etny_exec.js'));
   executor.__stageDir = stage;
   return executor;
