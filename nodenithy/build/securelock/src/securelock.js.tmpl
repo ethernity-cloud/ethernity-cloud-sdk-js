@@ -515,7 +515,23 @@ class EtnySecureLock {
     // input carries no checksum (has_checksum === false) and is skipped. Kept
     // identical across securelock / trustedzone / validator so all three agree.
     async validateClientPayload(payload_data, input_data) {
-        await this.getDORequestMetadata();
+        // The order metadata comes from the chain; a transient RPC failure
+        // must end in a signed failure result the trustedzone can hand over,
+        // not in a task that produces nothing until the trustedzone times out.
+        const maxRetries = 5;
+        for (let attempt = 1; ; attempt++) {
+            try {
+                await this.getDORequestMetadata();
+                break;
+            } catch (e) {
+                if (attempt === maxRetries) {
+                    this.task_code = TaskStatus.SYSTEM_ERROR;
+                    this.task_result = `Failed to fetch metadata after ${maxRetries} attempts: ${e && e.message ? e.message : e}`;
+                    this.is_valid_client_data = false;
+                    return;
+                }
+            }
+        }
 
         const pmeta = this._metadata.payload_metadata_obj;
         if (pmeta.has_checksum) {
