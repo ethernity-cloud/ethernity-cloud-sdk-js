@@ -176,45 +176,40 @@ runCommand('docker tag etny-securelock localhost:5000/etny-securelock');
 runCommand('docker push localhost:5000/etny-securelock');
 // runCommand('docker save etny-securelock:latest -o etny-securelock.tar');
 process.chdir('..');
-// const ENCLAVE_NAME_TRUSTEDZONE = `ENCLAVE_NAME_TRUSTEDZONE_${VERSION}_${CI_COMMIT_BRANCH}`.toUpperCase().replace(/\//g, '_').replace(/-/g, '_');
-
 
 console.log(`ENCLAVE_NAME_TRUSTEDZONE: ${ENCLAVE_NAME_TRUSTEDZONE}`);
 writeEnv('ENCLAVE_NAME_TRUSTEDZONE', ENCLAVE_NAME_TRUSTEDZONE);
 
-console.log('Building etny-trustedzone');
-process.chdir('trustedzone');
-
-// // runCommand(`cat Dockerfile.tmpl | sed s/"__ENCLAVE_NAME_TRUSTEDZONE__"/"${ENCLAVE_NAME_TRUSTEDZONE}"/g > Dockerfile`);
-// const dockerfileTrustedTemplate = fs.readFileSync('Dockerfile.tmpl', 'utf8');
-// const dockerfileTrustedContent = dockerfileTrustedTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK);
-// fs.writeFileSync('Dockerfile', dockerfileTrustedContent);
-
-// runCommand(`docker build --build-arg ENCLAVE_NAME_TRUSTEDZONE=${ENCLAVE_NAME_TRUSTEDZONE} -t etny-trustedzone:latest .`);
-// runCommand('docker tag etny-trustedzone localhost:5000/etny-trustedzone');
-// runCommand('docker push localhost:5000/etny-trustedzone');
-// runCommand('docker save etny-trustedzone:latest -o etny-trustedzone.tar');
-// const zip = new AdmZip('etny-trustedzone.tar.zip');
-// zip.extractAllTo('.', true);
-
-runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-trustedzone:py_${imagesTag}`);
-runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-trustedzone:py_${imagesTag} localhost:5000/etny-trustedzone`);
+// The trustedzone is not built here: the etny-pynithy CI builds, measures and
+// registers it on-chain, and publishes that exact image to the ethernity registry
+// under <image_name>/trustedzone:<network>, with image_name and network the keys
+// of etny-pynithy/v3/networks.yaml (image_name is TRUSTED_ZONE_IMAGE). Bundling
+// anything else would pair the securelock with a trustedzone whose key does not
+// match the on-chain cert, so a failed pull fails the build.
+const trustedZoneNetByBlockchain = {
+  Bloxberg_Mainnet: 'bloxberg',
+  Bloxberg_Testnet: 'bloxberg_testnet',
+  Polygon_Mainnet: 'polygon',
+  Polygon_Amoy_Testnet: 'amoy',
+  IoTeX_Testnet: 'iotex_testnet',
+  Ethereum_Sepolia: 'ethereum_sepolia',
+  LitVM_LiteForge: 'litvm_liteforge',
+};
+const trustedZoneNet = trustedZoneNetByBlockchain[process.env.BLOCKCHAIN_NETWORK];
+if (!trustedZoneNet) {
+  console.error(`ERROR: no published trustedzone for BLOCKCHAIN_NETWORK=${process.env.BLOCKCHAIN_NETWORK}`);
+  console.error(`       known networks: ${Object.keys(trustedZoneNetByBlockchain).join(', ')}`);
+  process.exit(1);
+}
+const trustedZoneImage = `registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/${templateName}/trustedzone:${trustedZoneNet}`;
+console.log(`Pulling the published trustedzone: ${trustedZoneImage}`);
+runCommand(`docker pull ${trustedZoneImage}`);
+runCommand(`docker tag ${trustedZoneImage} localhost:5000/etny-trustedzone`);
 runCommand('docker push localhost:5000/etny-trustedzone');
-
-// if (isMainnet) {
-//   console.log('Building validator');
-//   process.chdir('../validator');
-//   // runCommand('docker build -t etny-validator:latest .');
-//   // runCommand('docker tag etny-validator localhost:5000/etny-validator');
-//   // runCommand('docker push localhost:5000/etny-validator');
-//   runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-validator:py_${imagesTag}`);
-//   runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-validator:py_${imagesTag} localhost:5000/etny-validator`);
-//   runCommand('docker push localhost:5000/etny-validator');
-// }
 
 
 console.log('Building etny-las');
-process.chdir('../las');
+process.chdir('las');
 // runCommand('docker build -t etny-las .');
 // runCommand('docker tag etny-las localhost:5000/etny-las');
 // runCommand('docker push localhost:5000/etny-las');
