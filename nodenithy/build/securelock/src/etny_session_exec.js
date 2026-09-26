@@ -35,11 +35,22 @@ function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
    enclave pushes for the trustedzone is SIGNED with its identity key, so the
    trustedzone authors metadata rows only from verified securelock material;
    everything read from the trustedzone is verified against the trustedzone's
-   registry certificate before it is trusted. */
+   registry certificate before it is trusted. Each signature covers
+   "<challenge>:<order_id>:<object>:" ahead of the data -- the task binding
+   the trustedzone forwarded in task.securelock, extended with the object's
+   own name -- so the trustedzone can refuse a session object captured from
+   another order, another run, or another sequence position. Without a
+   binding (older trustedzone) the bare data is signed, which that trustedzone
+   verifies. */
+
+function sessionBinding(app, baseName) {
+    return app.task_binding
+        ? `${app.task_binding.challenge}:${app.task_binding.order_id}:${baseName}:` : '';
+}
 
 async function pushSignedForTrustedzone(app, data, baseName) {
     await app.encryptFileAndPushToSwiftStream(data, baseName);
-    const sigHex = etny_crypto.signData(app.privateKeyMaterial(), data);
+    const sigHex = etny_crypto.signData(app.privateKeyMaterial(), sessionBinding(app, baseName) + data);
     await app.encryptFileAndPushToSwiftStream(sigHex, baseName + '.sig');
 }
 
