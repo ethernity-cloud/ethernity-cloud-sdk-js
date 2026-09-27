@@ -1,6 +1,7 @@
 import shell from 'shelljs';
 import fs from 'fs';
 import path from 'path';
+import { createRequire } from 'module';
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -56,10 +57,11 @@ export const ECRunner = {
 // can verify the CAS that provisions it (ECAS_CAS_QUOTE self-attestation).
 // Build-side on purpose: a rogue CAS must not choose the registry that judges
 // it. Missing key = no registry on that network; the enclave skips the check.
-export const VALIDATOR_REGISTRY = {
-  'etny-pynithy-testnet': '0xC4Fcd83743b76fB3081328cFe354De89995eaECD',
-  'etny-nodenithy-testnet': '0xC4Fcd83743b76fB3081328cFe354De89995eaECD',
-};
+// Shared with publish (cas/config.js), which registers the session in the
+// matching SessionRegistry.
+const require = createRequire(import.meta.url);
+const casConfig = require('../cas/config.js');
+export const VALIDATOR_REGISTRY = casConfig.VALIDATOR_REGISTRY;
 
 const runCommand = (command, canPass = false) => {
   if (shell.exec(command).code !== 0 && !canPass) {
@@ -247,12 +249,14 @@ const signedMrenclaveStep =
 
 let imagesTag = process.env.BLOCKCHAIN_NETWORK.toLowerCase();
 
-if (isMainnet) {
-  // Mainnet: production sign the executed node binary + bake the signed MRENCLAVE.
+// A CAS-provisioned securelock (mainnet, or a testnet with a SessionRegistry)
+// is signed --production: the CAS session admits production enclaves only,
+// and a debug-signed one is refused at attestation.
+if (casConfig.casProvisioned(templateName, isMainnet)) {
   dockerfileSecureContent = dockerfileSecureContent
     .replace('__SCONE_SIGN__', `RUN scone-signer sign ${signFlags} --production /usr/local/bin/node`)
     .replace('__SIGNED_MRENCLAVE__', signedMrenclaveStep);
-  imagesTag = process.env.BLOCKCHAIN_NETWORK.split("_")[0].toLowerCase();
+  if (isMainnet) imagesTag = process.env.BLOCKCHAIN_NETWORK.split("_")[0].toLowerCase();
 } else {
   // Testnet: non-CAS self-sign path -- no --production sign and no signed
   // MRENCLAVE baking (the enclave self-signs from MR_ENCLAVE at runtime).

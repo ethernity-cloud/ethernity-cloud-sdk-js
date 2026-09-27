@@ -301,6 +301,15 @@ class ImageRegistry {
             console.log(public);
             return public;
         }
+        // The CAS session name recorded for the trustedzone template's latest
+        // image: what the compose's SCONE_CONFIG_ID for the trustedzone must name.
+        if (action === 'getTrustedZoneSession') {
+            const imageRegistry = new ImageRegistry();
+            const latest = await imageRegistry.imageRegistryContract.getLatestTrustedZoneImageCertPublicKey(projectName, version);
+            const session = await imageRegistry.imageRegistryContract.getTrustedZoneImageSession(latest[0]);
+            console.log(session);
+            return session;
+        }
 
         const imageRegistry = new ImageRegistry();
         if (action === 'registerSecureLockImage') {

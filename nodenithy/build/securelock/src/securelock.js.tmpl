@@ -697,7 +697,11 @@ class EtnySecureLock {
     // Idempotent: the key is a pure function of the enclave identity, so it is
     // identical across restarts without needing to persist it.
     generateSelfSignedCertIfTestnet() {
-        if (NETWORK_TYPE !== "testnet") return;
+        // A testnet build with a ValidatorRegistry baked in is CAS-provisioned
+        // (ethernity-cas): its key and cert are injected into key_file and
+        // cert_file by the CAS session, exactly as on mainnet, and the same
+        // registry is what verifyCasAttestation checks the CAS against.
+        if (NETWORK_TYPE !== "testnet" || this.casProvisioned()) return;
         console.log("[SecureLock] TESTNET: self-signing certificate from MR_ENCLAVE (no CAS) [TESTNET-INSECURE]");
         const {privateKeyPem, certPem, mrEnclaveHex} = generateCertFromMrEnclave("SecureLock Enclave");
         console.log(`[SecureLock] MR_ENCLAVE: ${mrEnclaveHex}`);
@@ -709,9 +713,17 @@ class EtnySecureLock {
         fs.writeFileSync(this.cert_file, certPem);
     }
 
+    // Whether this build's certificate comes from a CAS session: mainnet, or a
+    // testnet with a ValidatorRegistry baked in.
+    casProvisioned() {
+        const registry = String(this.validator_registry_address || '');
+        return NETWORK_TYPE === "mainnet" || (registry !== '' && !registry.startsWith('__'));
+    }
+
     // The enclave's identity private key, in whatever form this network provides
-    // it: the in-memory PEM on testnet, or the CAS-injected key_file path on
-    // mainnet. etny_crypto accepts either, so callers do not branch on network.
+    // it: the in-memory PEM on a self-signing testnet, or the CAS-injected
+    // key_file path otherwise. etny_crypto accepts either, so callers do not
+    // branch on network.
     privateKeyMaterial() {
         return this.identity_private_key_pem || this.key_file;
     }
@@ -754,7 +766,7 @@ class EtnySecureLock {
                 || fs.readFileSync(this.key_file, 'utf8');
             const esrAddress = esr_wallet.deriveWalletAddress(identityPriv);
             console.log(`ESR_WALLET_ADDRESS: ${esrAddress}`);
-            if (!esr_wallet.isSecretIdentity(NETWORK_TYPE)) {
+            if (!esr_wallet.isSecretIdentity(NETWORK_TYPE, this.casProvisioned())) {
                 console.warn(esr_wallet.INSECURE_IDENTITY_WARNING);
             }
         } catch (e) {

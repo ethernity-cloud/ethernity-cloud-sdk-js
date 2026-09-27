@@ -109,15 +109,18 @@ function deriveWalletAddress(identityPrivDer) {
  *     testnet tradeoff — treat these wallets as disposable.
  *
  * @param {string} networkType "mainnet" | "testnet"
+ * @param {boolean} attested whether this build is provisioned by a CAS (its
+ *   key comes from the CAS session): true on mainnet and on a testnet whose
+ *   enclaves are attested by the ethernity-cas validator set
  * @returns {boolean}
  */
-function isSecretIdentity(networkType) {
+function isSecretIdentity(networkType, attested = false) {
   const override = String(process.env.ESR_IDENTITY_SECRET || '').trim().toLowerCase();
   if (override === '1' || override === 'true' || override === 'yes') return true;
   if (override === '0' || override === 'false' || override === 'no') return false;
   // Secrecy tracks attestation, not the network name: mainnet is attested,
-  // testnet is not. The override exists for a future attested-testnet build.
-  return String(networkType || '').trim().toLowerCase() === 'mainnet';
+  // and so is a testnet whose securelock is provisioned by a CAS.
+  return attested || String(networkType || '').trim().toLowerCase() === 'mainnet';
 }
 
 const INSECURE_IDENTITY_WARNING =

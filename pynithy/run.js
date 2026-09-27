@@ -5,6 +5,9 @@ const readline = require('readline');
 const forge = require('node-forge');
 const axios = require('axios');
 const https = require('https');
+const casConfig = require('../cas/config.js');
+const casResolver = require('../cas/resolver.js');
+const sessionRegistry = require('../cas/session_registry.js');
 
 if (!fs.existsSync('.env')) {
     console.error("Error: .env file not found");
@@ -58,6 +61,12 @@ const writeEnv = (key, value) => {
 let templateName = process.env.TRUSTED_ZONE_IMAGE || 'etny-pynithy-testnet';
 
 const isMainnet = !templateName.includes('testnet');
+// A testnet template with a SessionRegistry is CAS-attested by the
+// ethernity-cas validator set: the session is registered on-chain, the
+// enclave is provisioned from a validator, and the certificate comes out of
+// the CAS session. Other testnets self-sign and register nothing.
+const casTestnet = !isMainnet && casConfig.casProvisioned(templateName, isMainnet);
+const casChain = casConfig.CHAIN[templateName] || {};
 
 const currentDir = process.cwd();
 console.log(`currentDir: ${currentDir}`);
@@ -121,7 +130,7 @@ const main = async () => {
     // MRENCLAVE signed --production at build time (/signed_mrenclave.txt). A
     // mismatch means SCONE recomputed the measurement at load (params drift) and
     // re-signed as DEBUG, which CAS rejects on mainnet. Refuse to publish.
-    if (isMainnet) {
+    if (isMainnet || casTestnet) {
         const signedMrenclave = extractSignedMrenclave('etny-securelock');
         if (!signedMrenclave || signedMrenclave !== process.env.MRENCLAVE_SECURELOCK) {
             console.error(`Error: securelock runtime MRENCLAVE (${process.env.MRENCLAVE_SECURELOCK}) != signed MRENCLAVE (${signedMrenclave}).`);
@@ -204,7 +213,25 @@ const main = async () => {
     };
     processYamlTemplate('etny-securelock-test.yaml.tpl', 'etny-securelock-test.yaml', replacementsSecurelock);
 
-
+    // Where the session goes depends on who provisions the securelock. On a
+    // CAS-attested testnet it is registered ON-CHAIN in the ethernity-cas
+    // SessionRegistry, which the validator set reads and which accepts no
+    // POST; the publish then waits until the validators serve it, because the
+    // public-key harvest below provisions the enclave from them. Every other
+    // network keeps the Scontain CAS registration that follows.
+    if (casTestnet) {
+        const registered = await sessionRegistry.register(
+            casChain.rpcUrl, casChain.chainId, casConfig.SESSION_REGISTRY[templateName],
+            process.env.PRIVATE_KEY, fs.readFileSync('etny-securelock-test.yaml'),
+            process.env.IPFS_ENDPOINT, '');
+        if (registered.registered) {
+            console.log(`\t✔  Session ${registered.name} registered on-chain (body ${registered.cid})`);
+            await sessionRegistry.waitVisible(
+                casChain.rpcUrl, casConfig.SESSION_REGISTRY[templateName], registered.name, registered.hash);
+        } else {
+            console.log(`\t✔  Session ${registered.name} already registered on-chain with this body (${registered.hash})`);
+        }
+    } else {
     // don't generate new keys if PREDECESSOR_HASH_SECURELOCK is not empty and the key.pem and cert.pem files exist
     if (PREDECESSOR_HASH_SECURELOCK !== 'EMPTY' && fs.existsSync('key.pem') && fs.existsSync('cert.pem')) {
         console.log("Skipping key pair generation and certificate creation.");
@@ -318,6 +345,7 @@ const main = async () => {
             console.log("Please change the name/version of your project (using ecld-init or by editing .env file) and run the scripts again. Exiting.");
             process.exit(1);
         });
+    }
 
 
     // const ENCLAVE_NAME_TRUSTEDZONE = generateEnclaveName(process.env.ENCLAVE_NAME_TRUSTEDZONE);
@@ -352,6 +380,23 @@ const main = async () => {
 
     console.log("# Update docker-compose files");
 
+    // On a CAS-attested testnet the compose names the CAS both enclaves are
+    // provisioned from (a validator resolved from the registry, or
+    // ECLD_CAS_ADDR; the node re-resolves it before each task) and the
+    // trustedzone session the ImageRegistry records for this template.
+    let casAddr = null;
+    let trustedZoneSession = null;
+    if (casTestnet) {
+        casAddr = await casResolver.casAddressFor(casChain.rpcUrl, casConfig.VALIDATOR_REGISTRY[templateName]);
+        console.log(`\t✔  CAS for this network: ${casAddr}`);
+        trustedZoneSession = execSync(`node ./image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" ${templateName} "v3" "" "getTrustedZoneSession"`).toString().trim();
+        if (!trustedZoneSession) {
+            console.error(`ERROR! The ImageRegistry records no trustedzone session for ${templateName}.`);
+            process.exit(1);
+        }
+        console.log(`\t✔  Trustedzone session: ${trustedZoneSession}`);
+    }
+
     const files = ['docker-compose.yml', 'docker-compose-final.yml'];
 
     files.forEach(file => {
@@ -381,9 +426,15 @@ const main = async () => {
         if (isMainnet) {
             ENCLAVE_NAME_TRUSTEDZONE = 'ecld-pynithy-trustedzone-v3-3.0.0'
         }
-        const updatedContent = fileContentBefore
+        if (casTestnet) {
+            ENCLAVE_NAME_TRUSTEDZONE = trustedZoneSession;
+        }
+        let updatedContent = fileContentBefore
             .replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK)
             .replace(/__ENCLAVE_NAME_TRUSTEDZONE__/g, ENCLAVE_NAME_TRUSTEDZONE);
+        if (casTestnet) {
+            updatedContent = updatedContent.replace(/SCONE_CAS_ADDR=scone-cas\.cf/g, `SCONE_CAS_ADDR=${casAddr}`);
+        }
 
         fs.writeFileSync(file, updatedContent, 'utf8');
 
@@ -569,6 +620,14 @@ const main = async () => {
 
     if (!existing) {
         const res = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "" "" "" "registerSecureLockImage"`, { stdio: "inherit" });
+    }
+    // The on-chain session points at the image it admits, so a validator can
+    // pin the image beside the body it serves.
+    if (casTestnet) {
+        await sessionRegistry.linkImage(
+            casChain.rpcUrl, casChain.chainId, casConfig.SESSION_REGISTRY[templateName],
+            process.env.PRIVATE_KEY, ENCLAVE_NAME_SECURELOCK, process.env.IPFS_HASH);
+        console.log(`\t✔  Session ${ENCLAVE_NAME_SECURELOCK} linked to image ${process.env.IPFS_HASH}`);
     }
     console.log("Script completed successfully. You can start testing the application now. (eg. npm run start)");
     process.exit(0);
