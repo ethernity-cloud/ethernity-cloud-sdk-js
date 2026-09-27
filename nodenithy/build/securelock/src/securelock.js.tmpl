@@ -111,16 +111,18 @@ class EtnySecureLock {
      * preferred (matching the node-side resolver). Returns REST base URLs.
      */
     async casEndpointsFromChain(casAddress) {
-        const vrAbi = [
-            'function multiaddrsOf(address) view returns (string[])',
-            'function ensNamesOf(address) view returns (string[])',
-        ];
-        const vr = new ethers.Contract(this.validator_registry_address, vrAbi, this.w3);
+        // Endpoints live in the CasKeyStore the registry names via keyStore();
+        // the registry's own forwarders were removed when it reached the
+        // EIP-170 size limit.
+        const registryAbi = ['function keyStore() view returns (address)'];
+        const storeAbi = ['function multiaddrsOf(address) view returns (string[])'];
         let mas;
         try {
-            mas = await vr.multiaddrsOf(casAddress);
+            const vr = new ethers.Contract(this.validator_registry_address, registryAbi, this.w3);
+            const store = new ethers.Contract(await vr.keyStore(), storeAbi, this.w3);
+            mas = await store.multiaddrsOf(casAddress);
         } catch (e) {
-            console.warn(`CAS attestation: multiaddrsOf failed: ${e.message || e}`);
+            console.warn(`CAS attestation: reading the CAS endpoints from chain failed: ${e.message || e}`);
             return [];
         }
         const onion = [], rest = [];
@@ -323,7 +325,9 @@ class EtnySecureLock {
 
         const vrAbi = [
             'function isValidator(address) view returns (bool)',
-            'function validators(address) view returns (bytes32 mrenclave, bytes32 certHash, bool active, uint64 admittedBlock, uint64 lastVoteBlock)',
+            // The registry's Validator struct: the measurement is `bytes` at
+            // its platform width (32 for SGX MRENCLAVE), not bytes32.
+            'function validators(address) view returns (bytes measurement, bytes32 certHash, bool active, uint64 admittedBlock, uint64 lastVoteBlock, uint16 teeType, address operator)',
         ];
         let active = false, record = null, lastErr = null;
         let casAddress = null, boundCert = null;
@@ -362,7 +366,7 @@ class EtnySecureLock {
         if (!active) {
             return fault(`CAS ${casAddress} is NOT an active validator`);
         }
-        const registeredMr = record.mrenclave.replace(/^0x/, '');
+        const registeredMr = record.measurement.replace(/^0x/, '');
         if (registeredMr !== quoteMrenclave) {
             return fault(`CAS quote MRENCLAVE ${quoteMrenclave} != registered ${registeredMr}`);
         }
