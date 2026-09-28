@@ -1,6 +1,6 @@
 {
   "name": "@ethernity-cloud/sdk-js",
-  "version": "1.5.20",
+  "version": "1.6.0",
   "description": "A package to run ethernity cloud build scripts",
   "scripts": {
     "ecld-build": "cross-env node ./node_modules/@ethernity-cloud/sdk-js/build.js",
@@ -23,6 +23,7 @@
   "files": [
     "nodenithy/*",
     "pynithy/*",
+    "cas/*",
     "build.js",
     "init.js",
     "publish.js",
