@@ -4,8 +4,13 @@ __PREDECESSOR__
 
 security:
   attestation:
-    tolerate: [hyperthreading, outdated-tcb, software-hardening-needed, debug-mode]
-    ignore_advisories: ["INTEL-SA-00220", "INTEL-SA-00270", "INTEL-SA-00293", "INTEL-SA-00320", "INTEL-SA-00329", "INTEL-SA-00334", "INTEL-SA-00381", "INTEL-SA-00389", "INTEL-SA-00477", "INTEL-SA-00614", "INTEL-SA-00615", "INTEL-SA-00617", "INTEL-SA-00828"]
+    # Both substituted per network by run.js. Mainnet attests production
+    # enclaves only and lists the advisories it accepts; a testnet tolerates a
+    # debug-signed enclave and takes the wildcard ["*"], so an operator's
+    # platform is not refused for a TCB level that has no bearing on a test
+    # network.
+    tolerate: __TOLERATE__
+    ignore_advisories: __IGNORE_ADVISORIES__
 
 services:
    - name: application

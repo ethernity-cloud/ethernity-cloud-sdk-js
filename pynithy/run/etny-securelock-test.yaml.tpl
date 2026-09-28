@@ -4,8 +4,14 @@ __PREDECESSOR__
 
 security:
   attestation:
-    tolerate: [debug-mode, hyperthreading, outdated-tcb, software-hardening-needed, debug-mode]
-    ignore_advisories: "*"
+    # Both substituted per network by run.js. Mainnet attests production
+    # enclaves only and lists the advisories it accepts; a testnet tolerates a
+    # debug-signed enclave and takes the wildcard ["*"], so an operator's
+    # platform is not refused for a TCB level that has no bearing on a test
+    # network. (A bare "*" is not a list: the CAS reads it as a literal
+    # advisory id, which ignores nothing.)
+    tolerate: __TOLERATE__
+    ignore_advisories: __IGNORE_ADVISORIES__
 
 services:
    - name: application

@@ -164,9 +164,15 @@ const main = async () => {
             const regex = new RegExp(`__${key}__`, 'g');
             content = content.replace(regex, value);
         }
-        if (isMainnet) {
-            content = content.replace(", debug-mode", "").replace('ignore_advisories: ["INTEL-SA-00220", "INTEL-SA-00270", "INTEL-SA-00293", "INTEL-SA-00320", "INTEL-SA-00329", "INTEL-SA-00334", "INTEL-SA-00381", "INTEL-SA-00389", "INTEL-SA-00477", "INTEL-SA-00614", "INTEL-SA-00615", "INTEL-SA-00617", "INTEL-SA-00828"]', '');
-        }
+        // Mainnet attests production enclaves only; a testnet tolerates a
+        // debug-signed one. Both lines were edited by text replacement, which
+        // had to repeat the advisory list verbatim to delete it and broke the
+        // moment either string moved. Written out per network instead.
+        content = content
+            .replace(/__TOLERATE__/g, isMainnet
+                ? '[hyperthreading, outdated-tcb, software-hardening-needed]'
+                : '[hyperthreading, outdated-tcb, software-hardening-needed, debug-mode]')
+            .replace(/__IGNORE_ADVISORIES__/g, isMainnet ? '["INTEL-SA-00615"]' : '["*"]');
 
         fs.writeFileSync(outputFile, content);
         // console.log(`Contents of ${outputFile}:`);

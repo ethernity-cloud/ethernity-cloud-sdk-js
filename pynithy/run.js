@@ -160,9 +160,16 @@ const main = async () => {
             const regex = new RegExp(`__${key}__`, 'g');
             content = content.replace(regex, value);
         }
-        if (isMainnet) {
-            content = content.replace(", debug-mode", "");
-        }
+        // Mainnet attests production enclaves only; a testnet tolerates a
+        // debug-signed one. The tolerate list was edited by text replacement
+        // ('", debug-mode"'), which never matched this template's LEADING
+        // "debug-mode," -- so mainnet sessions were published tolerating debug
+        // enclaves. Written out per network instead.
+        content = content
+            .replace(/__TOLERATE__/g, isMainnet
+                ? '[hyperthreading, outdated-tcb, software-hardening-needed]'
+                : '[debug-mode, hyperthreading, outdated-tcb, software-hardening-needed]')
+            .replace(/__IGNORE_ADVISORIES__/g, isMainnet ? '["INTEL-SA-00615"]' : '["*"]');
 
         fs.writeFileSync(outputFile, content);
         // console.log(`Contents of ${outputFile}:`);
