@@ -5,7 +5,9 @@ services:
     privileged: true
     image: etny-las
     entrypoint: "/las_entrypoint.sh"
-    command: "/usr/local/bin/las"
+    # -a 0.0.0.0: without it the LAS binds dual-stack (:::18766) and cannot
+    # allocate the socket on a host booted with ipv6.disable=1.
+    command: "/usr/local/bin/las -a 0.0.0.0"
     devices:
       - "/dev/sgx_enclave:/dev/sgx_enclave"
     restart: on-failure

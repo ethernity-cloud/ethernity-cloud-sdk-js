@@ -5,7 +5,7 @@ services:
         privileged: true
         image: localhost:5000/etny-las
         entrypoint: "/las_entrypoint.sh"
-        command: "bash -c '/las_entrypoint.sh && /usr/local/bin/las | tee /var/log/las.log'"
+        command: "bash -c '/las_entrypoint.sh && /usr/local/bin/las -a 0.0.0.0 | tee /var/log/las.log'"
         restart: unless-stopped
         networks:
           - ethernity
