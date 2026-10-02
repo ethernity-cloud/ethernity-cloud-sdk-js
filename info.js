@@ -45,7 +45,7 @@ const NETWORKS = {
   BLOXBERG_TESTNET: {
     type: 'testnet', chainId: 8995, rpc: 'https://core.bloxberg.org',
     protocol: '0x02882F03097fE8cD31afbdFbB5D72a498B41112c',
-    imageRegistry: '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31',
+    imageRegistry: '0x99A84C624C028bdf0a855A1E9E3f2fcf7275B3D8',
     esr: '0x0Ea1728EAE108FD3B9340ae91451348E2Cc6b4E4',
   },
   LITVM_LITEFORGE: {

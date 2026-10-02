@@ -10,14 +10,17 @@ config();
 const PRIVATE_KEY = process.env.PRIVATE_KEY || "";
 let BLOCKCHAIN_NETWORK = process.env.BLOCKCHAIN_NETWORK || "Bloxberg_Testnet";
 let NETWORK_RPC = "https://bloxberg.ethernity.cloud";
-let IMAGE_REGISTRY_ADDRESS = "0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31"; // bloxberg testnet
+let IMAGE_REGISTRY_ADDRESS = "0x99A84C624C028bdf0a855A1E9E3f2fcf7275B3D8"; // bloxberg testnet (ECImageRegistryV2)
 let CHAIN_ID = 8995;
 let GAS = 9000000;
 let GAS_PRICE = 1;
 
 function setVars(network = "") {
     if (BLOCKCHAIN_NETWORK.includes("Bloxberg")) {
-        IMAGE_REGISTRY_ADDRESS = "0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31";
+        // The bloxberg testnet reads ECImageRegistryV2; mainnet the original registry.
+        IMAGE_REGISTRY_ADDRESS = BLOCKCHAIN_NETWORK.includes("Testnet")
+            ? "0x99A84C624C028bdf0a855A1E9E3f2fcf7275B3D8"
+            : "0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31";
     } else if (BLOCKCHAIN_NETWORK.includes("Polygon")) {
         if (BLOCKCHAIN_NETWORK.includes("Mainnet")) {
             NETWORK_RPC = "https://polygon-rpc.com";
