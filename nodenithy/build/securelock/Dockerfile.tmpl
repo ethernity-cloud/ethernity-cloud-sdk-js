@@ -1,12 +1,24 @@
-FROM registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/node:16.13.1-alpine3.15-scone5.8-production as release
+# SCONE_NODE (build.mjs passes it) is the nodenithy trustedzone image this
+# securelock is bundled with: node:22-alpine with the SCONE 6.0.7 runtime and
+# CLI (sconecuratedimages/node:node-22-alpine, the base the etny-nodenithy CI
+# builds the trustedzones on), the release the trustedzones, the LAS and the
+# CAS run. Its own enclave is replaced below: /lib/libbinary-fs.so is
+# overwritten and /usr/local/bin/node re-signed.
+ARG SCONE_NODE
 
-RUN apk update
+# The dependencies are plain JavaScript, installed with a stock node of the
+# same major version; no SCONE binary runs at build time.
+FROM node:22-alpine AS deps
 
-RUN cd /
+COPY ./src /etny-securelock/
+WORKDIR /etny-securelock
+RUN npm install
 
-RUN apk add bash
+FROM ${SCONE_NODE} AS release
 
-ENV SCONE_HEAP=256M
+# As in the runtime release stage: the scone CLI below runs on a build host
+# without SGX.
+ENV SCONE_MODE=SIM
 ENV SCONE_LOG=DEBUG
 ENV ENCLAVE_NAME_SECURELOCK=__ENCLAVE_NAME_SECURELOCK__
 # "mainnet" or "testnet": the securelock self-signs from MR_ENCLAVE on a
@@ -25,36 +37,25 @@ ENV VALIDATOR_REGISTRY_ADDRESS=__ETNY_VALIDATOR_REGISTRY_ADDRESS__
 # gates all ESR behaviour on this variable being non-empty.
 __ESR_ENV__
 
-RUN mkdir binary-fs-dir
+RUN mkdir /binary-fs-dir
 
-COPY ./src /etny-securelock/
+COPY --from=deps /etny-securelock /etny-securelock/
 COPY scripts/* /etny-securelock/
-
-WORKDIR /etny-securelock
-RUN pwd
-RUN npm install
-RUN ls
 
 WORKDIR /
 
 RUN ["chmod", "+x", "etny-securelock/binary-fs-build.sh"]
 RUN etny-securelock/binary-fs-build.sh
 
-FROM registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/sconecuratedimages/crosscompilers as build
+FROM registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/sconecuratedimages/crosscompilers:alpine-scone6.0.7 as build
 
 COPY --from=release /binary-fs-dir /.
 
 RUN scone gcc ./binary_fs_blob.s ./libbinary_fs_template.a -shared -o /libbinary-fs.so
 
-#
-FROM registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/node:16.13.1-alpine3.15-scone5.8-production
+FROM ${SCONE_NODE}
 
 COPY --from=build /libbinary-fs.so /lib/libbinary-fs.so
-#
-
-RUN apk update
-
-RUN apk add openssl
 
 RUN openssl genrsa -3 -out /enclave-key.pem 3072
 
@@ -67,6 +68,7 @@ ENV SCONE_HEAP=1024M
 ENV SCONE_STACK=4M
 ENV SCONE_ALLOW_DLOPEN=1
 ENV SCONE_EXTENSIONS_PATH=/lib/libbinary-fs.so
+ENV SCONE_LOG=DEBUG
 
 # Rendered by build.mjs. Signs the EXECUTED binary (/usr/local/bin/node -- the
 # ENTRYPOINT and the run/publish compose command both run /usr/local/bin/node).
@@ -84,6 +86,4 @@ __SIGNED_MRENCLAVE__
 
 RUN rm -rf /enclave-key.pem
 
-#RUN scone cas attest scone-cas.cf 3061b9feb7fa67f3815336a085f629a13f04b0a1667c93b14ff35581dc8271e4 -GCS --only_for_testing-debug --only_for_testing-ignore-signer
-RUN ls /usr/local/bin
 ENTRYPOINT ["/usr/local/bin/node", "/etny-securelock/securelock.js"]

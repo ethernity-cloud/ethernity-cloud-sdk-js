@@ -196,6 +196,33 @@ const ENCLAVE_NAME_SECURELOCK = `${process.env.PROJECT_NAME}-SECURELOCK-V3-${cas
 console.log(`ENCLAVE_NAME_SECURELOCK: ${ENCLAVE_NAME_SECURELOCK}`);
 writeEnv('ENCLAVE_NAME_SECURELOCK', ENCLAVE_NAME_SECURELOCK);
 
+// The trustedzone is not built here: the etny-nodenithy CI builds, measures and
+// registers it on-chain, and publishes that exact image to the ethernity registry
+// under <image_name>/trustedzone:<network>, with image_name and network the keys
+// of etny-nodenithy/v3/networks.yaml (image_name is TRUSTED_ZONE_IMAGE). Bundling
+// anything else would pair the securelock with a trustedzone whose key does not
+// match the on-chain cert, so a failed pull fails the build.
+const trustedZoneNetByBlockchain = {
+  Bloxberg_Mainnet: 'bloxberg',
+  Bloxberg_Testnet: 'bloxberg_testnet',
+  Polygon_Mainnet: 'polygon',
+  Polygon_Amoy_Testnet: 'amoy',
+  IoTeX_Testnet: 'iotex_testnet',
+  Ethereum_Sepolia: 'ethereum_sepolia',
+  LitVM_LiteForge: 'litvm_liteforge',
+  Bloxberg_Testnet_Unsafe: 'bloxberg_testnet_unsafe',
+  LitVM_LiteForge_Unsafe: 'litvm_liteforge_unsafe',
+};
+const trustedZoneNet = trustedZoneNetByBlockchain[process.env.BLOCKCHAIN_NETWORK];
+if (!trustedZoneNet) {
+  console.error(`ERROR: no published trustedzone for BLOCKCHAIN_NETWORK=${process.env.BLOCKCHAIN_NETWORK}`);
+  console.error(`       known networks: ${Object.keys(trustedZoneNetByBlockchain).join(', ')}`);
+  process.exit(1);
+}
+const trustedZoneImage = `registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/${templateName}/trustedzone:${trustedZoneNet}`;
+console.log(`Pulling the published trustedzone: ${trustedZoneImage}`);
+runCommand(`docker pull ${trustedZoneImage}`);
+
 console.log('Building etny-securelock');
 process.chdir('securelock');
 
@@ -275,41 +302,16 @@ fs.writeFileSync('Dockerfile', dockerfileSecureContent);
 
 
 
-runCommand(`docker build --build-arg ENCLAVE_NAME_SECURELOCK=${ENCLAVE_NAME_SECURELOCK} -t etny-securelock:latest .`);
+// The trustedzone image is also the securelock's SCONE node (Dockerfile.tmpl,
+// SCONE_NODE).
+runCommand(`docker build --build-arg SCONE_NODE=${trustedZoneImage} --build-arg ENCLAVE_NAME_SECURELOCK=${ENCLAVE_NAME_SECURELOCK} -t etny-securelock:latest .`);
 runCommand('docker tag etny-securelock localhost:5000/etny-securelock');
 runCommand('docker push localhost:5000/etny-securelock');
-// runCommand('docker save etny-securelock:latest -o etny-securelock.tar');
 process.chdir('..');
 
 console.log(`ENCLAVE_NAME_TRUSTEDZONE: ${ENCLAVE_NAME_TRUSTEDZONE}`);
 writeEnv('ENCLAVE_NAME_TRUSTEDZONE', ENCLAVE_NAME_TRUSTEDZONE);
 
-// The trustedzone is not built here: the etny-nodenithy CI builds, measures and
-// registers it on-chain, and publishes that exact image to the ethernity registry
-// under <image_name>/trustedzone:<network>, with image_name and network the keys
-// of etny-nodenithy/v3/networks.yaml (image_name is TRUSTED_ZONE_IMAGE). Bundling
-// anything else would pair the securelock with a trustedzone whose key does not
-// match the on-chain cert, so a failed pull fails the build.
-const trustedZoneNetByBlockchain = {
-  Bloxberg_Mainnet: 'bloxberg',
-  Bloxberg_Testnet: 'bloxberg_testnet',
-  Polygon_Mainnet: 'polygon',
-  Polygon_Amoy_Testnet: 'amoy',
-  IoTeX_Testnet: 'iotex_testnet',
-  Ethereum_Sepolia: 'ethereum_sepolia',
-  LitVM_LiteForge: 'litvm_liteforge',
-  Bloxberg_Testnet_Unsafe: 'bloxberg_testnet_unsafe',
-  LitVM_LiteForge_Unsafe: 'litvm_liteforge_unsafe',
-};
-const trustedZoneNet = trustedZoneNetByBlockchain[process.env.BLOCKCHAIN_NETWORK];
-if (!trustedZoneNet) {
-  console.error(`ERROR: no published trustedzone for BLOCKCHAIN_NETWORK=${process.env.BLOCKCHAIN_NETWORK}`);
-  console.error(`       known networks: ${Object.keys(trustedZoneNetByBlockchain).join(', ')}`);
-  process.exit(1);
-}
-const trustedZoneImage = `registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/${templateName}/trustedzone:${trustedZoneNet}`;
-console.log(`Pulling the published trustedzone: ${trustedZoneImage}`);
-runCommand(`docker pull ${trustedZoneImage}`);
 runCommand(`docker tag ${trustedZoneImage} localhost:5000/etny-trustedzone`);
 runCommand('docker push localhost:5000/etny-trustedzone');
 
