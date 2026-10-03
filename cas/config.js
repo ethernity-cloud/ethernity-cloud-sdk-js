@@ -16,17 +16,23 @@
 const VALIDATOR_REGISTRY = {
   'etny-pynithy-testnet': '0xa821b36F378F76c793c436F5f9c9CC36c684eBE5',
   'etny-nodenithy-testnet': '0xa821b36F378F76c793c436F5f9c9CC36c684eBE5',
+  'ecld-pynithy-litvm-testnet': '0x2E27677fb67531eb09134fE331C27899f87ADe10',
+  'ecld-nodenithy-litvm-testnet': '0x2E27677fb67531eb09134fE331C27899f87ADe10',
 };
 
 const SESSION_REGISTRY = {
   'etny-pynithy-testnet': '0xcb1F389bF4524d1D61EDcbC24eC1F1F9C3FF4Fa6',
   'etny-nodenithy-testnet': '0xcb1F389bF4524d1D61EDcbC24eC1F1F9C3FF4Fa6',
+  'ecld-pynithy-litvm-testnet': '0x8ad24b3F406A41a0F8D3440021792EB203957F43',
+  'ecld-nodenithy-litvm-testnet': '0x8ad24b3F406A41a0F8D3440021792EB203957F43',
 };
 
 // The chain the registries above live on.
 const CHAIN = {
   'etny-pynithy-testnet': { rpcUrl: 'https://bloxberg.ethernity.cloud', chainId: 8995 },
   'etny-nodenithy-testnet': { rpcUrl: 'https://bloxberg.ethernity.cloud', chainId: 8995 },
+  'ecld-pynithy-litvm-testnet': { rpcUrl: 'https://liteforge.rpc.caldera.xyz/infra-partner-http', chainId: 4441 },
+  'ecld-nodenithy-litvm-testnet': { rpcUrl: 'https://liteforge.rpc.caldera.xyz/infra-partner-http', chainId: 4441 },
 };
 
 // Whether the securelock takes its certificate from a CAS session: mainnet
