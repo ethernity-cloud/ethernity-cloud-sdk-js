@@ -1,6 +1,6 @@
 {
   "name": "@ethernity-cloud/sdk-js",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "description": "A package to run ethernity cloud build scripts",
   "scripts": {
     "ecld-build": "cross-env node ./node_modules/@ethernity-cloud/sdk-js/build.js",
@@ -33,7 +33,7 @@
     "run.js"
   ],
   "dependencies": {
-    "@ethernity-cloud/runner": "^0.5.0",
+    "@ethernity-cloud/runner": "^0.6.0",
     "acorn": "^8.11.0",
     "adm-zip": "^0.5.14",
     "axios": "^1.7.2",

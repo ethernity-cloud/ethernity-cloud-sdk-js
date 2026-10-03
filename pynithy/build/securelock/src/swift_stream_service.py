@@ -1,3 +1,10 @@
+# PEP 563: make annotations lazy strings so builtin-generic subscripts like
+# list[str] (PEP 585, Python 3.9+) don't get evaluated at class-definition time.
+# The enclave base image is Python 3.7, where `list[str]` raises
+# "TypeError: 'type' object is not subscriptable" and kills securelock at import
+# (the enclave then exits before emitting its public key).
+from __future__ import annotations
+
 import os
 
 from minio import Minio
@@ -7,10 +14,23 @@ from minio.error import S3Error
 class SwiftStreamService:
 
     def __init__(self, endpoint: str, access_key: str, secret_key: str):
+        # Bound the HTTP timeouts. In the public-key extraction environment there
+        # is NO etny-swift-stream (MinIO) container, so the first .env fetch would
+        # otherwise block on a TCP connect to a non-existent host indefinitely
+        # (MinIO's default client has effectively unbounded connect/read timeouts),
+        # hanging the enclave after it has already emitted its PUBLIC_CERT. A short
+        # timeout makes that call fail fast so securelock can exit cleanly in
+        # cert-harvest mode. Real task runs reach SwiftStream in well under this.
+        import urllib3
+        http_client = urllib3.PoolManager(
+            timeout=urllib3.Timeout(connect=10.0, read=30.0),
+            retries=urllib3.Retry(total=2, backoff_factor=0.5),
+        )
         self.client = Minio(endpoint=endpoint,
                             access_key=access_key,
                             secret_key=secret_key,
-                            secure=False)
+                            secure=False,
+                            http_client=http_client)
 
     def create_bucket(self, bucket_name: str) -> (bool, str):
         try:

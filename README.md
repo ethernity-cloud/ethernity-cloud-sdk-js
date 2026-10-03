@@ -47,12 +47,47 @@ The sdk has been tested on the following operating systems:
       for the compose and the certificate harvest, takes the trustedzone
       session name from the ImageRegistry (ECImageRegistryV2,
       `0x99A84C62...`), and links the session to the published image. `ecld-build` signs the securelock `--production`.
-      Harvesting the certificate needs SGX. The other testnets have no CAS
-      deployment and self-sign from MR_ENCLAVE as before.
+      Harvesting the certificate needs SGX.
+    - Testnet Unsafe - the unsafe network beside the testnet (see below).
     - Mainnet - to be provided during the following updates
+- LitVM:
+    - LiteForge - CAS-attested the same way, by LitVM's own ethernity-cas
+      validator set (SessionRegistry `0x8ad24b3F...`, ValidatorRegistry
+      `0x2E27677f...`).
+    - LiteForge Unsafe - the unsafe network beside LiteForge (see below).
 - Polyhon:
     - Amoy Testnet - to be provided during the following updates
     - Mainnet - to be provided during the following updates
+
+The remaining testnets (Amoy, IoTeX, Sepolia) have no ethernity-cas
+deployment: their enclaves are debug-signed and sign their own certificates
+from their measurement, and `ecld-publish` registers no CAS session for them.
+
+### The testnets and their unsafe networks
+`Bloxberg Testnet` and `LitVM LiteForge` run your securelock in an enclave
+attested through that chain's ethernity-cas validator set, on nodes whose
+platform the CAS can attest (DCAP). Each has an unsafe network beside it,
+`Bloxberg Testnet Unsafe` (`Bloxberg_Testnet_Unsafe`) and `LitVM LiteForge
+Unsafe` (`LitVM_LiteForge_Unsafe`): the same chain and contracts, for hardware
+SGX platforms the CAS cannot attest (EPID-only, SGX1). No CAS and no LAS: the
+enclaves are debug-signed and sign their own certificates from their
+measurement, so a result proves which image ran but not that an enclave ran
+it. You choose an unsafe network by name in `ecld-init`, and the runner runs an
+`-unsafe` trustedzone on nothing else, so a dApp that runs without a CAS
+always says so in the network it names. A dApp publishes one securelock per
+network from two project directories with the same project name: the unsafe
+one is registered as `<project>-unsafe` and runs on the
+`etny-<nodenithy|pynithy>-testnet-unsafe`
+(`ecld-<nodenithy|pynithy>-litvm-testnet-unsafe`) trustedzone. Both dApp types
+build for both networks. Mainnet has no unsafe network.
+
+### Pynithy dApps
+The Pynithy securelock is built exactly as `ethernity-cloud-sdk-py` builds it
+(`pynithy/build/securelock` is its copy): a SCONE 6.0.7 Python 3.14 enclave
+your backend is frozen into. `src/serverless/requirements.txt` lists the
+Python packages your backend imports, and `src/serverless/Dockerfile.serverless`
+adds system packages to the securelock base image. `ECLD_MEMORY_TO_ALLOCATE`
+sets the enclave heap (default `1024M`).
 
 ### Scripts
 
@@ -97,6 +132,7 @@ The sdk has been tested on the following operating systems:
   npx ecld-run --file payload.js
   npx ecld-run --input data.json 'processData(___etny_data_set___)'
   npx ecld-run --json 'esrIncrement()'
+  npx ecld-run --unsafe 'hello("World")'
   ```
   This is the network-side sibling of `ecld-test`: instead of executing locally
   it drives the runner end to end — encrypt → IPFS → on-chain request → wait for
@@ -106,7 +142,9 @@ The sdk has been tested on the following operating systems:
   `--network`/`--securelock`/`--trustedzone`; the signing key is `PRIVATE_KEY`
   (or `ECLD_PRIVATE_KEY`) — a funded `0x` key that pays for the order. Resources
   are tunable with `--task-price`/`--cpu`/`--memory`/`--storage`/`--bandwidth`/`--duration`/`--validators`.
-  Exit code 0 on a `SUCCESS` task result, 1 otherwise.
+  Exit code 0 on a `SUCCESS` task result, 1 otherwise. `--unsafe` runs the
+  network's unsafe variant; on an unsafe network the securelock and
+  trustedzone default to their `-unsafe` names.
 
 - **Inspect (read-only)**: To read enclave and on-chain diagnostics — network,
   trustedzone/securelock registration, and ESR state — without spending gas, run:

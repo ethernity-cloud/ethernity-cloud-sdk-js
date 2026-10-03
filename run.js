@@ -15,8 +15,10 @@
  * ecld-publish), matching how ethernity_task drives a run:
  *
  *   BLOCKCHAIN_NETWORK   e.g. "Bloxberg_Testnet" -> the network token address
- *   PROJECT_NAME         the securelock enclave to run
- *   TRUSTED_ZONE_IMAGE   the trustedzone enclave
+ *   PROJECT_NAME         the securelock enclave to run (<PROJECT_NAME>-unsafe
+ *                        on an -unsafe network)
+ *   TRUSTED_ZONE_IMAGE   the trustedzone enclave (its -unsafe variant on an
+ *                        -unsafe network)
  *   PRIVATE_KEY          a funded 0x key — it pays for the order
  *
  * Usage, from the project root:
@@ -25,6 +27,7 @@
  *   npx ecld-run --file payload.js
  *   npx ecld-run --input data.json 'processData(___etny_data_set___)'
  *   npx ecld-run --network BLOXBERG_TESTNET --task-price 3 'esrIncrement()'
+ *   npx ecld-run --unsafe 'hello("World")'    # the network's -unsafe variant
  *   npx ecld-run --json 'hello("World")'      # machine-readable result
  *
  * The runner is ESM; this CJS entry loads it with dynamic import().
@@ -36,27 +39,47 @@
 
 const fs = require('fs');
 try { require('dotenv').config(); } catch (e) { /* dotenv optional */ }
+const casConfig = require('./cas/config.js');
 
 const DEFAULT_IPFS = 'https://ipfs.ethernity.cloud/api/v0';
 
 /* Map a BLOCKCHAIN_NETWORK token (as ecld-init writes it, spaces -> underscores)
- * to the runner's network token ADDRESS. Built from the runner's own ECAddress
- * so it can't drift. Accepts a few spellings per network. */
-function networkAddress(ECAddress, raw) {
+ * to the runner's network: its token ADDRESS, the chain id of a testnet whose
+ * token address other testnets share, and for an -unsafe network the
+ * (network, type) the runner is set to, which runs only -unsafe trustedzones.
+ * Built from the runner's own enums so it can't drift. Accepts a few spellings
+ * per network. */
+function networkFor({ ECAddress, ECNetworkByChainId }, raw) {
   const key = String(raw || '').trim().toUpperCase().replace(/\s+/g, '_');
+  const bloxbergTestnet = { address: ECAddress.BLOXBERG.TESTNET_ADDRESS };
+  const amoy = { address: ECAddress.POLYGON.TESTNET_ADDRESS };
+  const sepolia = { address: ECAddress.SEPOLIA.TESTNET_ADDRESS, chainId: ECNetworkByChainId.SEPOLIA.TESTNET };
+  const litvm = { address: ECAddress.LITVM.TESTNET_ADDRESS, chainId: ECNetworkByChainId.LITVM.TESTNET };
   const table = {
-    BLOXBERG_TESTNET: ECAddress.BLOXBERG.TESTNET_ADDRESS,
-    BLOXBERG_MAINNET: ECAddress.BLOXBERG.MAINNET_ADDRESS,
-    POLYGON_MAINNET: ECAddress.POLYGON.MAINNET_ADDRESS,
-    POLYGON_AMOY: ECAddress.POLYGON.TESTNET_ADDRESS,
-    POLYGON_AMOY_TESTNET: ECAddress.POLYGON.TESTNET_ADDRESS,
-    IOTEX_TESTNET: ECAddress.IOTEX && ECAddress.IOTEX.TESTNET_ADDRESS,
-    ETHEREUM_SEPOLIA: ECAddress.SEPOLIA && ECAddress.SEPOLIA.TESTNET_ADDRESS,
-    SEPOLIA: ECAddress.SEPOLIA && ECAddress.SEPOLIA.TESTNET_ADDRESS,
-    LITVM_LITEFORGE: ECAddress.LITVM && ECAddress.LITVM.TESTNET_ADDRESS,
-    LITVM: ECAddress.LITVM && ECAddress.LITVM.TESTNET_ADDRESS,
+    BLOXBERG_TESTNET: bloxbergTestnet,
+    BLOXBERG_TESTNET_UNSAFE: { ...bloxbergTestnet, unsafe: ['BLOXBERG', 'TESTNET_UNSAFE'] },
+    BLOXBERG_MAINNET: { address: ECAddress.BLOXBERG.MAINNET_ADDRESS },
+    POLYGON_MAINNET: { address: ECAddress.POLYGON.MAINNET_ADDRESS },
+    POLYGON_AMOY: amoy,
+    POLYGON_AMOY_TESTNET: amoy,
+    IOTEX_TESTNET: { address: ECAddress.IOTEX.TESTNET_ADDRESS, chainId: ECNetworkByChainId.IOTEX.TESTNET },
+    ETHEREUM_SEPOLIA: sepolia,
+    SEPOLIA: sepolia,
+    LITVM_LITEFORGE: litvm,
+    LITVM: litvm,
+    LITVM_LITEFORGE_UNSAFE: { ...litvm, unsafe: ['LITVM', 'TESTNET_UNSAFE'] },
   };
-  return { key, address: table[key] || null, known: Object.keys(table) };
+  return { key, network: table[key] || null, known: Object.keys(table) };
+}
+
+/* The -unsafe network a network token names, or whose sibling it names; null
+ * when the network has no -unsafe variant. */
+function unsafeVariant(raw) {
+  const key = String(raw || '').trim().replace(/\s+/g, '_');
+  if (casConfig.isUnsafeNetwork(key)) return key;
+  const variant = Object.keys(casConfig.UNSAFE_NETWORKS)
+    .find((name) => casConfig.UNSAFE_NETWORKS[name].toUpperCase() === key.toUpperCase());
+  return variant || null;
 }
 
 function parseArgs(argv) {
@@ -68,6 +91,7 @@ function parseArgs(argv) {
     else if (a === '--input' || a === '-i') opts.inputFile = argv[++i];
     else if (a === '--input-text') opts.inputText = argv[++i];
     else if (a === '--network') opts.network = argv[++i];
+    else if (a === '--unsafe') opts.unsafe = true;
     else if (a === '--securelock') opts.securelock = argv[++i];
     else if (a === '--trustedzone') opts.trustedzone = argv[++i];
     else if (a === '--node') opts.node = argv[++i];
@@ -94,7 +118,10 @@ usage: ecld-run 'hello("World")' | ecld-run --file payload.js | ecld-run --input
 
 payload:   a code string, or --file <path>; input via --input <file> / --input-text <str>
 network:   --network BLOXBERG_TESTNET (default: BLOCKCHAIN_NETWORK from .env)
-enclaves:  --securelock <name> (default PROJECT_NAME), --trustedzone <name> (default TRUSTED_ZONE_IMAGE)
+           --unsafe: the network's -unsafe variant, which runs without a CAS
+           (BLOXBERG_TESTNET_UNSAFE, LITVM_LITEFORGE_UNSAFE)
+enclaves:  --securelock <name> (default PROJECT_NAME), --trustedzone <name> (default TRUSTED_ZONE_IMAGE);
+           on an -unsafe network the default is each one's -unsafe variant
 key:       PRIVATE_KEY (a funded 0x key) from .env / env, or ECLD_PRIVATE_KEY
 resources: --task-price 3 --cpu 1 --memory 1 --storage 10 --bandwidth 1 --duration 1 --validators 1
 other:     --node <addr>  --ipfs <url>  --timeout <sec>  --json`;
@@ -121,27 +148,37 @@ async function main() {
   // ecld-run mirrors ecld-test: input is delivered via the payload call itself.
 
   // ---- runner (ESM) ----
-  let EthernityCloudRunner, ECStatus, ECEvent, ECAddress, ECOrderTaskStatus;
+  let EthernityCloudRunner, ECStatus, ECEvent, ECOrderTaskStatus, enums;
   try {
     const runnerMod = await import('@ethernity-cloud/runner');
     EthernityCloudRunner = runnerMod.default || runnerMod.EthernityCloudRunner;
-    const enums = await import('@ethernity-cloud/runner/enums.js');
-    ({ ECStatus, ECEvent, ECAddress, ECOrderTaskStatus } = enums);
+    enums = await import('@ethernity-cloud/runner/enums.js');
+    ({ ECStatus, ECEvent, ECOrderTaskStatus } = enums);
   } catch (e) {
     console.error('ecld-run: the runner package is not installed or is too old '
-      + '(need @ethernity-cloud/runner >= 0.4.4): ' + e.message);
+      + '(need @ethernity-cloud/runner >= 0.6.0): ' + e.message);
     process.exit(1);
   }
 
   // ---- network / enclaves / key ----
-  const rawNetwork = opts.network || process.env.BLOCKCHAIN_NETWORK || 'BLOXBERG_TESTNET';
-  const { key: netKey, address, known } = networkAddress(ECAddress, rawNetwork);
-  if (!address) {
+  let rawNetwork = opts.network || process.env.BLOCKCHAIN_NETWORK || 'BLOXBERG_TESTNET';
+  if (opts.unsafe) {
+    const variant = unsafeVariant(rawNetwork);
+    if (!variant) {
+      console.error(`ecld-run: ${rawNetwork} has no -unsafe variant. -unsafe networks: `
+        + Object.keys(casConfig.UNSAFE_NETWORKS).join(', '));
+      process.exit(1);
+    }
+    rawNetwork = variant;
+  }
+  const { key: netKey, network, known } = networkFor(enums, rawNetwork);
+  if (!network) {
     console.error(`ecld-run: unknown network '${rawNetwork}'. Known: ${known.join(', ')}`);
     process.exit(1);
   }
-  const securelock = opts.securelock || process.env.PROJECT_NAME;
-  const trustedzone = opts.trustedzone || process.env.TRUSTED_ZONE_IMAGE;  // may be undefined -> run() default
+  const securelock = opts.securelock || casConfig.nameOnNetwork(process.env.PROJECT_NAME, rawNetwork);
+  // May be undefined -> run() default.
+  const trustedzone = opts.trustedzone || casConfig.nameOnNetwork(process.env.TRUSTED_ZONE_IMAGE, rawNetwork);
   if (!securelock) {
     console.error('ecld-run: no securelock enclave: set PROJECT_NAME in .env '
       + '(run ecld-init/ecld-publish) or pass --securelock.');
@@ -156,7 +193,10 @@ async function main() {
   }
   if (!privateKey.startsWith('0x')) privateKey = '0x' + privateKey;
 
-  console.log(`network    : ${netKey} (${address})`);
+  console.log(`network    : ${netKey} (${network.address})`);
+  if (network.unsafe) {
+    console.log('             UNSAFE: no CAS; the enclaves are debug-signed and sign their own certificates');
+  }
   console.log(`securelock : ${securelock}`);
   console.log(`trustedzone: ${trustedzone || '(runner default)'}`);
   console.log(`payload    : ${JSON.stringify(code)}`);
@@ -165,7 +205,8 @@ async function main() {
   // ---- drive the runner ----
   let runner;
   try {
-    runner = new EthernityCloudRunner(address, { privateKey });
+    runner = new EthernityCloudRunner(network.address, { privateKey }, network.chainId);
+    if (network.unsafe) await runner.setNetwork(...network.unsafe);
   } catch (e) {
     console.error('ecld-run: could not initialise the runner: ' + e.message);
     process.exit(1);

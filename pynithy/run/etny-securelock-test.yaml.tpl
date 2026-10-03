@@ -20,7 +20,10 @@ services:
      command: /usr/local/bin/python /etny-securelock/securelock.py
      pwd: /
      environment:
-        GREETING: hello ETNY!!!!
+        # SCONE enclaves start with no HOME; the Python runtime and several
+        # libraries call os.path.expanduser('~') at startup and abort with
+        # "$HOME is not defined" before the enclave emits its public key.
+        HOME: /tmp
 
 images:
    - name: application_image

@@ -1,0 +1,8 @@
+FROM etny-securelock-base
+
+# System packages your backend needs, added to the securelock base image by
+# ecld-build.
+#
+# Example:
+# RUN apk update
+# RUN apk add gcc g++ git openblas-dev

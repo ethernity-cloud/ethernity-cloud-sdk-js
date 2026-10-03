@@ -1,3 +1,20 @@
+"""
+Module: models.py
+
+This module defines data models and factories for handling orders and metadata in a blockchain-based task processing system. It includes classes for orders, base metadata, versioned payload and input metadata (V0 and V3), and factories to create metadata objects based on version strings. Additionally, it provides a class for DO (Data Owner?) request metadata, parsing and exposing properties like image hash, public key, and node address. The models support versioning, with V3 including checksums (potentially signed) for integrity verification.
+
+Key Features:
+- Order model: Represents blockchain orders with attributes like owner, processor, requests, and status.
+- Metadata base and subclasses: Abstract base for metadata with version, IPFS hash, and optional checksum; V0 is hash-only, V3 includes checksum.
+- Factories: Dynamically create versioned metadata objects from strings (e.g., "v3:hash:checksum").
+- DOReqMetadata: Parses request metadata into accessible properties, integrating with factories for payload/input objects.
+- No external dependencies beyond standard Python.
+
+Usage Context: Used in trustedzone.py to fetch and parse order/request metadata from smart contracts, enabling validation and processing in secure environments like Ethernity/Etny.
+
+Potential Security Notes: Checksums in V3 can be signed (0x-prefixed), but validation logic is external (e.g., in trustedzone.py). Assumes metadata strings are trusted from blockchain; malformed inputs could raise ValueError.
+"""
+
 class Order:
     def __init__(self, req, order_id):
         self.id = order_id
@@ -24,13 +41,22 @@ class MetadataBase:
     def checksum(self):
         raise NotImplementedError("Subclass must implement this method")
 
+    @property
+    def has_checksum(self):
+        """True when this metadata carries a real checksum to validate.
+
+        Empty input carries no checksum (checksum is None), so callers can skip
+        validation without inspecting raw metadata strings themselves.
+        """
+        return self.checksum is not None
+
 
 class PayloadFactory:
     @staticmethod
     def create_payload_metadata(metadata):
         if ':' in metadata:
-            if metadata.startswith('v3'):
-                return PayloadMetadatav3(metadata)
+            if metadata.startswith('v3') or metadata.startswith('v4'):
+                return PayloadMetadata(metadata)
             else:
                 raise ValueError("Invalid payload metadata type")
         else:
@@ -77,12 +103,17 @@ class PayloadMetadataV0(MetadataBase):
         return None
 
 
-class PayloadMetadatav3(MetadataBase):
+class PayloadMetadata(MetadataBase):
 
     def __init__(self, metadata):
-        super().__init__(metadata, 'v3')
-        self._checksum = metadata.split(':')[2]
+        super().__init__(metadata, metadata.split(':')[0])
+        # An absent checksum (empty third field) is normalized to None so the
+        # rest of the code can rely on `checksum is None` / `has_checksum`
+        # instead of special-casing empty strings.
+        checksum = metadata.split(':')[2].strip()
+        self._checksum = checksum or None
         self._ipfs_hash = metadata.split(':')[1]
+
 
     @property
     def ipfs_hash(self):
@@ -97,7 +128,10 @@ class InputMetadatav3(MetadataBase):
 
     def __init__(self, metadata):
         super().__init__(metadata, 'v3')
-        self._checksum = metadata.split(':')[2]
+        # Empty input carries an empty checksum field; normalize it to None so
+        # `has_checksum` is False and validation is skipped (nothing to check).
+        checksum = metadata.split(':')[2].strip()
+        self._checksum = checksum or None
         self._ipfs_hash = metadata.split(':')[1]
 
     @property
@@ -106,7 +140,7 @@ class InputMetadatav3(MetadataBase):
 
     @property
     def checksum(self):
-        return self._checksum if self._checksum != '0' else self._checksum
+        return self._checksum
 
 
 class DOReqMetadata:
@@ -141,6 +175,10 @@ class DOReqMetadata:
         return self.image_metadata.split(':')[1]
 
     @property
+    def trustedzone_image_name(self):
+        return self.image_metadata.split(':')[2]
+
+    @property
     def payload_metadata(self):
         return self._metadata2
 
@@ -160,17 +198,3 @@ class DOReqMetadata:
     def node_address(self):
         return self._metadata4
 
-
-# add_do_req(..., 'v3:image_:....:...:', 'v3:payload_hash:checksum', 'v3::0', 'node_address')
-'''
-input + payload
-v0: 'ipfs_hash'
-v3: 'v3:file_ipfs_hash:file_checksum'
-
-image
-v0: 'ipfs_hash:image_name'
-v3: 'v3:image_ipfs_hash:image_name:docker_Compose_ipfs_hash:client_challenge_ipfs_hash:client_public_cert'
-'''
-if __name__ == '__main__':
-    obj = PayloadFactory.create_payload_metadata('v3:some_img_hash:fucker')
-    obj2 = PayloadFactory.create_payload_metadata('must not!')

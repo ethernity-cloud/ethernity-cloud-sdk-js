@@ -1,27 +1,35 @@
-# Publish-time compose: used by ecld-publish to compute the MRENCLAVE
-# (SCONE_HASH=1) and extract the enclave certificate LOCALLY. It intentionally
-# does NOT mount /dev/sgx_enclave so it runs on a developer machine WITHOUT SGX
-# (SCONE_HASH is a build measurement; enclaves reach SGX via LAS over TCP). When
-# no local SGX is present, cert extraction falls back to the remote
-# publickey.ethernity.cloud service. The on-node runtime uses
-# docker-compose-final.yml, which targets real SGX hardware.
+# Publish-time compose: used by ecld-publish to compute the securelock
+# MRENCLAVE (SCONE_HASH=1) and extract its certificate. The node runs
+# docker-compose-final.yml. The services are the ones ethernity-cloud-sdk-py
+# runs the same securelock with.
+#
+# Tagged lines are kept, untagged, only where they apply (cas/config.js
+# renderCompose): __CAS_ONLY__ serves CAS attestation (mainnet, or a testnet
+# with a SessionRegistry), __NO_CAS_ONLY__ a securelock that self-signs, and
+# __SAFE_ONLY__ is the LAS, which every network but an -unsafe one runs.
 version: '3.2'
 services:
-    las:
-        container_name: las
-        privileged: true
-        image: localhost:5000/etny-las
-        # -a 0.0.0.0: without it the LAS binds dual-stack (:::18766) and cannot
-        # allocate the socket on a host booted with ipv6.disable=1, so it
-        # crash-loops and every task on that node times out with no
-        # attestation. The enclaves reach it over IPv4 either way.
-        command: "bash -c '/las_entrypoint.sh && /usr/local/bin/las -a 0.0.0.0 | tee /var/log/las.log'"
-        restart: unless-stopped
-        ports:
-          - target: 18766
-            published: 18766
-            protocol: tcp
-            mode: host
+    las:  # __SAFE_ONLY__
+        container_name: las  # __SAFE_ONLY__
+        privileged: true  # __SAFE_ONLY__
+        image: localhost:5000/etny-las  # __SAFE_ONLY__
+        entrypoint: "/las_entrypoint.sh"  # __SAFE_ONLY__
+        # -a 0.0.0.0: without it the LAS binds dual-stack (:::18766) and cannot  # __SAFE_ONLY__
+        # allocate the socket on a host booted with ipv6.disable=1, so it  # __SAFE_ONLY__
+        # crash-loops and every task on that node times out with no  # __SAFE_ONLY__
+        # attestation. The enclaves reach it over IPv4 either way.  # __SAFE_ONLY__
+        command: "bash -c '/las_entrypoint.sh && /usr/local/bin/las -a 0.0.0.0 | tee /var/log/las.log'"  # __SAFE_ONLY__
+        restart: unless-stopped  # __SAFE_ONLY__
+        ports:  # __SAFE_ONLY__
+          - target: 18766  # __SAFE_ONLY__
+            published: 18766  # __SAFE_ONLY__
+            protocol: tcp  # __SAFE_ONLY__
+            mode: host  # __SAFE_ONLY__
+        healthcheck:  # __SAFE_ONLY__
+          test: ["CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/18766"]  # __SAFE_ONLY__
+          interval: 5s  # __SAFE_ONLY__
+          timeout: 3s  # __SAFE_ONLY__
+          retries: 5  # __SAFE_ONLY__
 
     etny-securelock:
         container_name: etny-securelock
@@ -30,34 +38,40 @@ services:
         entrypoint: ""
         command: [ "/usr/local/bin/python", "/etny-securelock/securelock.py" ]
         environment:
-          - SCONE_CAS_ADDR=scone-cas.cf
-          - SCONE_LAS_ADDR=las
-          - SCONE_CONFIG_ID=__ENCLAVE_NAME_SECURELOCK__/application
-          - SCONE_HEAP=1024M
-          # Must match the --stack the securelock binary was signed with (build.mjs),
-          # otherwise SCONE recomputes MRENCLAVE at load and re-signs as debug.
+          - SCONE_CAS_ADDR=scone-cas.cf  # __CAS_ONLY__
+          - SCONE_LAS_ADDR=las  # __CAS_ONLY__
+          - SCONE_CONFIG_ID=__ENCLAVE_NAME_SECURELOCK__/application  # __CAS_ONLY__
+          # SCONE_HEAP and SCONE_STACK are part of MRENCLAVE: the values the
+          # securelock was signed with (build.mjs, MEMORY_TO_ALLOCATE).
+          - SCONE_HEAP=__MEMORY_TO_ALLOCATE__
           - SCONE_STACK=4M
-          - SCONE_LOG=INFO
+          - SCONE_LOG=FATAL
           - SCONE_ALLOW_DLOPEN=1
           - SCONE_EXTENSIONS_PATH=/lib/libbinary-fs.so
-        restart: on-failure:5
-        depends_on:
-          - las
+          - SCONE_ALPINE=1  # __NO_CAS_ONLY__
+          - SCONE_DEBUG=0  # __NO_CAS_ONLY__
+        restart: on-failure
+        depends_on:  # __SAFE_ONLY__
+          - las  # __SAFE_ONLY__
 
     etny-trustedzone:
-      container_name: etny-trustedzone
-      privileged: true
-      image: localhost:5000/etny-trustedzone
-      entrypoint: ""
-      command: [ "/usr/local/bin/python", "/etny-trustedzone/trustedzone.py" ]
-      environment:
-        - SCONE_CAS_ADDR=scone-cas.cf
-        - SCONE_LAS_ADDR=las
-        - SCONE_CONFIG_ID=__ENCLAVE_NAME_TRUSTEDZONE__/application
-        - SCONE_HEAP=256M
-        - SCONE_LOG=DEBUG
-        - SCONE_ALLOW_DLOPEN=1
-        - SCONE_EXTENSIONS_PATH=/lib/libbinary-fs.so
-      restart: on-failure:5
-      depends_on:
-        - las
+        container_name: etny-trustedzone
+        privileged: true
+        image: localhost:5000/etny-trustedzone
+        entrypoint: ""
+        command: [ "/usr/local/bin/python", "/etny-trustedzone/trustedzone.py" ]
+        environment:
+          - SCONE_CAS_ADDR=scone-cas.cf  # __CAS_ONLY__
+          - SCONE_LAS_ADDR=las  # __CAS_ONLY__
+          - SCONE_CONFIG_ID=__ENCLAVE_NAME_TRUSTEDZONE__/application  # __CAS_ONLY__
+          # The heap the trustedzone was measured and registered with
+          # (etny-pynithy v3/run/docker-compose.yml).
+          - SCONE_HEAP=256M
+          - SCONE_LOG=FATAL
+          - SCONE_ALLOW_DLOPEN=1
+          - SCONE_EXTENSIONS_PATH=/lib/libbinary-fs.so
+          - SCONE_ALPINE=1  # __NO_CAS_ONLY__
+          - SCONE_DEBUG=0  # __NO_CAS_ONLY__
+        restart: on-failure
+        depends_on:  # __SAFE_ONLY__
+          - las  # __SAFE_ONLY__

@@ -50,7 +50,12 @@ export const ECRunner = {
   'ecld-nodenithy-ethereum-sepolia': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://ethereum-sepolia-rpc.publicnode.com', 11155111],
   // --- litvm liteforge testnet (shares sepolia contracts; distinct chain/RPC) ---
   'ecld-pynithy-litvm-testnet': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441],
-  'ecld-nodenithy-litvm-testnet': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441]
+  'ecld-nodenithy-litvm-testnet': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441],
+  // --- the -unsafe networks: the contracts of the network each is named after ---
+  'etny-pynithy-testnet-unsafe': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c', '0x99A84C624C028bdf0a855A1E9E3f2fcf7275B3D8', 'https://bloxberg.ethernity.cloud', 8995],
+  'etny-nodenithy-testnet-unsafe': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c', '0x99A84C624C028bdf0a855A1E9E3f2fcf7275B3D8', 'https://bloxberg.ethernity.cloud', 8995],
+  'ecld-pynithy-litvm-testnet-unsafe': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441],
+  'ecld-nodenithy-litvm-testnet-unsafe': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441]
 };
 
 // ethernity-cas ValidatorRegistry per template, baked into the enclave so it
@@ -63,6 +68,19 @@ const require = createRequire(import.meta.url);
 const casConfig = require('../cas/config.js');
 export const VALIDATOR_REGISTRY = casConfig.VALIDATOR_REGISTRY;
 
+// An -unsafe network runs an -unsafe trustedzone and nothing else, and an
+// -unsafe trustedzone runs on no other network: the runner and the node refuse
+// either mismatch, so the build does too.
+const unsafe = casConfig.isUnsafeNetwork(process.env.BLOCKCHAIN_NETWORK);
+if (unsafe !== String(process.env.TRUSTED_ZONE_IMAGE || '').endsWith('-unsafe')) {
+  console.error(`ERROR: TRUSTED_ZONE_IMAGE=${process.env.TRUSTED_ZONE_IMAGE} does not run on BLOCKCHAIN_NETWORK=${process.env.BLOCKCHAIN_NETWORK}.`);
+  console.error(unsafe
+    ? '       An -unsafe network runs only a trustedzone whose name ends in -unsafe.'
+    : '       A trustedzone whose name ends in -unsafe runs only on an -unsafe network.');
+  console.error('       Run ecld-init to choose the network again.');
+  process.exit(1);
+}
+
 const runCommand = (command, canPass = false) => {
   if (shell.exec(command).code !== 0 && !canPass) {
     console.error(`Error executing command: ${command}`);
@@ -70,25 +88,22 @@ const runCommand = (command, canPass = false) => {
   }
 };
 
+// Removes the containers this build and publish create, matched by exact name:
+// `--filter name=` matches a substring, so name=las would also match the LAS of
+// a CAS validator set on the same host.
+const removeContainer = (name) => {
+  const ids = shell.exec(`docker ps -a -q --filter "name=^/${name}$"`, { silent: true }).stdout.trim();
+  if (ids) {
+    runCommand(`docker rm -f ${ids.split('\n').join(' ')}`);
+  }
+};
+
 // Downloading dependencies
 shell.rm('-rf', './registry');
 const currentDir = process.cwd();
-// console.log(`current_dir: ${currentDir}`);
 const buildDir = path.join(currentDir, 'node_modules/@ethernity-cloud/sdk-js/nodenithy/build');
-// console.log(`build_dir: ${buildDir}`);
 
-const dockerPS = shell.exec('docker ps --filter name=registry -q', { silent: true }).stdout.trim();
-if (dockerPS) {
-  runCommand(`docker stop ${dockerPS.split('\n').join(' ')}`);
-}
-const dockeri = shell.exec('docker ps --filter name=las -q', { silent: true }).stdout.trim();
-if (dockeri) {
-  runCommand(`docker stop ${dockeri.split('\n').join(' ')}`);
-}
-const dockerRm = shell.exec('docker ps --filter name=registry -q', { silent: true }).stdout.trim();
-if (dockerRm) {
-  runCommand(`docker rm ${dockerRm.split('\n').join(' ')} -f`);
-}
+['registry', 'las', 'etny-securelock', 'etny-trustedzone', 'etny-swift-stream'].forEach(removeContainer);
 const dockerImg = shell.exec('docker images --filter reference="*etny*" -q', { silent: true }).stdout.trim();
 if (dockerImg) {
   runCommand(`docker rmi ${dockerImg.split('\n').join(' ')} -f`);
@@ -97,7 +112,6 @@ const dockerImgReg = shell.exec('docker images --filter reference="*registry*" -
 if (dockerImgReg) {
   runCommand(`docker rmi ${dockerImgReg.split('\n').join(' ')} -f`);
 }
-runCommand(`docker rm registry -f`);
 
 
 
@@ -168,7 +182,7 @@ process.chdir(buildDir);
 
 let templateName = process.env.TRUSTED_ZONE_IMAGE || 'etny-nodenithy-testnet';
 
-const isMainnet = !templateName.includes('testnet');
+const isMainnet = casConfig.isMainnetNetwork(process.env.BLOCKCHAIN_NETWORK);
 
 const ENCLAVE_NAME_TRUSTEDZONE = templateName;
 
@@ -178,7 +192,7 @@ runCommand('docker run -d --restart=always -p 5000:5000 --name registry registry
 
 // const CI_COMMIT_BRANCH = process.env.PROJECT_NAME;
 // aleXPRoj-securelock-v3-testnet-0.1.0...
-const ENCLAVE_NAME_SECURELOCK = `${process.env.PROJECT_NAME}-SECURELOCK-V3-${process.env.BLOCKCHAIN_NETWORK.split('_')[1].toLowerCase()}-${VERSION}`.replace(/\//g, '_').replace(/-/g, '_');
+const ENCLAVE_NAME_SECURELOCK = `${process.env.PROJECT_NAME}-SECURELOCK-V3-${casConfig.sessionTag(process.env.BLOCKCHAIN_NETWORK)}-${VERSION}`.replace(/\//g, '_').replace(/-/g, '_');
 console.log(`ENCLAVE_NAME_SECURELOCK: ${ENCLAVE_NAME_SECURELOCK}`);
 writeEnv('ENCLAVE_NAME_SECURELOCK', ENCLAVE_NAME_SECURELOCK);
 
@@ -217,7 +231,7 @@ const esrEnvBlock = ESR_ENABLED ? `ENV ESR_CONTRACT_ADDRESS=${ESR_CONTRACT_ADDRE
 
 // runCommand(`cat Dockerfile.tmpl | sed s/"__ENCLAVE_NAME_SECURELOCK__"/"${ENCLAVE_NAME_SECURELOCK}"/g > Dockerfile`);
 const dockerfileSecureTemplate = fs.readFileSync('Dockerfile.tmpl', 'utf8');
-let dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]).replace(/__TRUSTED_ZONE_IMAGE__/g, templateName).replace(/__ETNY_VALIDATOR_REGISTRY_ADDRESS__/g, VALIDATOR_REGISTRY[templateName] || '').replace(/^__ESR_ENV__\n/m, esrEnvBlock ? `${esrEnvBlock}\n` : '');
+let dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__NETWORK_TYPE__/g, isMainnet ? 'mainnet' : 'testnet').replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]).replace(/__ETNY_VALIDATOR_REGISTRY_ADDRESS__/g, VALIDATOR_REGISTRY[templateName] || '').replace(/^__ESR_ENV__\n/m, esrEnvBlock ? `${esrEnvBlock}\n` : '');
 
 // Amount of enclave heap to allocate (SCONE_HEAP). Kept in sync with the
 // run/docker-compose securelock service; overridable via ECLD_MEMORY_TO_ALLOCATE.
@@ -247,23 +261,14 @@ const signedMrenclaveStep =
   '      | sed -E \'s/.*MRENCLAVE:[[:space:]]*//I\' | tr -d \'[:space:]\' > /signed_mrenclave.txt && \\\n' +
   '    echo "SIGNED_MRENCLAVE=$(cat /signed_mrenclave.txt)"';
 
-let imagesTag = process.env.BLOCKCHAIN_NETWORK.toLowerCase();
-
 // A CAS-provisioned securelock (mainnet, or a testnet with a SessionRegistry)
 // is signed --production: the CAS session admits production enclaves only,
-// and a debug-signed one is refused at attestation.
-if (casConfig.casProvisioned(templateName, isMainnet)) {
-  dockerfileSecureContent = dockerfileSecureContent
-    .replace('__SCONE_SIGN__', `RUN scone-signer sign ${signFlags} --production /usr/local/bin/node`)
-    .replace('__SIGNED_MRENCLAVE__', signedMrenclaveStep);
-  if (isMainnet) imagesTag = process.env.BLOCKCHAIN_NETWORK.split("_")[0].toLowerCase();
-} else {
-  // Testnet: non-CAS self-sign path -- no --production sign and no signed
-  // MRENCLAVE baking (the enclave self-signs from MR_ENCLAVE at runtime).
-  dockerfileSecureContent = dockerfileSecureContent
-    .replace('__SCONE_SIGN__', '# testnet: non-CAS self-sign (no --production sign at build time)')
-    .replace('__SIGNED_MRENCLAVE__', '# testnet: no signed MRENCLAVE (self-signed from MR_ENCLAVE at runtime)');
-}
+// and a debug-signed one is refused at attestation. A self-signing testnet
+// securelock is signed debug with the same explicit params.
+const cas = casConfig.casProvisioned(templateName, isMainnet);
+dockerfileSecureContent = dockerfileSecureContent
+  .replace('__SCONE_SIGN__', `RUN scone-signer sign ${signFlags}${cas ? ' --production' : ''} /usr/local/bin/node`)
+  .replace('__SIGNED_MRENCLAVE__', signedMrenclaveStep);
 
 fs.writeFileSync('Dockerfile', dockerfileSecureContent);
 
@@ -293,6 +298,8 @@ const trustedZoneNetByBlockchain = {
   IoTeX_Testnet: 'iotex_testnet',
   Ethereum_Sepolia: 'ethereum_sepolia',
   LitVM_LiteForge: 'litvm_liteforge',
+  Bloxberg_Testnet_Unsafe: 'bloxberg_testnet_unsafe',
+  LitVM_LiteForge_Unsafe: 'litvm_liteforge_unsafe',
 };
 const trustedZoneNet = trustedZoneNetByBlockchain[process.env.BLOCKCHAIN_NETWORK];
 if (!trustedZoneNet) {
@@ -307,14 +314,17 @@ runCommand(`docker tag ${trustedZoneImage} localhost:5000/etny-trustedzone`);
 runCommand('docker push localhost:5000/etny-trustedzone');
 
 
-console.log('Building etny-las');
-process.chdir('las');
-// runCommand('docker build -t etny-las .');
-// runCommand('docker tag etny-las localhost:5000/etny-las');
-// runCommand('docker push localhost:5000/etny-las');
-runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-las:${imagesTag}`);
-runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-las:${imagesTag} localhost:5000/etny-las`);
-runCommand('docker push localhost:5000/etny-las');
+// Every network but an -unsafe one runs a LAS beside the enclaves: the SCONE
+// 6.0.7 LAS the trustedzones are built and attested with (etny-nodenithy
+// v3/build/las). An -unsafe network's compose carries none, and its bundle
+// none either.
+if (!unsafe) {
+  const lasImage = 'registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/sconecuratedimages/las:scone6.0.7';
+  console.log('Pulling etny-las');
+  runCommand(`docker pull ${lasImage}`);
+  runCommand(`docker tag ${lasImage} localhost:5000/etny-las`);
+  runCommand('docker push localhost:5000/etny-las');
+}
 
 
 process.chdir(currentDir);

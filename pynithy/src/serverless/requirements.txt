@@ -1,0 +1,6 @@
+# Python packages your backend imports, one per line; ecld-build installs them
+# into the securelock enclave.
+# Example:
+#
+# scipy
+# numpy

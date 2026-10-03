@@ -2,6 +2,7 @@ const fs = require("fs");
 const readline = require("readline");
 const { spawn, execSync } = require("child_process");
 const path = require("path");
+const casConfig = require("./cas/config.js");
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -179,6 +180,8 @@ const main = async () => {
     "IoTeX Testnet",
     "Ethereum Sepolia",
     "LitVM LiteForge",
+    "Bloxberg Testnet Unsafe",
+    "LitVM LiteForge Unsafe",
   ];
   const blockchainNetwork = await promptOptions(
     "On which Blockchain network do you want to have the app set up, as a starting point? (default is Bloxberg Testnet): ",
@@ -186,9 +189,20 @@ const main = async () => {
     "Bloxberg Testnet",
   );
   console.log();
+  const network = blockchainNetwork.replace(/ /g, "_");
+  if (casConfig.isUnsafeNetwork(network)) {
+    const sibling = casConfig.UNSAFE_NETWORKS[network].replace(/_/g, " ");
+    console.log(`${blockchainNetwork} runs your dApp WITHOUT a CAS, on the chain and contracts of ${sibling},`);
+    console.log("for SGX platforms the CAS cannot attest (EPID-only, SGX1). Its enclaves are debug-signed and");
+    console.log("sign their own certificates from their measurement: a result proves which image ran, not that");
+    console.log(`an enclave ran it. The securelock is registered as <project>-unsafe; choose ${sibling} for`);
+    console.log("a CAS-attested run.");
+    console.log();
+  }
+  const imageName = casConfig.nameOnNetwork(projectName.replace(/ /g, "-"), network);
 
   console.log(
-    `Checking if the project name (image name) is available on the ${blockchainNetwork.replace(/ /g, "_")} network and ownership...`,
+    `Checking if the project name (image name ${imageName}) is available on the ${network} network and ownership...`,
   );
   // const { execSync } = require('child_process');
   // execSync(`python $(pwd)/node_modules/@ethernity-cloud/sdk-js/nodenithy/run/image_registry.py "${blockchainNetwork.replace(/ /g, "_")}" "${projectName.replace(/ /g, "-")}" v3`);
@@ -198,8 +212,8 @@ const main = async () => {
     new Promise((resolve, reject) => {
       const child = spawn("node", [
         scriptPath,
-        blockchainNetwork.replace(/ /g, "_"),
-        projectName.replace(/ /g, "-"),
+        network,
+        imageName,
         "v3",
       ]);
       // Handle stdout data
@@ -342,12 +356,14 @@ const main = async () => {
     "IoTeX Testnet": `ecld-${svc}-iotex-testnet`,
     "Ethereum Sepolia": `ecld-${svc}-ethereum-sepolia`,
     "LitVM LiteForge": `ecld-${svc}-litvm-testnet`,
+    "Bloxberg Testnet Unsafe": `etny-${svc}-testnet-unsafe`,
+    "LitVM LiteForge Unsafe": `ecld-${svc}-litvm-testnet-unsafe`,
   };
   const trustedZoneImage = imageByNetwork[blockchainNetwork] || `etny-${svc}-testnet`;
   writeEnv("TRUSTED_ZONE_IMAGE", trustedZoneImage);
 
 
-  writeEnv("BLOCKCHAIN_NETWORK", blockchainNetwork.replace(/ /g, "_"));
+  writeEnv("BLOCKCHAIN_NETWORK", network);
   writeEnv("IPFS_ENDPOINT", customUrl);
   console.log();
   await configureEsr();

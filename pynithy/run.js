@@ -60,13 +60,19 @@ const writeEnv = (key, value) => {
 
 let templateName = process.env.TRUSTED_ZONE_IMAGE || 'etny-pynithy-testnet';
 
-const isMainnet = !templateName.includes('testnet');
-// A testnet template with a SessionRegistry is CAS-attested by the
-// ethernity-cas validator set: the session is registered on-chain, the
-// enclave is provisioned from a validator, and the certificate comes out of
-// the CAS session. Other testnets self-sign and register nothing.
-const casTestnet = !isMainnet && casConfig.casProvisioned(templateName, isMainnet);
+const isMainnet = casConfig.isMainnetNetwork(process.env.BLOCKCHAIN_NETWORK);
+// Mainnet enclaves are provisioned by the Scontain CAS. A testnet template
+// with a SessionRegistry is CAS-attested by the ethernity-cas validator set:
+// the session is registered on-chain, the enclave is provisioned from a
+// validator, and the certificate comes out of the CAS session. Every other
+// testnet's enclaves self-sign from MR_ENCLAVE and register no session.
+const cas = casConfig.casProvisioned(templateName, isMainnet);
+const casTestnet = !isMainnet && cas;
 const casChain = casConfig.CHAIN[templateName] || {};
+// An -unsafe network is a self-signing testnet whose compose carries no LAS;
+// its securelock is registered as <project>-unsafe.
+const unsafe = casConfig.isUnsafeNetwork(process.env.BLOCKCHAIN_NETWORK);
+const securelock = casConfig.nameOnNetwork(process.env.PROJECT_NAME, process.env.BLOCKCHAIN_NETWORK);
 
 const currentDir = process.cwd();
 console.log(`currentDir: ${currentDir}`);
@@ -107,14 +113,21 @@ const extractSignedMrenclave = (service) => {
 
 const main = async () => {
     process.env.NODE_NO_WARNINGS = 1
-    const backupFiles = ['docker-compose.yml.tmpl', 'docker-compose-final.yml.tmpl'];
-    backupFiles.forEach(file => {
-        if (!fs.existsSync(file)) {
-            console.error(`Error: ${file} not found!`);
+    // The securelock heap ecld-build signed it with (part of MRENCLAVE).
+    const memory = (process.env.MEMORY_TO_ALLOCATE || '').trim();
+    if (!memory) {
+        console.error("Error: MEMORY_TO_ALLOCATE is not set in .env; run ecld-build first.");
+        process.exit(1);
+    }
+    ['docker-compose.yml', 'docker-compose-final.yml'].forEach(file => {
+        const template = `${file}.tmpl`;
+        if (!fs.existsSync(template)) {
+            console.error(`Error: ${template} not found!`);
             return;
         }
-        const backupContent = fs.readFileSync(file, 'utf8');
-        fs.writeFileSync(file.replace('.tmpl', ''), backupContent, 'utf8');
+        const content = casConfig.renderCompose(fs.readFileSync(template, 'utf8'), cas, unsafe)
+            .replace(/__MEMORY_TO_ALLOCATE__/g, memory);
+        fs.writeFileSync(file, content, 'utf8');
     });
 
 
@@ -130,7 +143,7 @@ const main = async () => {
     // MRENCLAVE signed --production at build time (/signed_mrenclave.txt). A
     // mismatch means SCONE recomputed the measurement at load (params drift) and
     // re-signed as DEBUG, which CAS rejects on mainnet. Refuse to publish.
-    if (isMainnet || casTestnet) {
+    if (cas) {
         const signedMrenclave = extractSignedMrenclave('etny-securelock');
         if (!signedMrenclave || signedMrenclave !== process.env.MRENCLAVE_SECURELOCK) {
             console.error(`Error: securelock runtime MRENCLAVE (${process.env.MRENCLAVE_SECURELOCK}) != signed MRENCLAVE (${signedMrenclave}).`);
@@ -218,15 +231,20 @@ const main = async () => {
         MRENCLAVE: process.env.MRENCLAVE_SECURELOCK,
         ENCLAVE_NAME: ENCLAVE_NAME_SECURELOCK
     };
-    processYamlTemplate('etny-securelock-test.yaml.tpl', 'etny-securelock-test.yaml', replacementsSecurelock);
+    if (cas) {
+        processYamlTemplate('etny-securelock-test.yaml.tpl', 'etny-securelock-test.yaml', replacementsSecurelock);
+    }
 
     // Where the session goes depends on who provisions the securelock. On a
     // CAS-attested testnet it is registered ON-CHAIN in the ethernity-cas
     // SessionRegistry, which the validator set reads and which accepts no
     // POST; the publish then waits until the validators serve it, because the
-    // public-key harvest below provisions the enclave from them. Every other
-    // network keeps the Scontain CAS registration that follows.
-    if (casTestnet) {
+    // public-key harvest below provisions the enclave from them. On mainnet it
+    // is registered with the Scontain CAS. A self-signing testnet has none: a
+    // CAS-issued certificate would not match the key the enclave derives.
+    if (!cas) {
+        console.log(`\t✔  ${process.env.BLOCKCHAIN_NETWORK}: no CAS session; the securelock self-signs from MR_ENCLAVE`);
+    } else if (casTestnet) {
         const registered = await sessionRegistry.register(
             casChain.rpcUrl, casChain.chainId, casConfig.SESSION_REGISTRY[templateName],
             process.env.PRIVATE_KEY, fs.readFileSync('etny-securelock-test.yaml'),
@@ -429,13 +447,9 @@ const main = async () => {
             console.log(`No __ENCLAVE_NAME_TRUSTEDZONE__ found in ${file}`);
         }
 
-        let ENCLAVE_NAME_TRUSTEDZONE = 'etny-pynithy-trustedzone-v3-testnet-0.1.12'
-        if (isMainnet) {
-            ENCLAVE_NAME_TRUSTEDZONE = 'ecld-pynithy-trustedzone-v3-3.0.0'
-        }
-        if (casTestnet) {
-            ENCLAVE_NAME_TRUSTEDZONE = trustedZoneSession;
-        }
+        // Named only in a CAS-provisioned compose; a self-signing one has no
+        // __CAS_ONLY__ lines left.
+        const ENCLAVE_NAME_TRUSTEDZONE = casTestnet ? trustedZoneSession : 'ecld-pynithy-trustedzone-v3-3.0.0';
         let updatedContent = fileContentBefore
             .replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK)
             .replace(/__ENCLAVE_NAME_TRUSTEDZONE__/g, ENCLAVE_NAME_TRUSTEDZONE);
@@ -544,7 +558,7 @@ const main = async () => {
             console.log()
 
             console.log(`ENCLAVE_NAME_SECURELOCK: ${ENCLAVE_NAME_SECURELOCK}`);
-            execSync(`node ./public_key_service.js --enclave_name "${process.env.PROJECT_NAME}" --protocol_version "v3" --network "${process.env.BLOCKCHAIN_NETWORK}" --template_version "${process.env.VERSION}"`, { stdio: 'inherit' });
+            execSync(`node ./public_key_service.js --enclave_name "${securelock}" --protocol_version "v3" --network "${process.env.BLOCKCHAIN_NETWORK}" --template_version "${process.env.VERSION}"`, { stdio: 'inherit' });
             PUBLIC_KEY_SECURELOCK_RES = fs.readFileSync('PUBLIC_KEY.txt', 'utf8').trim();
             console.log(`PUBLIC_KEY_SECURELOCK_RES: ${PUBLIC_KEY_SECURELOCK_RES}`);
             if (!PUBLIC_KEY_SECURELOCK_RES || PUBLIC_KEY_SECURELOCK_RES === '-1') {
@@ -611,10 +625,12 @@ const main = async () => {
     console.log("IPFS_HASH: ", process.env.IPFS_HASH);
     writeEnv('IPFS_HASH', process.env.IPFS_HASH);
     process.chdir(currentDir);
-    console.log("Adding certificates for SECURELOCK into IMAGE REGISTRY smart contract...");
+    console.log(`Adding certificates for SECURELOCK ${securelock} into IMAGE REGISTRY smart contract...`);
+    // image_registry.js registers the image under PROJECT_NAME.
+    const registryEnv = { ...process.env, PROJECT_NAME: securelock };
     let existing = false;
     try {
-        const existingImages = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${process.env.PROJECT_NAME}" "${process.env.VERSION}" "${process.env.PRIVATE_KEY}" "registerSecureLockImage"`, { stdio: "inherit" });
+        const existingImages = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "${process.env.VERSION}" "${process.env.PRIVATE_KEY}" "registerSecureLockImage"`, { stdio: "inherit", env: registryEnv });
         if (existingImages.toString().trim().replace('Image hash: ', '') === process.env.IPFS_HASH) {
             console.log("Certificates for SECURELOCK already added to IMAGE REGISTRY smart contract");
         }
@@ -626,7 +642,7 @@ const main = async () => {
     }
 
     if (!existing) {
-        const res = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "" "" "" "registerSecureLockImage"`, { stdio: "inherit" });
+        const res = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "" "" "" "registerSecureLockImage"`, { stdio: "inherit", env: registryEnv });
     }
     // The on-chain session points at the image it admits, so a validator can
     // pin the image beside the body it serves.

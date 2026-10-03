@@ -3,6 +3,7 @@ const readline = require('readline');
 const { execSync, spawn } = require('child_process');
 const path = require('path');
 require('dotenv').config();
+const casConfig = require('./cas/config.js');
 
 // Function to write to .env file
 const writeEnv = (key, value) => {
@@ -73,8 +74,9 @@ async function prompt(question) {
 
         console.log(`Available funds: ${result}`);
         console.log()
-        console.log(`Checking if project name is available on ${BLOCKCHAIN_NETWORK} network and ownership...`);
-        result = execSync(`node ${scriptPath} ${BLOCKCHAIN_NETWORK} ${process.env.PROJECT_NAME} ${process.env.VERSION} ${process.env.PRIVATE_KEY}`,).toString().trim();
+        const imageName = casConfig.nameOnNetwork(PROJECT_NAME, BLOCKCHAIN_NETWORK);
+        console.log(`Checking if project name ${imageName} is available on ${BLOCKCHAIN_NETWORK} network and ownership...`);
+        result = execSync(`node ${scriptPath} ${BLOCKCHAIN_NETWORK} ${imageName} ${process.env.VERSION} ${process.env.PRIVATE_KEY}`,).toString().trim();
         console.log(result);
         console.log()
 

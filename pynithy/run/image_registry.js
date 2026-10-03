@@ -35,6 +35,10 @@ function setVars(network = "") {
             GAS = 20000000;
             GAS_PRICE = 1300000010;
         }
+    } else if (BLOCKCHAIN_NETWORK.includes("LitVM")) {
+        NETWORK_RPC = "https://liteforge.rpc.caldera.xyz/infra-partner-http";
+        IMAGE_REGISTRY_ADDRESS = "0x55e0ad455Be85162b71a790f00Fc305680E3CE53";
+        CHAIN_ID = 4441;
     }
 }
 
@@ -71,7 +75,8 @@ class ImageRegistry {
         try {
             this.imageRegistryAbi = this.readContractAbi('image_registry.abi');
             this.imageRegistryAddress = IMAGE_REGISTRY_ADDRESS;
-            console.log("imageRegistryAddress: ", this.imageRegistryAddress);
+            // stderr: callers read an action's result from stdout.
+            console.error("imageRegistryAddress: ", this.imageRegistryAddress);
             this.provider = new ethers.providers.JsonRpcProvider(NETWORK_RPC);
 
             if (PRIVATE_KEY) {
@@ -298,11 +303,19 @@ class ImageRegistry {
             console.log(`${balance} gas`);
             process.exit(0);
         }
+        // The certificate of the trustedzone's own record. getLatestImageVersionPublicKey
+        // reads the securelock records instead: ECImageRegistryV2 reverts it for
+        // a trustedzone, and the bloxberg mainnet and LitVM registries return a
+        // different certificate for the same name.
         if (action === 'getTrustedZoneCert') {
             const imageRegistry = new ImageRegistry();
-            const public = (await imageRegistry._getLatestImageVersionPublicKey(projectName, version))[1]
-            console.log(public);
-            return public;
+            try {
+                const latest = await imageRegistry.imageRegistryContract.getLatestTrustedZoneImageCertPublicKey(projectName, version);
+                console.log(latest[1]);
+            } catch (e) {
+                console.error(`No trustedzone ${projectName} (${version}) in image registry ${IMAGE_REGISTRY_ADDRESS}: ${e.reason || e.message}`);
+            }
+            return;
         }
         // The CAS session name recorded for the trustedzone template's latest
         // image: what the compose's SCONE_CONFIG_ID for the trustedzone must name.

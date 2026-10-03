@@ -39,4 +39,56 @@ const CHAIN = {
 // (Scontain CAS), or a testnet template with a SessionRegistry (ethernity-cas).
 const casProvisioned = (templateName, isMainnet) => isMainnet || Boolean(SESSION_REGISTRY[templateName]);
 
-module.exports = { VALIDATOR_REGISTRY, SESSION_REGISTRY, CHAIN, casProvisioned };
+// The mainnets, by BLOCKCHAIN_NETWORK. A template name does not tell: the Amoy
+// templates (ecld-*-amoy) do not contain "testnet".
+const MAINNETS = ['Bloxberg_Mainnet', 'Polygon_Mainnet'];
+const isMainnetNetwork = (network) =>
+  MAINNETS.some((name) => name.toUpperCase() === String(network || '').toUpperCase());
+
+// The -unsafe networks, by BLOCKCHAIN_NETWORK, each with the network it is the
+// unsafe variant of: the same chain and contracts, for SGX platforms the CAS
+// cannot attest (EPID-only, SGX1). No CAS and no LAS: the securelock is
+// debug-signed and self-signs from MR_ENCLAVE, is registered as
+// <project>-unsafe, and runs only against an -unsafe trustedzone. Mainnet has
+// none. Kept in sync with the *_unsafe entries of
+// etny-{pynithy,nodenithy}/v3/networks.yaml.
+const UNSAFE_NETWORKS = {
+  Bloxberg_Testnet_Unsafe: 'Bloxberg_Testnet',
+  LitVM_LiteForge_Unsafe: 'LitVM_LiteForge',
+};
+
+// Case-insensitive: ecld-init writes Bloxberg_Testnet_Unsafe, a --network
+// flag may say BLOXBERG_TESTNET_UNSAFE.
+const isUnsafeNetwork = (network) =>
+  Object.keys(UNSAFE_NETWORKS).some((name) => name.toUpperCase() === String(network || '').toUpperCase());
+
+// The name an image is registered and run under on `network`: <name>-unsafe
+// on an -unsafe network. A dApp's securelock is <project>-unsafe there, so its
+// two variants never share an image name, and an -unsafe network's
+// trustedzone is the -unsafe variant of its sibling's.
+const nameOnNetwork = (name, network) =>
+  !name || !isUnsafeNetwork(network) || name.endsWith('-unsafe') ? name : `${name}-unsafe`;
+
+// The network part of ENCLAVE_NAME_SECURELOCK: the second word of
+// BLOCKCHAIN_NETWORK, with _unsafe on an -unsafe network so the two variants
+// never share a session name.
+const sessionTag = (network) =>
+  `${network.split('_')[1].toLowerCase()}${isUnsafeNetwork(network) ? '_unsafe' : ''}`;
+
+// A compose template rendered for its network. A line tagged `# __CAS_ONLY__`
+// serves CAS attestation and is kept where a CAS provisions the enclaves, one
+// tagged `# __NO_CAS_ONLY__` where they self-sign, and one tagged
+// `# __SAFE_ONLY__` (the LAS) on every network but an -unsafe one. Kept lines
+// lose their tag.
+const renderCompose = (content, cas, unsafe) => content
+  .split('\n')
+  .filter((line) => !(/# __CAS_ONLY__$/.test(line) && !cas))
+  .filter((line) => !(/# __NO_CAS_ONLY__$/.test(line) && cas))
+  .filter((line) => !(/# __SAFE_ONLY__$/.test(line) && unsafe))
+  .map((line) => line.replace(/\s*# __(?:CAS|NO_CAS|SAFE)_ONLY__$/, ''))
+  .join('\n');
+
+module.exports = {
+  VALIDATOR_REGISTRY, SESSION_REGISTRY, CHAIN, casProvisioned, isMainnetNetwork,
+  UNSAFE_NETWORKS, isUnsafeNetwork, nameOnNetwork, sessionTag, renderCompose,
+};

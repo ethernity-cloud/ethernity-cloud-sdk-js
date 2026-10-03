@@ -50,7 +50,12 @@ export const ECRunner = {
   'ecld-nodenithy-ethereum-sepolia': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://ethereum-sepolia-rpc.publicnode.com', 11155111],
   // --- litvm liteforge testnet (shares sepolia contracts; distinct chain/RPC) ---
   'ecld-pynithy-litvm-testnet': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441],
-  'ecld-nodenithy-litvm-testnet': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441]
+  'ecld-nodenithy-litvm-testnet': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441],
+  // --- the -unsafe networks: the contracts of the network each is named after ---
+  'etny-pynithy-testnet-unsafe': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c', '0x99A84C624C028bdf0a855A1E9E3f2fcf7275B3D8', 'https://bloxberg.ethernity.cloud', 8995],
+  'etny-nodenithy-testnet-unsafe': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c', '0x99A84C624C028bdf0a855A1E9E3f2fcf7275B3D8', 'https://bloxberg.ethernity.cloud', 8995],
+  'ecld-pynithy-litvm-testnet-unsafe': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441],
+  'ecld-nodenithy-litvm-testnet-unsafe': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441]
 };
 
 // ethernity-cas ValidatorRegistry per template, baked into the enclave so it
@@ -63,6 +68,28 @@ const require = createRequire(import.meta.url);
 const casConfig = require('../cas/config.js');
 export const VALIDATOR_REGISTRY = casConfig.VALIDATOR_REGISTRY;
 
+// An -unsafe network runs an -unsafe trustedzone and nothing else, and an
+// -unsafe trustedzone runs on no other network: the runner and the node refuse
+// either mismatch, so the build does too.
+const unsafe = casConfig.isUnsafeNetwork(process.env.BLOCKCHAIN_NETWORK);
+if (unsafe !== String(process.env.TRUSTED_ZONE_IMAGE || '').endsWith('-unsafe')) {
+  console.error(`ERROR: TRUSTED_ZONE_IMAGE=${process.env.TRUSTED_ZONE_IMAGE} does not run on BLOCKCHAIN_NETWORK=${process.env.BLOCKCHAIN_NETWORK}.`);
+  console.error(unsafe
+    ? '       An -unsafe network runs only a trustedzone whose name ends in -unsafe.'
+    : '       A trustedzone whose name ends in -unsafe runs only on an -unsafe network.');
+  console.error('       Run ecld-init to choose the network again.');
+  process.exit(1);
+}
+
+// The securelock pipeline (build/securelock: Dockerfile.base.tpl, Dockerfile.tpl,
+// scripts/, src/) is ethernity-cloud-sdk-py's, kept identical to it, and so are
+// the images it builds on: a static SCONE python 3.14 the code is frozen for,
+// and the SCONE 6.0.7 LAS that runs beside it.
+const SDK_REGISTRY = 'registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry';
+const BASE_IMAGE_REPO = `${SDK_REGISTRY}/sconecuratedimages/apps`;
+const BASE_IMAGE_TAG = 'python-3.14.6-alpine3.24-scone6.0.7';
+const LAS_IMAGE = `${SDK_REGISTRY}/sconecuratedimages/las:scone6.0.7`;
+
 const runCommand = (command, canPass = false) => {
   if (shell.exec(command).code !== 0 && !canPass) {
     console.error(`Error executing command: ${command}`);
@@ -70,25 +97,32 @@ const runCommand = (command, canPass = false) => {
   }
 };
 
-// Downloading dependencies
-shell.rm('-rf', './registry');
-const currentDir = process.cwd();
-// console.log(`current_dir: ${currentDir}`);
-const buildDir = path.join(currentDir, 'node_modules/@ethernity-cloud/sdk-js/pynithy/build');
-// console.log(`build_dir: ${buildDir}`);
+// Removes the containers this build and publish create, matched by exact name:
+// `--filter name=` matches a substring, so name=las would also match the LAS of
+// a CAS validator set on the same host.
+const removeContainer = (name) => {
+  const ids = shell.exec(`docker ps -a -q --filter "name=^/${name}$"`, { silent: true }).stdout.trim();
+  if (ids) {
+    runCommand(`docker rm -f ${ids.split('\n').join(' ')}`);
+  }
+};
 
-const dockerPS = shell.exec('docker ps --filter name=registry -q', { silent: true }).stdout.trim();
-if (dockerPS) {
-  runCommand(`docker stop ${dockerPS.split('\n').join(' ')}`);
+const currentDir = process.cwd();
+const buildDir = path.join(currentDir, 'node_modules/@ethernity-cloud/sdk-js/pynithy/build');
+const srcDir = './src/serverless';
+const destDir = path.join(buildDir, 'securelock/src/serverless');
+
+// Fail the build NOW if the backend is missing: an enclave built without one
+// runs every task into "name 'X' is not defined" on-chain.
+if (!fs.existsSync(path.join(srcDir, 'backend.py'))) {
+  console.error(`ERROR: ${path.join(srcDir, 'backend.py')} not found.`);
+  console.error('       The securelock enclave loads your functions from src/serverless/backend.py.');
+  console.error('       Run ecld-init to scaffold it, or create the file before building.');
+  process.exit(1);
 }
-const dockeri = shell.exec('docker ps --filter name=las -q', { silent: true }).stdout.trim();
-if (dockeri) {
-  runCommand(`docker stop ${dockeri.split('\n').join(' ')}`);
-}
-const dockerRm = shell.exec('docker ps --filter name=registry -q', { silent: true }).stdout.trim();
-if (dockerRm) {
-  runCommand(`docker rm ${dockerRm.split('\n').join(' ')} -f`);
-}
+
+shell.rm('-rf', './registry');
+['registry', 'las', 'etny-securelock', 'etny-trustedzone', 'etny-swift-stream'].forEach(removeContainer);
 const dockerImg = shell.exec('docker images --filter reference="*etny*" -q', { silent: true }).stdout.trim();
 if (dockerImg) {
   runCommand(`docker rmi ${dockerImg.split('\n').join(' ')} -f`);
@@ -97,93 +131,109 @@ const dockerImgReg = shell.exec('docker images --filter reference="*registry*" -
 if (dockerImgReg) {
   runCommand(`docker rmi ${dockerImgReg.split('\n').join(' ')} -f`);
 }
-runCommand(`docker rm registry -f`);
 
-
-
-const srcDir = './src/serverless';
-const destDir = path.join(buildDir, 'securelock/src/serverless');
-console.log(`Creating destination directory: ${destDir}`);
-fs.mkdirSync(destDir, { recursive: true });
-
-console.log(`Copying files from ${srcDir} to ${destDir}`);
-fs.readdirSync(srcDir).forEach(file => {
-  fs.copyFileSync(path.join(srcDir, file), path.join(destDir, file));
-});
+console.log(`Copying ${srcDir} to ${destDir}`);
+fs.rmSync(destDir, { recursive: true, force: true });
+fs.cpSync(srcDir, destDir, { recursive: true });
+// The securelock Dockerfile pip-installs src/serverless/requirements.txt; a
+// project without one installs nothing extra.
+if (!fs.existsSync(path.join(destDir, 'requirements.txt'))) {
+  fs.writeFileSync(path.join(destDir, 'requirements.txt'), '');
+}
 
 process.chdir(buildDir);
 
 let templateName = process.env.TRUSTED_ZONE_IMAGE || 'etny-pynithy-testnet';
 
-const isMainnet = !templateName.includes('testnet');
+const isMainnet = casConfig.isMainnetNetwork(process.env.BLOCKCHAIN_NETWORK);
+// Mainnet, or a testnet with a SessionRegistry: the securelock takes its
+// certificate from a CAS session. Any other testnet's securelock self-signs
+// from MR_ENCLAVE.
+const casProvisioned = casConfig.casProvisioned(templateName, isMainnet);
 
-const ENCLAVE_NAME_TRUSTEDZONE = templateName;
+// Enclave heap (SCONE_HEAP). Part of the measurement: publish runs the
+// securelock with the value recorded here.
+const MEMORY_TO_ALLOCATE = (process.env.ECLD_MEMORY_TO_ALLOCATE || process.env.MEMORY_TO_ALLOCATE || '1024M').trim();
+writeEnv('MEMORY_TO_ALLOCATE', MEMORY_TO_ALLOCATE);
 
 runCommand('docker pull registry:2');
 runCommand('docker run -d --restart=always -p 5000:5000 --name registry registry:2');
-// runCommand(`docker login ${process.env.DOCKER_REPO_URL} -u ${process.env.DOCKER_LOGIN} -p ${process.env.DOCKER_PASSWORD}`);
 
-// const CI_COMMIT_BRANCH = process.env.PROJECT_NAME;
-// aleXPRoj-securelock-v3-testnet-0.1.0...
-const ENCLAVE_NAME_SECURELOCK = `${process.env.PROJECT_NAME}-SECURELOCK-V3-${process.env.BLOCKCHAIN_NETWORK.split('_')[1].toLowerCase()}-${VERSION}`.replace(/\//g, '_').replace(/-/g, '_');
+const ENCLAVE_NAME_SECURELOCK = `${process.env.PROJECT_NAME}-SECURELOCK-V3-${casConfig.sessionTag(process.env.BLOCKCHAIN_NETWORK)}-${VERSION}`.replace(/\//g, '_').replace(/-/g, '_');
 console.log(`ENCLAVE_NAME_SECURELOCK: ${ENCLAVE_NAME_SECURELOCK}`);
 writeEnv('ENCLAVE_NAME_SECURELOCK', ENCLAVE_NAME_SECURELOCK);
 
-console.log('Building etny-securelock');
 process.chdir('securelock');
-// runCommand(`cat Dockerfile.tmpl | sed s/"__ENCLAVE_NAME_SECURELOCK__"/"${ENCLAVE_NAME_SECURELOCK}"/g > Dockerfile`);
-const dockerfileSecureTemplate = fs.readFileSync('Dockerfile.tmpl', 'utf8');
-let dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]).replace(/__TRUSTED_ZONE_IMAGE__/g, templateName).replace(/__VALIDATOR_REGISTRY_ADDRESS__/g, VALIDATOR_REGISTRY[templateName] || '');
 
-// Amount of enclave heap to allocate (SCONE_HEAP); overridable, in sync with the
-// run/docker-compose securelock service.
-const MEMORY_TO_ALLOCATE = (process.env.ECLD_MEMORY_TO_ALLOCATE || '1024M').trim();
+console.log('Building etny-securelock-base');
+fs.writeFileSync('Dockerfile.base', fs.readFileSync('Dockerfile.base.tpl', 'utf8')
+  .replace(/__DOCKER_REPO_URL__/g, BASE_IMAGE_REPO)
+  .replace(/__BASE_IMAGE_TAG__/g, BASE_IMAGE_TAG));
+runCommand('docker build -f Dockerfile.base -t etny-securelock-base:latest .');
 
-// CRITICAL (mainnet DCAP): sign /usr/local/bin/python -- the binary the enclave
-// actually EXECUTES (ENTRYPOINT + run/publish compose command both run
-// /usr/local/bin/python). /usr/local/bin/python3 is a SEPARATE symlink; signing
-// it leaves the executed binary DEBUG-signed, so SCONE recomputes MRENCLAVE at
-// load and re-signs as debug -> CAS rejects the DCAP quote on mainnet.
-// The enclave-creation params MUST match the runtime env exactly.
+// src/serverless/Dockerfile.serverless builds on etny-securelock-base and adds
+// what the dApp needs at the system level.
+if (fs.existsSync('src/serverless/Dockerfile.serverless')) {
+  console.log('Adding customizations from Dockerfile.serverless');
+  runCommand('docker build -f src/serverless/Dockerfile.serverless -t etny-securelock-serverless:latest .');
+} else {
+  runCommand('docker tag etny-securelock-base:latest etny-securelock-serverless:latest');
+}
+
+// ESR fail-fast gate (RFC §5.4): never build an ESR-enabled enclave with an
+// unresolved registry address. The enclave is SEALED -- a missing value bakes
+// in as empty, and every task then fails at runtime after gas is spent.
+const ESR_ENABLED = /^(1|true|yes)$/i.test(String(process.env.ESR_ENABLED || '').trim());
+const ESR_CONTRACT_ADDRESS = String(process.env.ESR_CONTRACT_ADDRESS || '').trim();
+const ESR_WALLET_ADDRESS = String(process.env.ESR_WALLET_ADDRESS || '').trim();
+if (ESR_ENABLED && !/^0x[0-9a-fA-F]{40}$/.test(ESR_CONTRACT_ADDRESS)) {
+  console.error('ERROR: ESR is enabled but ESR_CONTRACT_ADDRESS is not a valid address'
+    + ` (got ${JSON.stringify(ESR_CONTRACT_ADDRESS)}).`);
+  console.error('       Set it with ecld-init (ESR step) or ESR_CONTRACT_ADDRESS in .env.');
+  process.exit(1);
+}
+// Rendered only when enabled, so non-ESR images keep byte-identical layers.
+let esrEnvBlock = '';
+if (ESR_ENABLED) {
+  esrEnvBlock = `ENV ESR_CONTRACT_ADDRESS=${ESR_CONTRACT_ADDRESS}\n`;
+  if (/^0x[0-9a-fA-F]{40}$/.test(ESR_WALLET_ADDRESS)) {
+    esrEnvBlock += `ENV ESR_WALLET_ADDRESS=${ESR_WALLET_ADDRESS}\n`;
+  }
+}
+
+// Signs the EXECUTED binary (/usr/local/bin/python, the ENTRYPOINT and the
+// compose command) with the enclave-creation params the runtime env repeats;
+// scone-signer embeds SCONE defaults for anything not passed, and any drift
+// makes SCONE recompute the measurement at load. A CAS-provisioned securelock
+// is signed --production: the CAS session admits production enclaves only. A
+// self-signing testnet securelock is signed debug.
 const signFlags =
   `--key=/enclave-key.pem --env --heap=${MEMORY_TO_ALLOCATE} ` +
   `--stack=4M --dlopen=1 --extensions=/lib/libbinary-fs.so`;
 
-const signedMrenclaveStep =
-  'RUN scone-signer info /usr/local/bin/python > /tmp/siginfo.txt 2>&1; \\\n' +
-  '    grep -iE "MRENCLAVE:" /tmp/siginfo.txt | sed -n \'1p\' \\\n' +
-  '      | sed -E \'s/.*MRENCLAVE:[[:space:]]*//I\' | tr -d \'[:space:]\' > /signed_mrenclave.txt && \\\n' +
-  '    echo "SIGNED_MRENCLAVE=$(cat /signed_mrenclave.txt)"';
+console.log('Building etny-securelock');
+fs.writeFileSync('Dockerfile', fs.readFileSync('Dockerfile.tpl', 'utf8')
+  .replace(/__SECURELOCK_SESSION__/g, ENCLAVE_NAME_SECURELOCK)
+  .replace(/__BUCKET_NAME__/g, `${templateName}-v3`)
+  .replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0])
+  .replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1])
+  .replace(/__RPC_URL__/g, ECRunner[templateName][2])
+  .replace(/__CHAIN_ID__/g, ECRunner[templateName][3])
+  .replace(/__TRUSTED_ZONE_IMAGE__/g, templateName)
+  .replace(/__NETWORK_TYPE__/g, isMainnet ? 'mainnet' : 'testnet')
+  .replace(/__VALIDATOR_REGISTRY_ADDRESS__/g, VALIDATOR_REGISTRY[templateName] || '')
+  .replace(/__MEMORY_TO_ALLOCATE__/g, MEMORY_TO_ALLOCATE)
+  .replace(/__ESR_ENV__\n/, esrEnvBlock)
+  .replace('__SCONE_ALLOW_DLOPEN__', 'ENV SCONE_ALLOW_DLOPEN=1')
+  .replace('__SCONE_SIGN__',
+    `RUN scone-signer sign ${signFlags}${casProvisioned ? ' --production' : ''} /usr/local/bin/python`));
 
-let imagesTag = process.env.BLOCKCHAIN_NETWORK.toLowerCase();
-
-// A CAS-provisioned securelock (mainnet, or a testnet with a SessionRegistry)
-// is signed --production: the CAS session admits production enclaves only,
-// and a debug-signed one is refused at attestation.
-if (casConfig.casProvisioned(templateName, isMainnet)) {
-  dockerfileSecureContent = dockerfileSecureContent
-    .replace('__SCONE_SIGN__', `RUN scone-signer sign ${signFlags} --production /usr/local/bin/python`)
-    .replace('__SIGNED_MRENCLAVE__', signedMrenclaveStep);
-  if (isMainnet) imagesTag = process.env.BLOCKCHAIN_NETWORK.split("_")[0].toLowerCase();
-} else {
-  dockerfileSecureContent = dockerfileSecureContent
-    .replace('__SCONE_SIGN__', '# testnet: non-CAS self-sign (no --production sign at build time)')
-    .replace('__SIGNED_MRENCLAVE__', '# testnet: no signed MRENCLAVE (self-signed from MR_ENCLAVE at runtime)');
-}
-
-fs.writeFileSync('Dockerfile', dockerfileSecureContent);
-
-
-
-
-runCommand(`docker build --build-arg ENCLAVE_NAME_SECURELOCK=${ENCLAVE_NAME_SECURELOCK} -t etny-securelock:latest .`);
+runCommand(`docker build --build-arg SECURELOCK_SESSION=${ENCLAVE_NAME_SECURELOCK} -t etny-securelock:latest .`);
 runCommand('docker tag etny-securelock localhost:5000/etny-securelock');
 runCommand('docker push localhost:5000/etny-securelock');
-// runCommand('docker save etny-securelock:latest -o etny-securelock.tar');
 process.chdir('..');
 
-console.log(`ENCLAVE_NAME_TRUSTEDZONE: ${ENCLAVE_NAME_TRUSTEDZONE}`);
-writeEnv('ENCLAVE_NAME_TRUSTEDZONE', ENCLAVE_NAME_TRUSTEDZONE);
+writeEnv('ENCLAVE_NAME_TRUSTEDZONE', templateName);
 
 // The trustedzone is not built here: the etny-pynithy CI builds, measures and
 // registers it on-chain, and publishes that exact image to the ethernity registry
@@ -199,6 +249,8 @@ const trustedZoneNetByBlockchain = {
   IoTeX_Testnet: 'iotex_testnet',
   Ethereum_Sepolia: 'ethereum_sepolia',
   LitVM_LiteForge: 'litvm_liteforge',
+  Bloxberg_Testnet_Unsafe: 'bloxberg_testnet_unsafe',
+  LitVM_LiteForge_Unsafe: 'litvm_liteforge_unsafe',
 };
 const trustedZoneNet = trustedZoneNetByBlockchain[process.env.BLOCKCHAIN_NETWORK];
 if (!trustedZoneNet) {
@@ -206,22 +258,20 @@ if (!trustedZoneNet) {
   console.error(`       known networks: ${Object.keys(trustedZoneNetByBlockchain).join(', ')}`);
   process.exit(1);
 }
-const trustedZoneImage = `registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/${templateName}/trustedzone:${trustedZoneNet}`;
+const trustedZoneImage = `${SDK_REGISTRY}/${templateName}/trustedzone:${trustedZoneNet}`;
 console.log(`Pulling the published trustedzone: ${trustedZoneImage}`);
 runCommand(`docker pull ${trustedZoneImage}`);
 runCommand(`docker tag ${trustedZoneImage} localhost:5000/etny-trustedzone`);
 runCommand('docker push localhost:5000/etny-trustedzone');
 
-
-console.log('Building etny-las');
-process.chdir('las');
-// runCommand('docker build -t etny-las .');
-// runCommand('docker tag etny-las localhost:5000/etny-las');
-// runCommand('docker push localhost:5000/etny-las');
-runCommand(`docker pull registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-las:py_${imagesTag}`);
-runCommand(`docker tag registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/ethernity/etny-las:py_${imagesTag} localhost:5000/etny-las`);
-runCommand('docker push localhost:5000/etny-las');
-
+// Every network but an -unsafe one runs a LAS beside the enclaves; an -unsafe
+// network's compose carries none, and its bundle none either.
+if (!unsafe) {
+  console.log('Pulling etny-las');
+  runCommand(`docker pull ${LAS_IMAGE}`);
+  runCommand(`docker tag ${LAS_IMAGE} localhost:5000/etny-las`);
+  runCommand('docker push localhost:5000/etny-las');
+}
 
 process.chdir(currentDir);
 runCommand('docker cp registry:/var/lib/registry registry');

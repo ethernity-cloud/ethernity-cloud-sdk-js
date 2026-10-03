@@ -1,209 +1,262 @@
 #!/usr/bin/python
 
-# update 29.12.2022
 import binascii
 import hashlib
+import hmac
 import os
+import io
+import time
+import datetime
+from datetime import timedelta
+import logging
+import struct
+import ctypes
 import re
 import string
 import random
-import io
-import time
 import base64  # CAS self-attestation quote decoding
 import json
 import secrets  # CAS attestation challenge nonce
 import urllib.request  # enclave-initiated CAS attestation endpoint
-
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.backends import default_backend
+from cryptography.x509.extensions import UnrecognizedExtension
 from etny_crypto import etny_crypto as crypto
 from web3 import Web3
-from eth_account import Account
-from web3.middleware import geth_poa_middleware
-from key_generation import get_wallet_address
-from etny_exec import execute_task, TaskStatus
+from web3.middleware import ExtraDataToPOAMiddleware
+from etny_exec import execute_task_v3, TaskStatus
 from models import *
 from swift_stream_service import SwiftStreamService
-from eth_account.messages import defunct_hash_message
-
-
-# todo: remove EtnyResultPoc.debug
+# Static import so PyInstaller's dependency analysis bundles it into binary-fs
+# (a lazy import inside a function is invisible to the freeze and would fail
+# only at runtime, inside the enclave, where it cannot be diagnosed).
+import esr_wallet
+# Suppress pkg_resources warning if using web3
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="web3")
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 class EtnySecureLock:
-    debug = False
-
-    def __init__(self, swiftStreamClient):
+    def __init__(self, cert_pem: str, private_key_pem: str, swiftStreamClient: SwiftStreamService):
         self.swift_stream_service = swiftStreamClient
         self.version = 'v3'
-        print(f'ETNY Pynithy [{self.version}]')
+        logging.info(f'ETNY Pynithy [{self.version}]')
         self.__set_initializers()
+        self.private_key_pem = private_key_pem
+        self.cert_pem = cert_pem
         self.save_pub_cert()
         self.__load_env()
-        # self.read_client_challenge()
-        # self.generate_challenge()
-        # self.generate_eth_compatible_wallet()
-        # print('wallet = ', self.publickey)
-        # print('private = ', self.privatekey)
         self.read_contract_abi()
         self.init_web3()
         self.verify_cas_attestation()
         self.print_env()
-        # if not EtnySecureLock.debug:
-        #    self.reset_cert_file()
-
-    @staticmethod
-    def read_env(env_file):
-        with open(env_file, 'r') as f:
-            # Read each line of the file
-            for line in f:
-                # Split the line at the first '=' character
-                key, value = line.split('=', 1)
-                # Set the environment variable
-                os.environ[key] = value
-
-    @staticmethod
-    def read_env_str(env_str):
-        with io.StringIO(env_str) as f:
-            # Read each line of the string
-            for line in f:
-                # Split the line at the first '=' character
-                key, value = line.split('=', 1)
-                # Set the environment variable and remove new line
-                os.environ[key] = re.sub(r'\n', '', value)
-
-    def __extract_signer(self, checksum, signature):
-        signer = self.w3.eth.account.recoverHash(defunct_hash_message(text=checksum), signature=signature)
-        return signer
-
     def __set_initializers(self):
-        self.is_valid_client_data = True
-        self.key_file = "/private/__ENCLAVE_NAME_SECURELOCK__/key.pem"
-        self.cert_file = "/app/__ENCLAVE_NAME_SECURELOCK__/cert.pem"
-        self.pub_cert_file = "/app/__ENCLAVE_NAME_SECURELOCK__/enclave_pub_cert.pem"
-        self.payload = 'payload.etny.securelock'
-        self.input = 'input.txt.securelock'
+        self.is_valid_client_data = False
+        self.payload = 'payload.securelock'
+        self.input = 'input.securelock'
+        self.result = 'result.trustedzone'
+        self.result_code = 'result_code.trustedzone'
         self.result_file = '/app/result.txt'
         self.transaction_file = '/app/transaction.txt'
+        # Chain identity, substituted at BUILD by pyfreeze.sh from the selected
+        # network. These were bloxberg literals, which the sed calls could not
+        # replace, so every enclave shipped pointing at bloxberg's protocol and
+        # image registry: on any other network the registry lookup reverted
+        # ("Could not transact with/call contract function").
         self.smart_contract_address = '__SMART_CONTRACT_ADDRESS__'
         self.image_registry_address = '__IMAGE_REGISTRY_ADDRESS__'
-        # ethernity-cas ValidatorRegistry, substituted at BUILD (never CAS- or
-        # session-supplied: a rogue CAS must not choose the registry that
-        # judges it). Empty = skip CAS self-attestation.
+        # ethernity-cas ValidatorRegistry, substituted at BUILD by pyfreeze.sh
+        # (never CAS- or session-supplied: a rogue CAS must not choose the
+        # registry that judges it). Empty = skip CAS self-attestation.
         self.validator_registry_address = '__VALIDATOR_REGISTRY_ADDRESS__'
         self.chain_id = __CHAIN_ID__
         self.web3_provider = '__RPC_URL__'
         self.etny_bucket = "__BUCKET_NAME__"
-        self.trusted_zone_public_key = ''
-        if EtnySecureLock.debug:
-            self.key_file = "./app/cert1-ca1-clean.key"
-            self.cert_file = "./app/cert1-ca1-clean.crt"
-            self.payload = 'payload.py'
-            self.input = 'input.txt'
-            self.result_file = './app/result.txt'
-            self.transaction_file = './app/transaction.txt'
-            self.pub_cert_file = "./app/enclave_pub_cert.pem"
-            # self.trustedzone_public_key = "./app/enclave_pub_cert.pem"
+        self.trustedzone_public_key = ''
+        self.trustedzone_public_key_pem = ''
+        self.trustedzone_image_hash = ''
+        self.trustedzone_composer_hash = ''
+    @staticmethod
+    def generate_cert_from_mrenclave():
+        logging.info("Generating self-signed certificate based on MR_ENCLAVE (no CAS available)")
+        # Load the SGX library using ctypes
+        sgx_lib_path = '/etny-securelock/get_sgx_report.so'
+        if not os.path.exists(sgx_lib_path):
+            raise FileNotFoundError(f"SGX library not found at {sgx_lib_path}")
+        sgx_lib = ctypes.CDLL(sgx_lib_path)
+        sgx_lib.get_mr_enclave.restype = ctypes.c_char_p
+        sgx_lib.get_mr_signer.restype = ctypes.c_char_p
+        sgx_lib.derive_identity_scalar.restype = ctypes.c_char_p
+        sgx_lib.derive_identity_scalar.argtypes = [ctypes.c_int]
 
-    def validate_client_payload(self, payload_data, input_data):
-        self.get_do_request_metadata()
-        if self._metadata.payload_metadata_obj.checksum is not None:
-            #print('Computing payload checksum: ')
-            payload_checksum = self.compute_sha256_checksum(payload_data)
-            #print('payload checksum: ', payload_checksum)
-            # check the wallet address that signed payload checksum is the one from order metadata
-            payload_signer = self.__extract_signer(payload_checksum, self._metadata.payload_metadata_obj.checksum)
-            if payload_signer.lower() != self.order_metadata.do_owner.lower():
+        # Get MR_ENCLAVE (for the cert extension / log) from the module.
+        mr_enclave_ptr = sgx_lib.get_mr_enclave()
+        if not mr_enclave_ptr:
+            raise ValueError("Failed to retrieve MR_ENCLAVE from SGX")
+        mr_enclave_hex = mr_enclave_ptr.decode('utf-8')
+        logging.info(f"MR_ENCLAVE: {mr_enclave_hex}")
+
+        # Identity-key derivation now lives ENTIRELY in the compiled module
+        # (get_sgx_report.so). derive_identity_scalar(role) returns the 96-hex
+        # secp384r1 scalar; role 0 = SecureLock. The algorithm (HKDF-SHA512,
+        # domain tags, 4096-round stretch, rejection sampling) is not present in
+        # this interpreted source -- it is in the .so only, so reading the
+        # Python reveals nothing about how the key is derived. The .c source of
+        # truth lives in the etny-pynithy / etny-nodenithy repos; the SDK ships
+        # only the built .so.
+        ROLE_SECURELOCK = 0
+        scalar_ptr = sgx_lib.derive_identity_scalar(ROLE_SECURELOCK)
+        if not scalar_ptr:
+            raise ValueError("derive_identity_scalar failed in the SGX module")
+        private_value = int(scalar_ptr.decode('utf-8'), 16)
+
+        curve = ec.SECP384R1()
+        private_key = ec.derive_private_key(private_value, curve, default_backend())
+        public_key = private_key.public_key()
+
+        # Custom extension for MR_ENCLAVE
+        custom_oid = x509.ObjectIdentifier("1.3.6.1.4.1.99999.1")  # Arbitrary custom OID
+        mr_enclave_value = mr_enclave_hex.encode('utf-8')
+
+        # Build certificate
+        one_day = timedelta(days=1)
+        builder = x509.CertificateBuilder()
+        builder = builder.subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, u"SecureLock Enclave")]))
+        builder = builder.issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, u"SecureLock Enclave")]))
+        builder = builder.not_valid_before(datetime.datetime.today() - one_day)
+        builder = builder.not_valid_after(datetime.datetime.today() + (one_day * 365))
+        builder = builder.serial_number(x509.random_serial_number())
+        builder = builder.public_key(public_key)
+        builder = builder.add_extension(
+            UnrecognizedExtension(custom_oid, mr_enclave_value),
+            critical=False
+        )
+        certificate = builder.sign(
+            private_key=private_key,
+            algorithm=hashes.SHA256(),
+            backend=default_backend()
+        )
+        # Store in memory instead of writing to disk
+        private_key_pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        )
+        cert_pem = certificate.public_bytes(encoding=serialization.Encoding.PEM)
+        logging.info("Generated key and cert in memory based on MR_ENCLAVE")
+        return private_key_pem, cert_pem
+
+    @staticmethod
+    def read_env_str(env_str: str):
+        with io.StringIO(env_str) as f:
+            for line in f:
+                if '=' not in line:
+                    continue
+                key, value = line.split('=', 1)
+                os.environ[key.strip()] = re.sub(r'\n', '', value.strip())
+    def validate_client_payload(self):
+        payload_data = self.__get_file_content_and_decrypt(self.payload)
+        input_data = self.__get_file_content_and_decrypt(self.input)
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                self.get_do_request_metadata()
+                break
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    self.task_code = TaskStatus.SYSTEM_ERROR
+                    self.task_result = f'Failed to fetch metadata after {max_retries} attempts: {str(e)}'
+                    self.is_valid_client_data = False
+                    return
+        # Assume is_valid_client_data is False by default; we'll set to True only if all checks pass.
+
+        def validate_checksum(metadata_obj, data, owner, error_code, error_msg):
+            """Validate one file's integrity against its on-chain checksum (v4).
+
+            The DO-request is submitted on-chain by the owner, so the metadata
+            checksum is already authenticated by the transaction sender; we only
+            need to confirm the file content hashes to that recorded checksum.
+            Kept identical to the trustedzone enclave so both agree.
+            """
+            checksum = self.compute_sha256_checksum(data)
+            tx_checksum = metadata_obj.checksum.lower().removeprefix('0x')
+
+            if tx_checksum != checksum:
+                self.task_code = error_code
+                self.task_result = error_msg
+                return False
+            return True
+
+        owner = self.order_metadata.do_owner.lower()
+
+        # Payload is always required and always carries a checksum.
+        if self._metadata.payload_metadata_obj.has_checksum:
+            try:
+                payload_valid = validate_checksum(
+                    self._metadata.payload_metadata_obj, payload_data, owner,
+                    TaskStatus.PAYLOAD_CHECKSUM_ERROR, 'PAYLOAD CHECKSUM DOESN\'T MATCH')
+            except Exception:
                 self.task_code = TaskStatus.PAYLOAD_CHECKSUM_ERROR
-                self.task_result = 'PAYLOAD CHECKSUM DOESN\'T MATCH'
-                self.is_valid_client_data = False
-                return
+                self.task_result = 'PAYLOAD CHECKSUM CHECK ERROR'
+                payload_valid = False
+        else:
+            self.task_code = TaskStatus.PAYLOAD_CHECKSUM_ERROR
+            self.task_result = 'PAYLOAD CHECKSUM DOESN\'T EXIST'
+            payload_valid = False
 
-        if self._metadata.input_metadata_obj.checksum is not None:
-            input_checksum = self.compute_sha256_checksum(input_data)
-            #print('input checksum: ', input_checksum)
-            # check the wallet address that signed input checksum is the one from order metadata
-            input_signer = self.__extract_signer(input_checksum, self._metadata.input_metadata_obj.checksum)
-            if input_signer.lower() != self.order_metadata.do_owner.lower():
+        # Empty input carries no checksum -> nothing to validate.
+        if not self._metadata.input_metadata_obj.has_checksum:
+            input_valid = True
+        else:
+            try:
+                input_valid = validate_checksum(
+                    self._metadata.input_metadata_obj, input_data, owner,
+                    TaskStatus.INPUT_CHECKSUM_ERROR, 'INPUT CHECKSUM DOESN\'T MATCH')
+            except Exception:
                 self.task_code = TaskStatus.INPUT_CHECKSUM_ERROR
-                self.task_result = 'INPUT CHECKSUM DOESN\'T MATCH'
-                self.is_valid_client_data = False
-                return
+                self.task_result = 'INPUT CHECKSUM CHECK ERROR'
+                input_valid = False
 
+        if payload_valid and input_valid:
+            self.is_valid_client_data = True
     def wait_for_payload_and_input(self):
-        print('Waiting for payload and input')
+        logging.info('Waiting for payload and input')
         self.wait_for_trustedzone(self.etny_bucket, self.payload)
         self.wait_for_trustedzone(self.etny_bucket, self.input)
 
-    def wait_for_trustedzone(self, bucket_name, object_name, timeout=3600):
+    def wait_for_trustedzone(self, bucket_name: str, object_name: str, timeout: int = 3600):
         i = 0
-        print(f'Checking if object {object_name} exists in bucket {bucket_name}')
-        while True:
+        logging.info(f'Checking if object {object_name} exists in bucket {bucket_name}')
+        while i < timeout:
             time.sleep(1)
-            i = i + 1
-            if i > timeout:
-                break
-            (status, result) = self.swift_stream_service.is_object_in_bucket(bucket_name, object_name)
+            i += 1
+            status, _ = self.swift_stream_service.is_object_in_bucket(bucket_name, object_name)
             if status:
                 break
-
-        print('secure lock finished the execution')
-
+        logging.info('trusted zone finished the upload')
     def get_do_request_metadata(self):
         order = Order(self.etny.caller()._getOrder(self.order_id), self.order_id)
-        #print('order', order)
         self._metadata = DOReqMetadata(self.etny.caller()._getDORequestMetadata(order.do_req), order.do_req)
         self.order_metadata = order
-        #print('metadata', self._metadata)
-
-    def compute_sha256_checksum(self, file_data):
-        if type(file_data) is str:
+    def compute_sha256_checksum(self, file_data: str) -> str:
+        if isinstance(file_data, str):
             file_data = file_data.encode('utf-8')
-
         return hashlib.sha256(file_data).hexdigest()
 
-    # h = hashlib.sha256()
-    # file = io.BytesIO(file_data)
-    # while True:
-    # Reading is buffered, so we can read smaller chunks.
-    #     chunk = file.read(h.block_size)
-    #     if not chunk:
-    #        break
-    #    h.update(chunk)
-    #    return h.hexdigest()
-
-    def reset_cert_file(self):
-        #print('Resetting the cert file')
-        try:
-            with open(self.key_file, 'r+') as f:
-                f.truncate(0)
-        except Exception as e:
-            print('Error while removing the private key file content', e)
-
-        #with open(self.key_file, 'r') as f:
-        #    print('cert file content', f.read(), '##################')
-
-    def generate_eth_compatible_wallet(self):
-        decrypted_string = crypto.decrypt(
-            private_key_file=self.key_file,
-            encrypted_msg=self.encrypted_tuple
-        )
-        #print('decrypted_string = ', decrypted_string)
-        (public, private) = get_wallet_address(decrypted_string.decode(), self.enclave_challenge)
-        self.publickey = public
-        self.privatekey = private
-
     def print_env(self):
-        print('chain id:', self.chain_id)
-        print('smart contract address:', self.smart_contract_address)
-        print('web3 provider:', self.web3_provider)
-        print('encrypted challenge:', self.client_challenge)
-        print('order id:', self.order_id)
-
+        logging.info(f'chain id: {self.chain_id}')
+        logging.info(f'smart contract address: {self.smart_contract_address}')
+        logging.info(f'web3 provider: {self.web3_provider}')
+        logging.info(f'order id: {self.order_id}')
     def init_web3(self):
         self.w3 = Web3(Web3.HTTPProvider(self.web3_provider))
-        self.w3.middleware_onion.inject(geth_poa_middleware, layer=0)
-
-        # self.acct = Account.privateKeyToAccount(self.privatekey)
-        self.etny = self.w3.eth.contract(address=self.w3.toChecksumAddress(self.smart_contract_address),
+        self.w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+        self.etny = self.w3.eth.contract(address=self.smart_contract_address,
                                          abi=self.contract_abi)
-        self.image_registry = self.w3.eth.contract(address=self.w3.toChecksumAddress(self.image_registry_address),
+        self.image_registry = self.w3.eth.contract(address=self.image_registry_address,
                                                    abi=self.image_registry_abi)
 
     def _cas_endpoints_from_chain(self, cas_address):
@@ -227,12 +280,12 @@ class EtnySecureLock:
         ]
         try:
             vr = self.w3.eth.contract(
-                address=self.w3.toChecksumAddress(self.validator_registry_address),
+                address=self.w3.to_checksum_address(self.validator_registry_address),
                 abi=registry_abi)
             store = self.w3.eth.contract(address=vr.caller().keyStore(), abi=store_abi)
-            mas = store.caller().multiaddrsOf(self.w3.toChecksumAddress(cas_address))
+            mas = store.caller().multiaddrsOf(self.w3.to_checksum_address(cas_address))
         except Exception as e:
-            print(f'CAS attestation: reading the CAS endpoints from chain failed: {e}')
+            logging.warning(f'CAS attestation: reading the CAS endpoints from chain failed: {e}')
             return []
         onion, rest = [], []
         for ma in mas:
@@ -332,13 +385,13 @@ class EtnySecureLock:
                     return ('the CAS did not confirm the environment it sent: '
                             f'fresh quote carries {rd[52:64].hex()}, expected '
                             f'{env_expect[0:12].hex()}')
-                print('CAS re-attested the injected environment under a '
+                logging.info('CAS re-attested the injected environment under a '
                              'fresh signature')
             qmr = quote[112:144].hex()
             if qmr.lower() != registered_mrenclave.lower():
                 return (f'challenge quote MRENCLAVE {qmr} != registered '
                         f'{registered_mrenclave}')
-            print(
+            logging.info(
                 f'CAS CHALLENGE PASSED: {base} signed our session+nonce with a '
                 f'fresh quote (MRENCLAVE {qmr[:16]}...)')
             return None
@@ -346,16 +399,25 @@ class EtnySecureLock:
 
     def verify_cas_attestation(self):
         """
-        Verify the CAS that provisioned this enclave. The CAS injects
-        ECAS_CAS_QUOTE (a DCAP quote binding its EGETKEY validator address at
-        report_data[0:20] and the SHA-256 of its certificate at [20:52]); we
-        check it against the ValidatorRegistry baked into this build: active
-        validator, registered MRENCLAVE match, registered certHash match.
-        Evicting a CAS on-chain revokes it here on the next task. STRICT: a
-        missing quote, an invalid one, and an unreachable registry are all
-        the same terminal fault (refund); there is no softening knob. The quote's ECDSA/PCK
-        chain is not verified in-enclave yet; the binding is quote-contents
-        <-> on-chain record (the revocation path).
+        Verify the CAS that provisioned this enclave (the OUTBOUND half of
+        trust; the CAS attesting us is the inbound half).
+
+        The CAS injects ECAS_CAS_QUOTE into the session environment -- a DCAP
+        quote whose report_data binds its EGETKEY validator address (bytes
+        0:20) and the SHA-256 of its certificate (bytes 20:52). We check it
+        against the ValidatorRegistry baked into this build: the address must
+        be an ACTIVE validator, the quote MRENCLAVE must equal that
+        validator's registered measurement, and the bound cert hash must
+        equal the registered certHash. Evicting a CAS on-chain therefore
+        revokes it HERE on the next task, without redeploying enclaves.
+
+        STRICT: a missing quote, an invalid one, and an unreachable
+        registry (after retries) are all the same terminal fault (refund);
+        there is no softening knob -- the session env comes from the CAS
+        itself. Debug-signed CAS quotes are tolerated on testnet builds
+        only. The quote's ECDSA/PCK signature
+        chain is NOT yet verified in-enclave; what this binds is
+        quote-contents <-> on-chain record, which is the revocation path.
         """
         registry = self.validator_registry_address
         self.cas_attestation_fault = None
@@ -363,14 +425,14 @@ class EtnySecureLock:
         def fault(reason):
             # TERMINAL: registry present -> a CAS quote is MANDATORY, so a
             # MISSING quote is as damning as a wrong one. The operator provisioned this task through an
-            # impostor CAS. Recorded here and adjudicated before the payload
-            # runs -- the task then terminates with CAS_ATTESTATION_FAULT
-            # (40) and the order is refunded.
-            print(f'CAS ATTESTATION INVALID: {reason}')
+            # impostor CAS. Recorded here and adjudicated in execute() before
+            # the payload runs -- the task then terminates with
+            # CAS_ATTESTATION_FAULT and the order is refunded.
+            logging.error(f'CAS ATTESTATION INVALID: {reason}')
             self.cas_attestation_fault = reason
 
         if not registry or registry.startswith('__'):
-            print('CAS attestation: no ValidatorRegistry for this network; skipping')
+            logging.info('CAS attestation: no ValidatorRegistry for this network; skipping')
             return
         quote_b64 = os.environ.get('ECAS_CAS_QUOTE', '')
         if not quote_b64:
@@ -379,13 +441,27 @@ class EtnySecureLock:
             quote = base64.b64decode(quote_b64)
         except Exception as e:
             return fault(f'ECAS_CAS_QUOTE is not valid base64: {e}')
-        # DCAP quote layout: 48-byte header; report body: ATTRIBUTES at
-        # body+48 (16), MRENCLAVE at body+64 (32), report_data at body+320 (64).
+        # DCAP quote layout: 48-byte header, then the report body --
+        # ATTRIBUTES at body+48 (16), MRENCLAVE at body+64 (32),
+        # report_data at body+320 (64).
         if len(quote) < 48 + 384:
             return fault(f'quote too short ({len(quote)} bytes)')
         attributes = quote[96:112]
         quote_mrenclave = quote[112:144].hex()
         report_data = quote[368:432]
+        # TWO report_data layouts, distinguished by which one names a
+        # REGISTERED validator (checked below):
+        #   fresh  (per-session): [0:32] freshness commitment, [32:52] address
+        #   legacy (boot quote):  [0:20] address,              [20:52] cert hash
+        # The fresh layout is what a current CAS injects; legacy remains only
+        # for a CAS that could not read this enclave's nonce. Reading the wrong
+        # one would parse commitment bytes as an address and fail every task,
+        # so both are resolved and the registry decides which is real.
+        cas_candidates = [
+            (self.w3.to_checksum_address('0x' + report_data[32:52].hex()), None),
+            (self.w3.to_checksum_address('0x' + report_data[0:20].hex()),
+             report_data[20:52].hex()),
+        ]
 
         vr_abi = [
             {"name": "isValidator", "type": "function", "stateMutability": "view",
@@ -406,7 +482,7 @@ class EtnySecureLock:
         cas_address, bound_cert, active, record = None, None, False, None
         for _attempt in range(3):
             try:
-                vr = self.w3.eth.contract(address=self.w3.toChecksumAddress(registry),
+                vr = self.w3.eth.contract(address=self.w3.to_checksum_address(registry),
                                           abi=vr_abi)
                 # Whichever layout names an ACTIVE validator is the real one.
                 for cand_addr, cand_cert in cas_candidates:
@@ -485,14 +561,14 @@ class EtnySecureLock:
                     f'(session {session_id[:16]}..., expected '
                     f'{expected.hex()[:16]}..., quote carries '
                     f'{report_data[0:32].hex()[:16]}...)')
-            print('CAS environment binding OK: quote commits to '
+            logging.info('CAS environment binding OK: quote commits to '
                          f'attestation session {session_id[:16]}...')
-        # SGX ATTRIBUTES.FLAGS bit 1 = DEBUG. Tolerated only when the session
-        # explicitly says so (testnet debug CAS).
+        # SGX ATTRIBUTES.FLAGS bit 1 = DEBUG. A debug CAS protects nothing;
+        # testnet builds tolerate it (the whole testnet chain is debug).
         if (attributes[0] & 0x02) and '__NETWORK_TYPE__' != 'testnet':
             return fault('CAS enclave runs in SGX DEBUG mode')
-        print(f'CAS ATTESTATION VERIFIED: validator {cas_address}, '
-              f'MRENCLAVE {quote_mrenclave[:16]}..., certificate bound on-chain')
+        logging.info(f'CAS ATTESTATION VERIFIED: validator {cas_address}, '
+                     f'MRENCLAVE {quote_mrenclave[:16]}..., certificate bound on-chain')
 
         # LIVENESS. Everything above proves the injected quote matches an
         # on-chain record -- but the environment was handed to us by the node.
@@ -505,108 +581,41 @@ class EtnySecureLock:
             return fault(challenge_error)
 
     def read_contract_abi(self):
-        self.contract_abi = self.__read_contract_abi('pox.abi')
-        self.image_registry_abi = self.__read_contract_abi('image_registry.abi')
-
-    def __read_contract_abi(self, contract_name):
-        f = open(os.path.dirname(os.path.realpath(__file__)) + f'/{contract_name}')
-        contract_abi = f.read()
-        f.close()
-        return contract_abi
-
+        self.contract_abi = self.__read_contract_abi('abi/etnyImplementationV2.abi')
+        self.image_registry_abi = self.__read_contract_abi('abi/image_registry.abi')
+    def __read_contract_abi(self, contract_name: str) -> str:
+        path = os.path.join(os.path.dirname(os.path.realpath(__file__)), contract_name)
+        with open(path, 'r') as f:
+            return f.read()
     def __load_env(self):
-        if os.getenv('ETNY_CHAIN_ID') is not None:
+        if os.getenv('ETNY_CHAIN_ID'):
             self.chain_id = int(os.getenv('ETNY_CHAIN_ID'))
-
-        if os.getenv('ETNY_SMART_CONTRACT_ADDRESS') is not None:
+        if os.getenv('ETNY_SMART_CONTRACT_ADDRESS'):
             self.smart_contract_address = os.getenv('ETNY_SMART_CONTRACT_ADDRESS').rstrip()
-
-        if os.getenv('ETNY_WEB3_PROVIDER') is not None:
+        if os.getenv('ETNY_WEB3_PROVIDER'):
             self.web3_provider = os.getenv('ETNY_WEB3_PROVIDER').rstrip()
-
-        self.client_challenge = os.getenv('ETNY_CLIENT_CHALLENGE')
+        if os.getenv('IMAGE_REGISTRY_ADDRESS'):
+            self.image_registry_address = os.getenv('IMAGE_REGISTRY_ADDRESS').rstrip()
         self.order_id = int(os.getenv('ETNY_ORDER_ID'))
 
-    def read_client_challenge(self):
-        self.encrypted_tuple = crypto.encrypted_data_from_base64_json(self.client_challenge)
-
-    def generate_challenge(self, length=20):
-        lowercase_only = ''.join(
-            random.choice(string.ascii_lowercase) for _ in range(length)
-        )
-        #print('random challenge:', lowercase_only)
-        self.enclave_challenge = lowercase_only
-        return self.enclave_challenge
-
-    def build_result(self):
-        self.result = (f'{self.version}:{self.task_code}:{self.task_result_checksum}:{self.enclave_challenge}:')
-
-    def addResult(self):
-        self.build_result()
-        print(f'adding result to order {self.order_id}')
-        nonce = self.w3.eth.getTransactionCount(self.publickey)
-        unicorn_txn = self.etny.functions._addResultToOrder(
-            self.order_id, self.result
-        ).buildTransaction({
-            'gas': 1000000,
-            'chainId': self.chain_id,
-            'nonce': nonce,
-            'gasPrice': self.w3.toWei("1", "mwei"),
-        })
-
-        signed_txn = self.w3.eth.account.sign_transaction(unicorn_txn, private_key=self.acct.key)
-        self.w3.eth.sendRawTransaction(signed_txn.rawTransaction)
-        # self.transaction = unicorn_tx signed
-        hash = self.w3.toHex(self.w3.sha3(signed_txn.rawTransaction))
-
-        try:
-            receipt = self.w3.eth.waitForTransactionReceipt(hash)
-        except Exception as e:
-            print(f'An error occurred while sending transaction result {self.order_id}: ', e)
-            raise
-
-        #print('transaction status: ', receipt.status)
-        #print('transaction receipt: ', receipt)
-        if receipt.status == 1:
-            print("Result transaction was successful!")
-        else:
-            print("Result transaction was UNSUCCESSFUL!")
-
-        #print("Result payload: %s" % self.result)
-        #print("TX Raw: %s" % signed_txn.rawTransaction)
-        #print("TX Hash: %s" % hash)
-
-    def build_transaction(self):
-        self.build_result()
-        print(f'adding result to order {self.order_id}')
-        nonce = self.w3.eth.getTransactionCount(self.publickey)
-        unicorn_txn = self.etny.functions._addResultToOrder(
-            self.order_id, self.result
-        ).buildTransaction({
-            'gas': 1000000,
-            'chainId': self.chain_id,
-            'nonce': nonce,
-            'gasPrice': self.w3.toWei("1", "mwei"),
-        })
-
-        signed_txn = self.w3.eth.account.sign_transaction(unicorn_txn, private_key=self.acct.key)
-        signed_tx_as_bytes = binascii.hexlify(signed_txn.rawTransaction)
-        self.signed_tx_as_bytes = signed_tx_as_bytes
-
-    def get_result_checksum(self):
-        self.task_result_checksum = hashlib.sha256(self.task_result.encode("utf-8")).hexdigest()
-
     def save_result(self):
-        self.__get_latest_trusted_zone_public_key()
-        self.encrypt_file_and_push_to_swifstream(str(self.task_result), "result.txt")
-        self.encrypt_file_and_push_to_swifstream(str(self.task_code), "result_code.txt")
-
+        # Signed over the task binding when the trustedzone supplied one
+        # ("<challenge>:<order_id>:" ahead of the data), so each signature
+        # attests this order and this run's challenge; the data itself is
+        # pushed unchanged. Without a binding (older trustedzone) the bare
+        # data is signed, which that trustedzone verifies.
+        binding = getattr(self, "task_binding", None)
+        prefix = f"{binding['challenge']}:{binding['order_id']}:" if binding else ""
+        self.encrypt_file_and_push_to_swifstream(str(self.task_result), self.result, signed_prefix=prefix)
+        self.encrypt_file_and_push_to_swifstream(str(self.task_code), self.result_code, signed_prefix=prefix)
     def save_pub_cert(self):
         self.swift_stream_service.create_bucket(self.etny_bucket)
-        self.swift_stream_service.put_file_content(self.etny_bucket,
-                                                   "cert.pem",
-                                                   self.cert_file)
-
+        if self.cert_pem:
+            data = io.BytesIO(self.cert_pem)
+            self.swift_stream_service.put_file_content(self.etny_bucket,
+                                                       "cert.pem",
+                                                       "",
+                                                       data)
     def save_transaction(self):
         self.swift_stream_service.create_bucket(self.etny_bucket)
         transaction = io.BytesIO(self.signed_tx_as_bytes)
@@ -614,118 +623,415 @@ class EtnySecureLock:
                                                    "transaction.txt",
                                                    self.transaction_file,
                                                    transaction)
-
     def execute(self):
         # ADJUDICATE the CAS attestation verdict recorded at startup. An
         # INVALID CAS quote terminates the task before the payload runs; the
-        # result (code 40, CAS_ATTESTATION_FAULT) is saved by the normal
-        # save_result() path and forwarded on-chain by the trustedzone --
-        # the refundable operator-fault path.
+        # failure reporter writes the CAS_ATTESTATION_FAULT result the
+        # trustedzone forwards on-chain -- the refundable operator-fault path.
         if getattr(self, 'cas_attestation_fault', None):
-            self.task_code = '40'
+            self.task_code = TaskStatus.CAS_ATTESTATION_FAULT
             self.task_result = (
                 f'CAS_ATTESTATION_FAULT: {self.cas_attestation_fault} -- the '
                 f'operator provisioned this task through a CAS that failed '
                 f'self-attestation; order terminated for refund.')
-            return
+            raise ValueError(self.task_result)
+        self.payload_data = self.__get_file_content_and_decrypt(self.payload)
+        self.input_data = self.__get_file_content_and_decrypt(self.input)
+        self.payload_signature = self.__get_file_content_and_decrypt(self.payload + ".sig")
+        self.input_signature = self.__get_file_content_and_decrypt(self.input + ".sig")
 
-        payload_data = self.__get_file_content_and_decrypt(self.payload)
-        input_data = self.__get_file_content_and_decrypt(self.input)
-        print('Validate client payload and input')
-        self.validate_client_payload(payload_data, input_data)
-        if app.is_valid_client_data:
-            print('Client payload and input are valid')
+        self.validate_trustedzone_data()
+        self.configure_state_registry()
+        # Interactive session: the trustedzone stages session.config when the
+        # request asked for one; the executor keeps the payload context alive,
+        # streams inputs/outputs, and finalizes with a SUCCESS summary when
+        # the running period completes (see etny_session_exec).
+        status, _ = self.swift_stream_service.is_object_in_bucket(
+            self.etny_bucket, 'session.config.securelock')
+        if status:
+            from etny_session_exec import run_session
+            logging.info('Interactive session mode')
+            task_result = run_session(self)
         else:
-            print('Client payload and input are NOT valid')
-            return
+            task_result = execute_task_v3(self.payload_data, self.input_data)
 
-        task_result = execute_task(payload_data, input_data)
-        print('TASK RESULT (code, data):', task_result)
         self.task_code = str(task_result[0])
         self.task_result = task_result[1]
 
-    def __get_file_content_and_decrypt(self, object_name):
-        status, encrypted_base64 = self.swift_stream_service.get_file_content(self.etny_bucket, object_name)
-        if not status:
-            print(f'Failed to get {object_name} file')
-            raise Exception(f'Failed to get {object_name} file')
+        # Post-payload: re-assert the attested caller across the ESR ledger from
+        # THIS securelock's private copy (self.task_caller), captured before the
+        # payload ran and never handed to the payload's exec globals. Corrects
+        # any callerUsed the payload may have forged so the trustedzone reads the
+        # truth, and -- if a forgery is detected -- fails the task locally too.
+        # Defence in depth; the trustedzone (separate enclave) and the caller
+        # bound into each commit's CID remain the authoritative layers. The
+        # re-stamped ledger and the task binding are then attested inside the
+        # result envelope save_result signs, so the trustedzone reads them
+        # from the signature rather than from the node's storage.
+        attestation = None
+        try:
+            import ecld_state
+            if ecld_state.restamp_ledger_caller(getattr(self, "task_caller", None)):
+                logging.error(
+                    "ESR ledger caller was tampered with by the payload -- "
+                    "failing the task (SECURITY_VIOLATION).")
+                self.task_code = str(TaskStatus.SECURITY_VIOLATION)
+                self.task_result = (
+                    "SECURITY_VIOLATION: the task attempted to forge the state "
+                    "commit caller. The attested submitter was re-asserted and "
+                    "the task was terminated.")
+            attestation = ecld_state.ledger_attestation()
+        except Exception as e:
+            logging.error(f"ESR ledger re-stamp skipped: {e}")
+        self.task_result = self._attach_task_attestation(
+            self.task_result, attestation, getattr(self, "task_binding", None))
+
+    @staticmethod
+    def _attach_task_attestation(task_result, attestation, binding):
+        """Attest this securelock's view of the task inside the result envelope
+        the identity key signs (save_result). esr.wallet is the enclave's ESR
+        address and esr.commits the signed authorization records it staged
+        (the same objects staged to esr.authorizations.json), taken AFTER
+        restamp_ledger_caller so they carry the attested caller; the payload's
+        own entries are kept. order_id and challenge are the task binding the
+        trustedzone forwarded, so a client can check the decrypted result
+        against the on-chain result record. Only an ecld envelope can carry
+        them; any other result (legacy plain text, or the SECURITY_VIOLATION
+        text) is returned unchanged, as is an envelope when there is nothing
+        to attest.
+        """
+        has_ledger = bool(attestation and attestation.get("wallet"))
+        if not has_ledger and not binding:
+            return task_result
+        try:
+            envelope = json.loads(str(task_result))
+        except Exception:
+            return task_result
+        if not isinstance(envelope, dict) or envelope.get("ecld") != 1:
+            return task_result
+        if has_ledger:
+            esr = envelope.get("esr")
+            entries = esr.get("entries") if isinstance(esr, dict) and isinstance(esr.get("entries"), list) else []
+            envelope["esr"] = {
+                "wallet": attestation["wallet"],
+                "entries": entries,
+                "commits": attestation["commits"],
+            }
+        if binding:
+            envelope["order_id"] = binding["order_id"]
+            envelope["challenge"] = binding["challenge"]
+        return json.dumps(envelope, default=str)
+
+    def configure_state_registry(self):
+        """Make StateRegistry usable from payload code, if ESR is enabled.
+
+        Wires the module to this enclave's identity key, the SwiftStream client
+        and bucket the node shares with us, the registry address baked in at
+        build time, and web3. Payload code then just does:
+
+            from ecld_state import StateRegistry
+            StateRegistry().commit("key", lambda s: ...)
+
+        No-op when ESR is disabled (no ESR_CONTRACT_ADDRESS baked in), so
+        non-ESR enclaves are completely unaffected.
+
+        Never raises: a state-registry setup problem must not stop the task from
+        running. Payload code that then uses StateRegistry gets a clear error
+        from the registry itself rather than a task that died before starting.
+        """
+        contract_address = os.getenv("ESR_CONTRACT_ADDRESS", "").strip()
+        if not contract_address:
+            return
+        try:
+            import ecld_state
+
+            ecld_state.configure(
+                identity_priv=self.private_key_pem,
+                swift_stream_service=self.swift_stream_service,
+                bucket=self.etny_bucket,
+                contract_address=contract_address,
+                web3=self.w3,
+                caller=getattr(self, "task_caller", None),
+            )
+            logging.info(f"StateRegistry ready (ESR {contract_address})")
+        except Exception as e:
+            logging.error(f"ESR_STATE_ERROR: could not configure StateRegistry: {e}")
+
+    def validate_trustedzone_data(self):
+        """
+        Validates signatures of payload and input from trustedzone using the trustedzone public key.
+        """
+        # Validate payload signature
+
+        self.__get_trustedzone_public_key()
+
+        logging.debug(f"Trustedzone Public Key (hex): {self.trustedzone_public_key}")
+
+        sig_der_payload = bytes.fromhex(self.payload_signature)
+        logging.debug(f"Signature DER (hex): {sig_der_payload.hex()}")
+        if not crypto.verify_signature(self.trustedzone_public_key, self.payload_data.encode('utf-8'), sig_der_payload):
+            logging.error("Payload signature validation failed")
+            raise ValueError('INVALID PAYLOAD SIGNATURE')  # Or set error state as needed
+
+        # Validate input signature
+        sig_der_input = bytes.fromhex(self.input_signature)
+        if not crypto.verify_signature(self.trustedzone_public_key, self.input_data.encode('utf-8'), sig_der_input):
+            logging.error("Input signature validation failed")
+            raise ValueError('INVALID INPUT SIGNATURE')  # Or set error state as needed
+
+        logging.info("Trustedzone signatures validated successfully")
+
+        # Authenticated task caller: the DO-request owner, read from the PoX
+        # contract by the TRUSTEDZONE and forwarded over this same signed
+        # channel (caller.securelock + .sig). Optional -- an older trustedzone
+        # does not send it, and the state ACL then treats the task as
+        # anonymous. NEVER accepted without a valid trustedzone signature.
+        self.task_caller = None
+        try:
+            caller_value = self.__get_file_content_and_decrypt('caller.securelock')
+            caller_sig = self.__get_file_content_and_decrypt('caller.securelock.sig')
+            if crypto.verify_signature(
+                    self.trustedzone_public_key,
+                    caller_value.encode('utf-8'),
+                    bytes.fromhex(caller_sig)):
+                self.task_caller = caller_value.strip()
+                logging.info(f"Task caller attested by trustedzone: {self.task_caller}")
+            else:
+                logging.error(
+                    "caller.securelock signature validation FAILED; "
+                    "treating task as anonymous")
+        except Exception as e:
+            logging.info(
+                f"No attested task caller supplied "
+                f"({e.__class__.__name__}); treating task as anonymous")
+
+        # Task binding: the order id and enclave challenge the trustedzone
+        # generated for this task, forwarded as task.securelock + .sig. When
+        # present (and only with a valid trustedzone signature) the result and
+        # the code are signed over "<challenge>:<order_id>:" and the envelope
+        # carries both, so the trustedzone can refuse a result captured from
+        # any other run. Absent with an older trustedzone, which then verifies
+        # the bare result as before.
+        self.task_binding = None
+        try:
+            task = json.loads(self.get_and_verify_trustedzone_object('task.securelock'))
+            order_id = int(task["order_id"])
+            challenge = str(task["challenge"])
+            if challenge:
+                self.task_binding = {"order_id": order_id, "challenge": challenge}
+                logging.info(f"Task binding attested by trustedzone: order {order_id}")
+        except Exception as e:
+            logging.info(
+                f"No task binding supplied ({e.__class__.__name__}); "
+                f"result will not be bound")
+
+    def get_and_verify_trustedzone_object(self, object_name: str) -> str:
+        """Decrypt a trustedzone-pushed object and verify its signature --
+        the same trust checks the payload/input handoff gets. Raises on any
+        failure so the session never consumes unauthenticated data."""
+        data = self.__get_file_content_and_decrypt(object_name)
+        sig_hex = self.__get_file_content_and_decrypt(object_name + '.sig')
+        if not crypto.verify_signature(self.trustedzone_public_key,
+                                       data.encode('utf-8'),
+                                       bytes.fromhex(sig_hex)):
+            raise ValueError(f"trustedzone signature invalid for {object_name}")
+        return data
+
+    def __get_file_content_and_decrypt(self, object_name: str) -> str:
+        encrypted_base64 = self.__get_file_content(object_name)
 
         encrypted_tuple = crypto.encrypted_data_from_base64_json(encrypted_base64.encode('utf-8'))
-        decrypted_result = crypto.decrypt(self.key_file, encrypted_tuple)
+        decrypted_result = crypto.decrypt(self.private_key_pem, encrypted_tuple)
         return decrypted_result.decode('utf-8')
 
-    def encrypt_file_and_push_to_swifstream(self, file_data, file_name):
-        encrypted_input = crypto.encrypt_with_pub_key(self.trusted_zone_public_key, file_data.encode('utf-8'))
+    def __get_file_content(self, object_name: str) -> str:
+        status, content = self.swift_stream_service.get_file_content(self.etny_bucket, object_name)
+        if not status:
+            raise ValueError(f'Failed to get {object_name} file')
+        return content
+    def encrypt_file_and_push_to_swifstream(self, file_data: str, file_name: str, signed_prefix: str = ''):
+        """
+        Encrypts data with trustedzone pubkey, signs signed_prefix + the original
+        data with our private key, encrypts the signature, and uploads both to
+        storage in separate files. The prefix binds the signature to a context
+        (the task binding, for the result and code) without changing the
+        uploaded data.
+        """
+        # Encrypt the data
+        encrypted_input = crypto.encrypt_with_pub_key(self.trustedzone_public_key_pem, file_data.encode('utf-8'))
         encrypted_input_base64 = crypto.encrypted_data_to_base64_json(encrypted_input)
+        data_file_name = file_name
 
-        # file name should end with secure lock '.securelock' extension
-        file_name = file_name + '.securelock'
+        # Sign the original data, with the binding prefix when given
+        sig_der = crypto.sign_data(self.private_key_pem, (signed_prefix + file_data).encode('utf-8'))
+        sig_hex = sig_der.hex()
+
+        # Encrypt the signature
+        encrypted_sig = crypto.encrypt_with_pub_key(self.trustedzone_public_key_pem, sig_hex.encode('utf-8'))
+        encrypted_sig_base64 = crypto.encrypted_data_to_base64_json(encrypted_sig)
+        sig_file_name = file_name + '.sig'
+
+        # Upload encrypted data
         self.swift_stream_service.create_bucket(self.etny_bucket)
-        data = io.BytesIO(encrypted_input_base64)
-        status, _ = self.swift_stream_service.put_file_content(self.etny_bucket,
-                                                               file_name,
-                                                               "",
-                                                               data)
+        data_io = io.BytesIO(encrypted_input_base64)
+        status, _ = self.swift_stream_service.put_file_content(self.etny_bucket, data_file_name, "", data_io)
         if status:
-            print(f'File {file_name} encrypted and saved to swift stream successfully')
+            logging.info(f'File {data_file_name} encrypted and saved to swift stream successfully')
 
-    def __get_trusted_zone_public_key(self):
-        print('getting the public key of the trusted zone enclave')
-        image_hash = self._metadata.image_hash
-        if EtnySecureLock.debug:
-            image_hash = 'v3-hash-1'
-        self.trusted_zone_public_key = self.image_registry.caller().getTrustedZoneImageCertPublicKey(
-            image_hash)
+        # Upload encrypted signature
+        sig_io = io.BytesIO(encrypted_sig_base64)
+        status_sig, _ = self.swift_stream_service.put_file_content(self.etny_bucket, sig_file_name, "", sig_io)
+        if status_sig:
+            logging.info(f'Signature file {sig_file_name} encrypted and saved to swift stream successfully')
 
-    def __get_latest_trusted_zone_public_key(self):
-        print('getting latest public key of the trusted zone enclave')
-        self.trusted_zone_public_key = self.image_registry.caller().getLatestTrustedZoneImageCertPublicKey(
-            '__TRUSTED_ZONE_IMAGE__', 'v3')[1]
+    def __get_trustedzone_public_key(self):
+        logging.info('Getting the public key of the trusted zone enclave')
+        image_name = self._metadata.trustedzone_image_name
+        self.trustedzone_image_hash, self.trustedzone_public_key_pem, self.trustedzone_composer_hash = self.image_registry.caller().getLatestTrustedZoneImageCertPublicKey(image_name, 'v3')
+
+        # Parse PEM to extract raw public key hex (x + y coordinates, no '04' prefix)
+        from cryptography.x509 import load_pem_x509_certificate
+        cert = load_pem_x509_certificate(self.trustedzone_public_key_pem.encode('utf-8'), default_backend())
+        pub_key = cert.public_key()
+        pub_bytes = pub_key.public_bytes(
+            encoding=serialization.Encoding.X962,
+            format=serialization.PublicFormat.UncompressedPoint
+        )[1:]  # Slice off the '04' uncompressed prefix for raw format
+        self.trustedzone_public_key = pub_bytes.hex()
+
+        logging.debug(f'Extracted trustedzone public key hex: {self.trustedzone_public_key[:20]}...')  # Log snippet for confirmation
+        
+
+def _report_failure(app, exc):
+    """Best-effort: write a failure result so the trustedzone stops waiting.
+
+    Securelock only publishes the result (and its code); the trustedzone reads
+    those and builds the signed transaction. Guarded throughout -- this runs
+    while already handling a failure, so it must never raise or hang. If the
+    enclave died before it had enough state (no app, no keys), there is nothing
+    publishable and we exit quietly.
+    """
+    if app is None:
+        logging.error("cannot report failure: enclave died before initialization")
+        return
+    try:
+        # Preserve a specific code if one was already set (checksum mismatch,
+        # metadata fetch, ...); fall back to SYSTEM_ERROR for anything else.
+        if not getattr(app, 'task_code', None):
+            app.task_code = TaskStatus.SYSTEM_ERROR
+        if not getattr(app, 'task_result', None):
+            app.task_result = f'ENCLAVE ERROR: {exc}'
+        app.save_result()
+        logging.info(f"failure reported (task_code={app.task_code})")
+    except Exception as report_exc:
+        logging.error(f"could not report the failure result: {report_exc}")
 
 
 if __name__ == '__main__':
-    print('[SecureLock] Loading env variables..')
-    try:
-        if EtnySecureLock.debug:
-            swiftStreamClient = SwiftStreamService("localhost:9000",
-                                                   "swiftstreamadmin",
-                                                   "swiftstreamadmin")
-        else:
-            swiftStreamClient = SwiftStreamService("etny-swift-stream:9000",
-                                                   "swiftstreamadmin",
-                                                   "swiftstreamadmin")
+    network_type = '__NETWORK_TYPE__'
+    logging.info(f'[SecureLock] Initializing enclave for {network_type}')
 
-        status, env_content = swiftStreamClient.get_file_content("etny-pynithy-testnet-v3", ".env")
-        if not status:
-            print("Failed to get .env file")
-            raise Exception("Failed to get .env file")
-        EtnySecureLock.read_env_str(env_content)
-    except:
-        cert_file = "/app/__ENCLAVE_NAME_SECURELOCK__/cert.pem"
-        with open(cert_file, 'r') as f:
-            print("PUBLIC_CERT:", f.read())
+    # Determine paths based on debug mode
+    key_file = "/private/__SECURELOCK_SESSION__/key.pem"
+    cert_file = "/app/__SECURELOCK_SESSION__/cert.pem"
+    pub_cert_file = "/app/__SECURELOCK_SESSION__/enclave_pub_cert.pem"
+    # A CAS-provisioned build loads the key and cert the CAS injected from the
+    # session: mainnet (Scontain CAS), and a testnet with a ValidatorRegistry
+    # baked in (ethernity-cas -- the same registry verify_cas_attestation
+    # checks the CAS against). A testnet build with no registry self-signs
+    # from MR_ENCLAVE.
+    validator_registry = '__VALIDATOR_REGISTRY_ADDRESS__'
+    cas_provisioned = network_type == 'mainnet' or (
+        bool(validator_registry) and not validator_registry.startswith('__'))
+    if cas_provisioned and os.path.exists(key_file) and os.path.exists(cert_file):
+        logging.info("Loading key and cert from session")
+        with open(key_file, 'r+b') as f:
+            private_key_pem = f.read()
+            f.truncate(0)
+        with open(cert_file, 'rb') as f:
+            cert_pem = f.read()
+    elif network_type == 'testnet' and not cas_provisioned:
+        logging.info("No existing key/cert files found")
+        private_key_pem, cert_pem = EtnySecureLock.generate_cert_from_mrenclave()
+    else:
+        logging.error(f"Invalid encalve session or network type")
         exit(1)
 
-    if not EtnySecureLock.debug:
-        with open("/app/__ENCLAVE_NAME_SECURELOCK__/cert.pem", 'r') as f:
-            print("PUBLIC_CERT:", f.read())
+    # Emit the enclave public certificate IMMEDIATELY, before touching
+    # SwiftStream. The public-key extraction service runs securelock in an
+    # environment with NO etny-swift-stream (MinIO) container; the first
+    # SwiftStream call below (get_file_content for .env) then blocks on a TCP
+    # connect to a non-existent host with no timeout, so the enclave hangs and
+    # the extractor's getPublicKey times out WITHOUT ever receiving the cert.
+    # The cert is already in hand (generated from MR_ENCLAVE above / loaded from
+    # the CAS session) and needs nothing from SwiftStream, so print it first.
+    # Real task runs also benefit: the cert is available up-front and the same
+    # PUBLIC_CERT line is still printed in the except handler for compatibility.
+    logging.info(f"PUBLIC_CERT: {cert_pem.decode('utf-8')}")
 
-    print('Initializing..')
-    app = EtnySecureLock(swiftStreamClient)
-    print('Validate client payload and input')
-    app.wait_for_payload_and_input()
+    # ESR (RFC §5.2): emit the enclave's ESR wallet ADDRESS on the same channel
+    # as the cert, so publish can capture it locally or via the remote
+    # extraction service. It MUST be derived here rather than by the extraction
+    # service: on mainnet the identity key is CAS-provisioned and exists only
+    # inside this enclave, so nobody outside can compute the address. Only the
+    # address is emitted — the private key never leaves.
+    if os.getenv("ESR_CONTRACT_ADDRESS", "").strip():
+        try:
+            esr_address = esr_wallet.derive_wallet_address(private_key_pem)
+            logging.info(f"ESR_WALLET_ADDRESS: {esr_address}")
+            if not esr_wallet.is_secret_identity(network_type, attested=cas_provisioned):
+                logging.warning(esr_wallet.INSECURE_IDENTITY_WARNING)
+        except Exception as e:
+            # Never let ESR derivation break a task: report it the way every
+            # other enclave-side config problem is reported.
+            logging.error(f"ESR_WALLET_ERROR: {e}")
 
-    if app.is_valid_client_data:
-        print('Executing client code..')
+    # Cert-harvest (public-key extraction) mode: the extraction service runs
+    # securelock with NO SwiftStream and NO task, purely to read the PUBLIC_CERT
+    # printed above. In that environment the .env fetch below fails (no MinIO).
+    # The cert is already out, so EXIT(0) cleanly instead of proceeding to
+    # wait_for_payload_and_input() -- which would block forever waiting for a task
+    # that never comes, hanging the extractor until its 20-minute timeout. (The
+    # extractor captures the cert from stdout when this process exits.)
+    try:
+        swiftStreamClient = SwiftStreamService("etny-swift-stream:9000", "swiftstreamadmin", "swiftstreamadmin")
+        status, env_content = swiftStreamClient.get_file_content("__BUCKET_NAME__", ".env")
+    except Exception as e:
+        logging.info(f"SwiftStream unavailable ({e}); public key emitted, exiting (cert-harvest mode)")
+        exit(0)
+    if not status:
+        logging.info("No .env in SwiftStream; public key emitted, exiting (cert-harvest mode)")
+        exit(0)
+
+    try:
+        EtnySecureLock.read_env_str(env_content)
+
+        app = EtnySecureLock(cert_pem, private_key_pem, swiftStreamClient)
+
+        logging.info('Waiting for payload and input')
+        app.wait_for_payload_and_input()
+
+        logging.info('Validate client payload and input')
+        app.validate_client_payload()
+        if app.is_valid_client_data:
+            logging.info('Client payload and input are valid')
+        else:
+            logging.error('Client payload and input are NOT valid')
+            raise ValueError(app.task_result)
+
         app.execute()
-    else:
-        print('Failed client payload and input validation')
-    # print('Generating task result checksum..')
-    # app.get_result_checksum()
-    # print('Building transaction..')
-    # app.build_transaction()
-    # print('Saving transaction...')
-    # app.save_transaction()
-    # print('Saving the result..')
-    app.save_result()
-    print('Finished the execution')
+
+        app.save_result()
+
+        logging.info('Finished the execution')
+    except Exception as e:
+        logging.error(f"Error: {e}")
+        logging.info(f"PUBLIC_CERT: {cert_pem.decode('utf-8')}")
+        # Publish a failure result rather than exiting silently. The trustedzone
+        # blocks waiting for this enclave's result; without it that wait runs to
+        # its timeout and the whole order stalls with no diagnosis. Note the
+        # validation path above RAISES on invalid client data, so without this
+        # even a checksum mismatch -- which sets task_code/task_result -- was
+        # never reported.
+        _report_failure(locals().get('app'), e)
+        exit(1)

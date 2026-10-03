@@ -33,26 +33,34 @@ const fs = require('fs');
 const path = require('path');
 const { ethers } = require('ethers');
 try { require('dotenv').config(); } catch (e) { /* dotenv optional */ }
+const casConfig = require('./cas/config.js');
 
 // Authoritative per-network values (mirror of the Python SDK's network table).
 const NETWORKS = {
   BLOXBERG_MAINNET: {
-    type: 'mainnet', chainId: 8995, rpc: 'https://core.bloxberg.org',
+    type: 'mainnet', chainId: 8995, rpc: 'https://bloxberg.ethernity.cloud',
     protocol: '0x549A6E06BB2084100148D50F51CF77a3436C3Ae7',
     imageRegistry: '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31',
     esr: '0x4Bf5cDE3BFD73dd10B707f8B123Ba631D2EBEAD2',
   },
   BLOXBERG_TESTNET: {
-    type: 'testnet', chainId: 8995, rpc: 'https://core.bloxberg.org',
+    type: 'testnet', chainId: 8995, rpc: 'https://bloxberg.ethernity.cloud',
     protocol: '0x02882F03097fE8cD31afbdFbB5D72a498B41112c',
     imageRegistry: '0x99A84C624C028bdf0a855A1E9E3f2fcf7275B3D8',
     esr: '0x0Ea1728EAE108FD3B9340ae91451348E2Cc6b4E4',
   },
   LITVM_LITEFORGE: {
-    type: 'testnet', chainId: 0, rpc: 'https://liteforge.rpc.caldera.xyz/infra-partner-http',
-    protocol: '', imageRegistry: '', esr: '0x709052Fe77Af543d3d9FE2Ac06a15c635c8D4Be5',
+    type: 'testnet', chainId: 4441, rpc: 'https://liteforge.rpc.caldera.xyz/infra-partner-http',
+    protocol: '0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2',
+    imageRegistry: '0x55e0ad455Be85162b71a790f00Fc305680E3CE53',
+    esr: '0x709052Fe77Af543d3d9FE2Ac06a15c635c8D4Be5',
   },
 };
+// The -unsafe networks: the chain and contracts of the network each is the
+// unsafe variant of, without a CAS.
+for (const [unsafe, sibling] of Object.entries(casConfig.UNSAFE_NETWORKS)) {
+  NETWORKS[unsafe.toUpperCase()] = { ...NETWORKS[sibling.toUpperCase()], type: 'unsafe testnet, no CAS' };
+}
 
 const IMAGE_REGISTRY_ABI = [
   'function imageDetails(string) view returns (address owner, string ipfsHash, string version, string session, uint256 fee, address rewardAddress, bool validated, bool published, string certPublicKey, string dockerComposeHash, string name)',
@@ -296,7 +304,8 @@ async function main() {
   const prov = provider(net.rpc);
 
   const ipfs = args.ipfs || process.env.IPFS_HASH || null;
-  const projName = args.name || process.env.PROJECT_NAME || null;
+  // <PROJECT_NAME>-unsafe on an -unsafe network, which is how publish registers it.
+  const projName = args.name || casConfig.nameOnNetwork(process.env.PROJECT_NAME, netName) || null;
 
   if (section === 'esr') {
     args.esrCmd = args._[1];
