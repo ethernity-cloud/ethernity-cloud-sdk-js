@@ -30,7 +30,9 @@
     "postinstall.js",
     "test.js",
     "info.js",
-    "run.js"
+    "run.js",
+    "!**/__pycache__/**",
+    "!**/*.pyc"
   ],
   "dependencies": {
     "@ethernity-cloud/runner": "^0.6.0",
