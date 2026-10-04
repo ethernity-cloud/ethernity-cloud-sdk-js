@@ -31,11 +31,12 @@
     "test.js",
     "info.js",
     "run.js",
+    "network.js",
     "!**/__pycache__/**",
     "!**/*.pyc"
   ],
   "dependencies": {
-    "@ethernity-cloud/runner": "^0.6.0",
+    "@ethernity-cloud/runner": "^0.6.1",
     "acorn": "^8.11.0",
     "adm-zip": "^0.5.14",
     "axios": "^1.7.2",

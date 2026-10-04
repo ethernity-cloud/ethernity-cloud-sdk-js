@@ -1,58 +1,62 @@
-const AppCss = require('./App.css');
+import './App.css';
 import EthernityCloudRunner from "@ethernity-cloud/runner";
-import {ECEvent, ECRunner, ECStatus} from "@ethernity-cloud/runner/enums";
-import Web3 from 'web3';
+import { ECStatus } from "@ethernity-cloud/runner/enums";
 
+// Filled in from the project's .env by src/preStart.mjs on `npm start`: the
+// securelock this dApp is published as, the trustedzone it was built against,
+// the network's token address and chain id, the -unsafe network when the dApp
+// runs without a CAS (null otherwise), and the IPFS endpoint.
 const PROJECT_NAME = "";
+const TRUSTED_ZONE_IMAGE = "";
+const NETWORK_ADDRESS = "";
+const CHAIN_ID = null;
+const UNSAFE_NETWORK = null;
 const IPFS_ENDPOINT = "";
 
+// A call into src/serverless/backend.py; its return value is the task result.
 const code = `hello("World")`;
 
 function App() {
     const executeTask = async () => {
-        const runner = new EthernityCloudRunner();
-        // this is a server provided by Ethernity CLOUD, please bear in mind that you can use your own Decentralized Storage server
-        const ipfsAddress = IPFS_ENDPOINT;
-        runner.initializeStorage(ipfsAddress);
-        console.log(PROJECT_NAME)
-        const onTaskProgress = (e) => {
-            if (e.detail.status === ECStatus.ERROR) {
-                console.error(e.detail.message);
-            } else {
-                console.log(e.detail.message);
-            }
-        };
-
-        const onTaskCompleted = (e) => {
-            console.log(`Task Result: ${e.detail.message.result}`);
-            // display the result in page below the buttons
-            const result = document.createElement("p");
-            result.innerHTML = `Task Result: ${e.detail.message.result}`;
-            document.body.appendChild(result);
+        // The browser wallet (MetaMask) signs and pays for the order.
+        const runner = new EthernityCloudRunner(NETWORK_ADDRESS, {}, CHAIN_ID || undefined);
+        if (UNSAFE_NETWORK) {
+            await runner.setNetwork(...UNSAFE_NETWORK);
         }
+        runner.initializeStorage(IPFS_ENDPOINT);
 
-        runner.addEventListener(ECEvent.TASK_PROGRESS, onTaskProgress);
-        runner.addEventListener(ECEvent.TASK_COMPLETED, onTaskCompleted);
+        // Events are named by task status; detail is { message, status, progress }.
+        runner.addEventListener(ECStatus.DEFAULT, (e) => {
+            console.log(`[${e.detail.progress}] ${e.detail.message}`);
+        });
+        runner.addEventListener(ECStatus.ERROR, (e) => {
+            console.error(e.detail.message);
+        });
+        runner.addEventListener(ECStatus.SUCCESS, async () => {
+            const result = await runner.getResult();
+            console.log(`Task Result: ${result}`);
+            // display the result in page below the buttons
+            const line = document.createElement("p");
+            line.textContent = `Task Result: ${result}`;
+            document.body.appendChild(line);
+        });
 
-        await runner.run(PROJECT_NAME,
-                        code,
-                         '0xd58f5C1834279ABD601df85b3E4b2323aDD4E75e',
-                         { taskPrice: 6, cpu: 1, memory: 1, storage: 10, bandwidth: 1, duration: 1, validators: 1 });
+        const resources = { taskPrice: 10, cpu: 1, memory: 1, storage: 10, bandwidth: 1, duration: 1, validators: 1 };
+        await runner.run(resources, PROJECT_NAME, code, '', TRUSTED_ZONE_IMAGE);
     };
+
     const connectWallet = async () => {
-      if (window.ethereum) {
-          window.web3 = new Web3(window.ethereum);
-          try {
-              // Request account access
-              await window.ethereum.request({ method: 'eth_requestAccounts' });
-              console.log("Wallet connected");
-          } catch (error) {
-              console.error("User denied account access");
-          }
-      } else {
-          console.log('Please install MetaMask!');
-      }
-  };
+        if (!window.ethereum) {
+            console.log('Please install MetaMask!');
+            return;
+        }
+        try {
+            await window.ethereum.request({ method: 'eth_requestAccounts' });
+            console.log("Wallet connected");
+        } catch (error) {
+            console.error("User denied account access");
+        }
+    };
 
     return (
         <div className="container">

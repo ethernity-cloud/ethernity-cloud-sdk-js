@@ -40,47 +40,9 @@
 const fs = require('fs');
 try { require('dotenv').config(); } catch (e) { /* dotenv optional */ }
 const casConfig = require('./cas/config.js');
+const { networkFor, unsafeVariant } = require('./network.js');
 
 const DEFAULT_IPFS = 'https://ipfs.ethernity.cloud/api/v0';
-
-/* Map a BLOCKCHAIN_NETWORK token (as ecld-init writes it, spaces -> underscores)
- * to the runner's network: its token ADDRESS, the chain id of a testnet whose
- * token address other testnets share, and for an -unsafe network the
- * (network, type) the runner is set to, which runs only -unsafe trustedzones.
- * Built from the runner's own enums so it can't drift. Accepts a few spellings
- * per network. */
-function networkFor({ ECAddress, ECNetworkByChainId }, raw) {
-  const key = String(raw || '').trim().toUpperCase().replace(/\s+/g, '_');
-  const bloxbergTestnet = { address: ECAddress.BLOXBERG.TESTNET_ADDRESS };
-  const amoy = { address: ECAddress.POLYGON.TESTNET_ADDRESS };
-  const sepolia = { address: ECAddress.SEPOLIA.TESTNET_ADDRESS, chainId: ECNetworkByChainId.SEPOLIA.TESTNET };
-  const litvm = { address: ECAddress.LITVM.TESTNET_ADDRESS, chainId: ECNetworkByChainId.LITVM.TESTNET };
-  const table = {
-    BLOXBERG_TESTNET: bloxbergTestnet,
-    BLOXBERG_TESTNET_UNSAFE: { ...bloxbergTestnet, unsafe: ['BLOXBERG', 'TESTNET_UNSAFE'] },
-    BLOXBERG_MAINNET: { address: ECAddress.BLOXBERG.MAINNET_ADDRESS },
-    POLYGON_MAINNET: { address: ECAddress.POLYGON.MAINNET_ADDRESS },
-    POLYGON_AMOY: amoy,
-    POLYGON_AMOY_TESTNET: amoy,
-    IOTEX_TESTNET: { address: ECAddress.IOTEX.TESTNET_ADDRESS, chainId: ECNetworkByChainId.IOTEX.TESTNET },
-    ETHEREUM_SEPOLIA: sepolia,
-    SEPOLIA: sepolia,
-    LITVM_LITEFORGE: litvm,
-    LITVM: litvm,
-    LITVM_LITEFORGE_UNSAFE: { ...litvm, unsafe: ['LITVM', 'TESTNET_UNSAFE'] },
-  };
-  return { key, network: table[key] || null, known: Object.keys(table) };
-}
-
-/* The -unsafe network a network token names, or whose sibling it names; null
- * when the network has no -unsafe variant. */
-function unsafeVariant(raw) {
-  const key = String(raw || '').trim().replace(/\s+/g, '_');
-  if (casConfig.isUnsafeNetwork(key)) return key;
-  const variant = Object.keys(casConfig.UNSAFE_NETWORKS)
-    .find((name) => casConfig.UNSAFE_NETWORKS[name].toUpperCase() === key.toUpperCase());
-  return variant || null;
-}
 
 function parseArgs(argv) {
   const opts = { ipfs: DEFAULT_IPFS, timeout: 600, taskPrice: 3, cpu: 1, memory: 1, storage: 10, bandwidth: 1, duration: 1, validators: 1, node: '' };

@@ -1,57 +1,47 @@
+// Runs before `react-scripts start` (the project's `npm start`): fills the
+// constants at the top of src/ec_helloworld_example.js from the project's
+// .env, the way ecld-run reads the same values. PROJECT_NAME and
+// TRUSTED_ZONE_IMAGE take their -unsafe form on an -unsafe network; the
+// network's token address, chain id and -unsafe (network, type) come from the
+// runner's own enums through the SDK's network table.
 import fs from 'fs';
+import { createRequire } from 'module';
 import dotenv from 'dotenv';
-dotenv.config();
+import * as enums from '@ethernity-cloud/runner/enums.js';
 
-export const ECRunner = {
-  'etny-pynithy-testnet': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c'],
-  'etny-nodenithy-testnet': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c'],
-  'etny-pynithy': ['0x549A6E06BB2084100148D50F51CF77a3436C3Ae7'],
-  'etny-nodenithy': ['0x549A6E06BB2084100148D50F51CF77a3436C3Ae7'],
-  'ecld-nodenithy-testnet': ['0xfb450e40f590F1B5A119a4B82E6F3579D6742a00'],
-  'ecld-pynithy': ['0xc6920888988cAcEeA7ACCA0c96f2D65b05eE22Ba'],
-  'ecld-nodenithy': ['0xc6920888988cAcEeA7ACCA0c96f2D65b05eE22Ba']
+dotenv.config();
+const require = createRequire(import.meta.url);
+const casConfig = require('@ethernity-cloud/sdk-js/cas/config.js');
+const { networkFor } = require('@ethernity-cloud/sdk-js/network.js');
+
+const { PROJECT_NAME, TRUSTED_ZONE_IMAGE, BLOCKCHAIN_NETWORK, IPFS_ENDPOINT } = process.env;
+if (!PROJECT_NAME || !BLOCKCHAIN_NETWORK) {
+  console.error('preStart: PROJECT_NAME and BLOCKCHAIN_NETWORK are not set in .env; run `npm run ecld-init` first.');
+  process.exit(1);
+}
+const { network, known } = networkFor(enums, BLOCKCHAIN_NETWORK);
+if (!network) {
+  console.error(`preStart: unknown BLOCKCHAIN_NETWORK '${BLOCKCHAIN_NETWORK}' in .env. Known: ${known.join(', ')}`);
+  process.exit(1);
+}
+
+const constants = {
+  PROJECT_NAME: casConfig.nameOnNetwork(PROJECT_NAME, BLOCKCHAIN_NETWORK),
+  TRUSTED_ZONE_IMAGE: casConfig.nameOnNetwork(TRUSTED_ZONE_IMAGE, BLOCKCHAIN_NETWORK) || '',
+  NETWORK_ADDRESS: network.address,
+  CHAIN_ID: network.chainId || null,
+  UNSAFE_NETWORK: network.unsafe || null,
+  IPFS_ENDPOINT: IPFS_ENDPOINT || 'https://ipfs.ethernity.cloud',
 };
 
 const filePath = 'src/ec_helloworld_example.js';
-const fileContent = fs.readFileSync(filePath, 'utf8');
-
-const updatedContent = fileContent
-    .replace(/const PROJECT_NAME = ".*?";/, `const PROJECT_NAME = "${process.env.PROJECT_NAME}";`)
-    .replace(/const IPFS_ENDPOINT = ".*?";/, `const IPFS_ENDPOINT = "${process.env.IPFS_ENDPOINT}";`)
-    .replace(/new EthernityCloudRunner\(.*?\);/, `new EthernityCloudRunner('${ECRunner[process.env.ENCLAVE_NAME_TRUSTEDZONE]}');`);
-
-fs.writeFileSync(filePath, updatedContent, 'utf8');
-
-// const code = updatedContent.match(/const code = `hello\("(.*?)"\);/)[1];
-
-const imageRegistryPath = 'node_modules/@ethernity-cloud/runner/contract/operation/imageRegistryContract.js';
-const imageRegistryContent = fs.readFileSync(imageRegistryPath, 'utf8');
-
-// Log the original content for debugging
-// console.log('Original imageRegistryContent:', imageRegistryContent);
-
-// Replace the content in imageRegistryContract.js
-// const updatedImageRegistryContent = imageRegistryContent.replace(/getLatestTrustedZoneImageCertPublicKey\([^)]*\);/, "getLatestTrustedZoneImageCertPublicKey('" + process.env.ENCLAVE_NAME_TRUSTEDZONE + "', 'v3')").replace(/getLatestImageVersionPublicKey\([^)]*\)/, "getLatestImageVersionPublicKey(imageName, '" + process.env.VERSION + "')");
-const updatedImageRegistryContent = imageRegistryContent.replace(
-    /async getEnclaveDetailsV3\(.*?\{[\s\S]*?\}\s*\}/,
-    `async getEnclaveDetailsV3(imageName, version) {
-      try {
-        const trustedZonePublicKey = (await this.contract.getLatestTrustedZoneImageCertPublicKey('${process.env.ENCLAVE_NAME_TRUSTEDZONE}', 'v3'));
-        const imageDetails = await this.contract.getLatestImageVersionPublicKey(imageName, '${process.env.VERSION}');
-        return [imageDetails[0], trustedZonePublicKey[1], imageDetails[2]];
-      } catch (e) {
-        console.log(e);
-        return null;
-      }
-    }`
-  );
-
-
-fs.writeFileSync(imageRegistryPath, updatedImageRegistryContent, 'utf8');
-
-const runnerPath = 'node_modules/@ethernity-cloud/runner/runner.js';
-const runnerContent = fs.readFileSync(runnerPath, 'utf8');
-
-const updatedRunnerContent = runnerContent.replace(/this.#enclaveImageIPFSHash}:.*?:/, "this.#enclaveImageIPFSHash}:"+process.env.ENCLAVE_NAME_TRUSTEDZONE+":").replace(/new ImageRegistryContract\([^)]*\);/, "new ImageRegistryContract(this.#networkAddress, '"+process.env.ENCLAVE_NAME_TRUSTEDZONE+"');");
-
-fs.writeFileSync(runnerPath, updatedRunnerContent, 'utf8');
+let content = fs.readFileSync(filePath, 'utf8');
+for (const [name, value] of Object.entries(constants)) {
+  const line = new RegExp(`^const ${name} = .*;$`, 'm');
+  if (!line.test(content)) {
+    console.error(`preStart: ${filePath} has no 'const ${name} = ...;' line to fill.`);
+    process.exit(1);
+  }
+  content = content.replace(line, `const ${name} = ${JSON.stringify(value)};`);
+}
+fs.writeFileSync(filePath, content, 'utf8');

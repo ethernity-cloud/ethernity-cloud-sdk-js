@@ -310,9 +310,11 @@ const main = async () => {
       );
     }
     console.log("Installing required packages...");
-    // Simulate npm install
+    // The app runs on the runner at the range this SDK depends on; the spec is
+    // quoted because cmd.exe treats a bare ^ as its escape character.
+    const runnerSpec = `@ethernity-cloud/runner@${require("./package.json").dependencies["@ethernity-cloud/runner"]}`;
     execSync(
-      "npm install @ethernity-cloud/runner@0.0.26 @testing-library/jest-dom@5.17.0 @testing-library/react@13.4.0 @testing-library/user-event@13.5.0 react@18.3.1 react-dom@18.3.1 react-scripts@5.0.1 web-vitals@2.1.4 web3@4.9.0 dotenv@16.4.5",
+      `npm install "${runnerSpec}" @testing-library/jest-dom@5.17.0 @testing-library/react@13.4.0 @testing-library/user-event@13.5.0 react@18.3.1 react-dom@18.3.1 react-scripts@5.0.1 web-vitals@2.1.4 dotenv@16.4.5`,
       { stdio: "inherit" },
     );
   } else {
