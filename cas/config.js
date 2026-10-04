@@ -14,10 +14,10 @@
 // Kept in sync with etny-{pynithy,nodenithy}/v3/networks.yaml
 // (cas_session_registry_address, validator_registry_address).
 const VALIDATOR_REGISTRY = {
-  'etny-pynithy-testnet': '0xa821b36F378F76c793c436F5f9c9CC36c684eBE5',
-  'etny-nodenithy-testnet': '0xa821b36F378F76c793c436F5f9c9CC36c684eBE5',
-  'ecld-pynithy-litvm-testnet': '0x2E27677fb67531eb09134fE331C27899f87ADe10',
-  'ecld-nodenithy-litvm-testnet': '0x2E27677fb67531eb09134fE331C27899f87ADe10',
+  'etny-pynithy-testnet': '0x0014aB102FEa6b02e3D793FF4b9a0Af309fB4E14',
+  'etny-nodenithy-testnet': '0x0014aB102FEa6b02e3D793FF4b9a0Af309fB4E14',
+  'ecld-pynithy-litvm-testnet': '0xbE3759f327e8643fC5A1717fb2072A0dAcBAD29E',
+  'ecld-nodenithy-litvm-testnet': '0xbE3759f327e8643fC5A1717fb2072A0dAcBAD29E',
 };
 
 const SESSION_REGISTRY = {

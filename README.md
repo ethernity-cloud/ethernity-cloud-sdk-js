@@ -43,7 +43,7 @@ The sdk has been tested on the following operating systems:
       provisioned by the ethernity-cas validator set exactly as on mainnet.
       `ecld-publish` registers the securelock session on-chain in the
       SessionRegistry (`0xcb1F389b...`, see `cas/config.js`), resolves a CAS
-      from the ValidatorRegistry (`0xa821b36F...`, or `ECLD_CAS_ADDR=host:port`)
+      from the ValidatorRegistry (`0x0014aB10...`, or `ECLD_CAS_ADDR=host:port`)
       for the compose and the certificate harvest, takes the trustedzone
       session name from the ImageRegistry (ECImageRegistryV2,
       `0x99A84C62...`), and links the session to the published image. `ecld-build` signs the securelock `--production`.
@@ -53,7 +53,7 @@ The sdk has been tested on the following operating systems:
 - LitVM:
     - LiteForge - CAS-attested the same way, by LitVM's own ethernity-cas
       validator set (SessionRegistry `0x8ad24b3F...`, ValidatorRegistry
-      `0x2E27677f...`).
+      `0xbE3759f3...`).
     - LiteForge Unsafe - the unsafe network beside LiteForge (see below).
 - Polyhon:
     - Amoy Testnet - to be provided during the following updates
