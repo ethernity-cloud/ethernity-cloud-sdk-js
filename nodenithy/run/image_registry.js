@@ -253,6 +253,28 @@ class ImageRegistry {
         const receipt = await this.provider.sendTransaction(signedTxn.rawTransaction);
     }
 
+    // Where the image's developer fee is paid. The registry records the
+    // publishing wallet at registration; only the image's owner changes it.
+    async setRewardAddress(ipfsHash, rewardAddress) {
+        const current = await this.imageRegistryContract.getRewardAddress(ipfsHash);
+        if (current.toLowerCase() === rewardAddress.toLowerCase()) {
+            console.log(`Reward address is already ${rewardAddress}`);
+            return;
+        }
+        console.log(`Setting the reward address to ${rewardAddress}`);
+        const overrides = {};
+        if (BLOCKCHAIN_NETWORK.includes("Polygon")) {
+            overrides.nonce = await this.provider.getTransactionCount(this.acct.address, 'pending');
+            overrides.gasPrice = (await this.provider.getGasPrice()).mul(110).div(100);
+        }
+        const tx = await this.imageRegistryContract.changeImageRewardAddress(ipfsHash, rewardAddress, overrides);
+        const receipt = await this.imageRegistryContract.provider.waitForTransaction(tx.hash);
+        console.log("transaction receipt: ", tx.hash);
+        if (receipt.status !== 1) {
+            throw new Error(`changeImageRewardAddress reverted (${tx.hash})`);
+        }
+    }
+
     async getTrustedZoneCert(ipfsHash) {
         const cert = await this.imageRegistryContract.getTrustedZoneCert(ipfsHash);
         return cert;
@@ -358,6 +380,21 @@ class ImageRegistry {
             for (const versionKey of versionKeys) {
                 console.log(`Registering securelock under version '${versionKey}'`);
                 await imageRegistry.addSecureLockImageCert(secureLock, ipfsHash, imageName, versionKey, ipfsDockerComposeHash, enclaveNameSecureLock, fee);
+            }
+            // REWARD_ADDRESS: where the image's developer fee is paid, when not
+            // the publishing wallet.
+            const rewardAddress = process.env.REWARD_ADDRESS || "";
+            if (rewardAddress) {
+                if (!ethers.utils.isAddress(rewardAddress)) {
+                    console.error(`REWARD_ADDRESS ${rewardAddress} is not an address`);
+                    process.exit(1);
+                }
+                try {
+                    await imageRegistry.setRewardAddress(ipfsHash, rewardAddress);
+                } catch (e) {
+                    console.error(`Could not set the reward address: ${e.reason || e.message}`);
+                    process.exit(1);
+                }
             }
             process.exit(0);
         }
