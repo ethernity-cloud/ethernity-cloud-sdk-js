@@ -108,10 +108,13 @@ sets the enclave heap (default `1024M`).
   npm run ecld-publish
   ```
   Required after build, to build and integrate the secure certificates that will be used during executions and to register the project to the Ethernity Cloud Image Register.
-  The developer fee the network pays for each task run with the image goes to
-  the image's reward address: the publishing wallet, unless `REWARD_ADDRESS`
-  in `.env` names another one. The image's owner can change it later with the
-  registry's `changeImageRewardAddress`.
+  `DEVELOPER_FEE` in `.env` is your fee as the image's publisher, in percent of
+  each task's base price (the node's price): the network adds it to what the
+  dApp user pays and pays it to the image's reward address when the task is
+  validated. Default 0; the registry accepts up to 15, and the fee is fixed
+  once the image is registered. The reward address is the publishing wallet
+  unless `REWARD_ADDRESS` names another one; the image's owner can change it
+  later with the registry's `changeImageRewardAddress`.
 
 - **Test (local, no chain)**: To run your backend locally with the enclave's own
   executor — no SGX, no gas, instant — run:

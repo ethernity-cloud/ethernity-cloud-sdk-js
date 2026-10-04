@@ -80,7 +80,9 @@ async function prompt(question) {
         console.log(result);
         console.log()
 
-        const taskPercentage = await prompt('Please specify the % of a task which will be transferred to your wallet upon successful execution (default 10%): ') || '10';
+        // The publisher's fee, in percent of each task's base price: PoX adds it
+        // to what the dApp user pays and pays it to the image's reward address.
+        const taskPercentage = await prompt('Your fee as the publisher of this image, in % of each task\'s base price, 0 to 15 (default 0): ') || '0';
         writeEnv('DEVELOPER_FEE', taskPercentage);
     } else {
         console.log('Using PROJECT_NAME, BLOCKCHAIN_NETWORK, PRIVATE_KEY, DEVELOPER_FEE from .env');

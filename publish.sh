@@ -117,14 +117,14 @@ print(check_acount_balance())
     echo
 
     # Prompt for task percentage
-    echo "Please specify the % of a task which will be transferred to your wallet upon successful execution (default 10%):"
+    echo "Your fee as the publisher of this image, in % of each task's base price, 0 to 15 (default 0):"
     read task_percentage
 
     if [[ -z $task_percentage ]]; then
-        task_percentage=10
+        task_percentage=0
     fi
 
-    write_env "DEVELOPER_FEE" 10
+    write_env "DEVELOPER_FEE" "$task_percentage"
 
 else
     echo "Using PROJECT_NAME, BLOCKCHAIN_NETWORK, PRIVATE_KEY, DEVELOPER_FEE from .env"
