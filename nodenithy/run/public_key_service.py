@@ -83,16 +83,22 @@ if __name__ == "__main__":
     )
     print("Submit IPFS Hash Response:", submit_response)
 
-    # Check IPFS Hash Status
+    # The service answers publicKey 0 while the image is queued or running
+    # (with status, percent and queuePosition), -1 when the extraction failed
+    # (with reason) and the certificate when done.
     while True:
         check_response = check_ipfs_hash_status(hhash)
         if "publicKey" in check_response:
             if check_response["publicKey"] == 0:
-                print(
-                    f"Public key not available yet. Queue position: {check_response.get('queuePosition', 'Unknown')}"
-                )
-            elif check_response["publicKey"] == -1:
-                print("Hash is not derived from Eternity Cloud SDK.")
+                if check_response.get("status") == "running":
+                    print(f"Public key extraction running, {check_response.get('percent', 0)}% done")
+                else:
+                    print(
+                        f"Public key not available yet. Queue position: {check_response.get('queuePosition', 'Unknown')}"
+                    )
+            elif check_response["publicKey"] in (-1, "-1"):
+                print(f"Public key extraction failed: {check_response.get('reason', 'reason not reported by the service')}")
+                print("Fix the cause (keep the image pinned, build with the current SDK) and publish again: a new submission of the same hash runs the extraction again.")
                 exit(1)
             else:
                 print("Public Key:", check_response["publicKey"])

@@ -65,14 +65,21 @@ console.log("Docker Composer Hash:", dockerComposerHash);
     const submitResponse = await submitIpfsHash(hhash, enclaveName, protocolVersion, network, templateVersion, dockerComposerHash);
     console.log("Submit IPFS Hash Response:", submitResponse);
 
-    // Check IPFS Hash Status
+    // The service answers publicKey 0 while the image is queued or running
+    // (with status, percent and queuePosition), -1 when the extraction failed
+    // (with reason) and the certificate when done.
     while (true) {
         const checkResponse = await checkIpfsHashStatus(hhash);
         if ("publicKey" in checkResponse) {
             if (checkResponse.publicKey === 0) {
-                console.log(`Public key not available yet. Queue position: ${checkResponse.queuePosition || 'Unknown'}`);
+                if (checkResponse.status === "running") {
+                    console.log(`Public key extraction running, ${checkResponse.percent || 0}% done`);
+                } else {
+                    console.log(`Public key not available yet. Queue position: ${checkResponse.queuePosition ?? 'Unknown'}`);
+                }
             } else if (checkResponse.publicKey === -1) {
-                console.log("Hash is not derived from Eternity Cloud SDK.");
+                console.log(`Public key extraction failed: ${checkResponse.reason || "reason not reported by the service"}`);
+                console.log("Fix the cause (keep the image pinned, build with the current SDK) and publish again: a new submission of the same hash runs the extraction again.");
                 process.exit(1);
             } else {
                 console.log("Public Key:", checkResponse.publicKey);
