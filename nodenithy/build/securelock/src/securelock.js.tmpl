@@ -622,13 +622,15 @@ class EtnySecureLock {
 
     async getTrustedZonePublicKey() {
         try {
+            // The certificate of the trustedzone the order runs with: the latest
+            // v3 image registered under the trustedzone name in metadata1 field 2,
+            // as the Python securelock reads it. Field 1 is this securelock's own
+            // hash, which is not a trustedzone entry.
             console.log('Getting the public key of the trusted zone enclave');
-            let imageHash = this._metadata.image_hash;
-            console.log('imageHash:', imageHash);
-            if (EtnySecureLock.debug) {
-                imageHash = 'v3-hash-1';
-            }
-            this.trustedZonePublicKey = await this.image_registry.getTrustedZoneImageCertPublicKey(imageHash);
+            const trustedZoneName = this._metadata.image_metadata.split(':')[2];
+            console.log('trustedZoneName:', trustedZoneName);
+            const latest = await this.image_registry.getLatestTrustedZoneImageCertPublicKey(trustedZoneName, 'v3');
+            this.trustedZonePublicKey = latest[1];
             console.log('Public key of the TrustedZone enclave from smart contract:', this.trustedZonePublicKey);
         } catch (e) {
             console.log('getTrustedZonePublicKey', e);
