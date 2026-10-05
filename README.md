@@ -116,6 +116,20 @@ sets the enclave heap (default `1024M`).
   unless `REWARD_ADDRESS` names another one; the image's owner can change it
   later with the registry's `changeImageRewardAddress`.
 
+  How the image reaches the network: unless `.env` names an IPFS API of your
+  own (`IPFS_ENDPOINT` other than the public `ipfs.ethernity.cloud`), the
+  publish runs its own IPFS node in docker (`ipfs/kubo`), adds the image and
+  its compose there and peers it with the network's bootnode, which pins
+  every registered image. On a network whose image registry records images
+  before their certificate (the bloxberg testnet), the publish registers the
+  image from your wallet first (`registerImage`, with your node's address),
+  has the certificate extracted (on your SGX host, or by
+  publickey.ethernity.cloud, which fetches the image from your node or the
+  bootnode and reports its progress) and writes it from the same wallet
+  (`setImageCert`). Keep the publish running until it prints the registration:
+  your node is the image's first source. `ECLD_KUBO_SWARM_PORT` (default
+  4001) is the port your node listens on when it is free.
+
 - **Test (local, no chain)**: To run your backend locally with the enclave's own
   executor — no SGX, no gas, instant — run:
   ```sh

@@ -1,6 +1,6 @@
 {
   "name": "@ethernity-cloud/sdk-js",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "description": "A package to run ethernity cloud build scripts",
   "scripts": {
     "ecld-build": "cross-env node ./node_modules/@ethernity-cloud/sdk-js/build.js",
@@ -32,6 +32,7 @@
     "info.js",
     "run.js",
     "network.js",
+    "localKubo.js",
     "!**/__pycache__/**",
     "!**/*.pyc"
   ],

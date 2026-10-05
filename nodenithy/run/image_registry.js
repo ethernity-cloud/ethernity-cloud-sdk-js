@@ -305,6 +305,76 @@ class ImageRegistry {
             return ['', '', ''];
         }
     }
+
+    // Whether the registry is an ECImageRegistryV2, which records an image
+    // before its certificate exists (registerImage, then setImageCert). A V1
+    // registry has no pendingImages() and reverts.
+    async isV2() {
+        try {
+            await this.imageRegistryContract.pendingImages();
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // The transaction overrides of a write from the publishing wallet.
+    async overrides() {
+        const overrides = {};
+        if (BLOCKCHAIN_NETWORK.includes("Polygon")) {
+            overrides.nonce = await this.provider.getTransactionCount(this.acct.address, 'pending');
+            overrides.gasPrice = (await this.provider.getGasPrice()).mul(110).div(100);
+        }
+        return overrides;
+    }
+
+    // Record the securelock on a V2 registry before its certificate exists:
+    // name, protocol version v3, compose, session, the publisher's fee and the
+    // IPFS node that holds the image (a multiaddr, or ""). A hash the registry
+    // already has is left as it is; a hash another wallet registered is refused.
+    async registerImage(ipfsHash, imageName, dockerComposeHash, session, fee, ipfsPeer) {
+        const details = await this.imageRegistryContract.imageDetails(ipfsHash);
+        if (details.owner !== ethers.constants.AddressZero) {
+            if (details.owner.toLowerCase() !== this.acct.address.toLowerCase()) {
+                throw new Error(`${ipfsHash} is registered by ${details.owner}, not by this wallet`);
+            }
+            console.log(`${ipfsHash} is already registered`);
+            return false;
+        }
+        console.log(`Registering ${imageName} v3 as ${ipfsHash} (compose ${dockerComposeHash}, peer ${ipfsPeer || 'none'})`);
+        const tx = await this.imageRegistryContract.registerImage(
+            ipfsHash, "v3", imageName, dockerComposeHash, session, Number(fee), ipfsPeer || "", await this.overrides());
+        const receipt = await this.imageRegistryContract.provider.waitForTransaction(tx.hash);
+        console.log("transaction receipt: ", tx.hash);
+        if (receipt.status !== 1) {
+            throw new Error(`registerImage reverted (${tx.hash})`);
+        }
+        return true;
+    }
+
+    // Write the certificate of a registered image, once, from the wallet that
+    // registered it. A certificate already there is left as it is.
+    async setImageCert(ipfsHash, cert) {
+        const details = await this.imageRegistryContract.imageDetails(ipfsHash);
+        if (details.owner === ethers.constants.AddressZero) {
+            throw new Error(`${ipfsHash} is not registered`);
+        }
+        if (details.certPublicKey) {
+            if (details.certPublicKey.trim() === cert.trim()) {
+                console.log(`The certificate of ${ipfsHash} is already registered`);
+                return false;
+            }
+            throw new Error(`${ipfsHash} already has a certificate, and it differs from the extracted one`);
+        }
+        console.log(`Registering the certificate of ${ipfsHash}`);
+        const tx = await this.imageRegistryContract.setImageCert(ipfsHash, cert, await this.overrides());
+        const receipt = await this.imageRegistryContract.provider.waitForTransaction(tx.hash);
+        console.log("transaction receipt: ", tx.hash);
+        if (receipt.status !== 1) {
+            throw new Error(`setImageCert reverted (${tx.hash})`);
+        }
+        return true;
+    }
 }
 
 (async () => {
@@ -350,6 +420,45 @@ class ImageRegistry {
         }
 
         const imageRegistry = new ImageRegistry();
+        // Whether the registry records images before their certificate.
+        if (action === 'isV2') {
+            console.log((await imageRegistry.isV2()) ? 'true' : 'false');
+            process.exit(0);
+        }
+        // Record the image before its certificate (V2): IPFS_HASH,
+        // IPFS_DOCKER_COMPOSE_HASH, PROJECT_NAME (the name registered),
+        // ENCLAVE_NAME_SECURELOCK (the session), DEVELOPER_FEE and IPFS_PEER
+        // (the publish's node) come from the environment.
+        if (action === 'registerImage') {
+            try {
+                await imageRegistry.registerImage(
+                    process.env.IPFS_HASH || "", process.env.PROJECT_NAME || "",
+                    process.env.IPFS_DOCKER_COMPOSE_HASH || "", process.env.ENCLAVE_NAME_SECURELOCK || "",
+                    process.env.DEVELOPER_FEE || "0", process.env.IPFS_PEER || "");
+                const rewardAddress = process.env.REWARD_ADDRESS || "";
+                if (rewardAddress) {
+                    if (!ethers.utils.isAddress(rewardAddress)) {
+                        throw new Error(`REWARD_ADDRESS ${rewardAddress} is not an address`);
+                    }
+                    await imageRegistry.setRewardAddress(process.env.IPFS_HASH || "", rewardAddress);
+                }
+            } catch (e) {
+                console.error(`Could not register the image: ${e.reason || e.message}`);
+                process.exit(1);
+            }
+            process.exit(0);
+        }
+        // Write the extracted certificate of a registered image (V2).
+        if (action === 'setImageCert') {
+            try {
+                const cert = fs.readFileSync("./registry/certificate.securelock.crt", 'utf8');
+                await imageRegistry.setImageCert(process.env.IPFS_HASH || "", cert);
+            } catch (e) {
+                console.error(`Could not register the certificate: ${e.reason || e.message}`);
+                process.exit(1);
+            }
+            process.exit(0);
+        }
         if (action === 'registerSecureLockImage') {
             const secureLock = fs.readFileSync("./registry/certificate.securelock.crt", 'utf8');
             // console.log("SECURELOCK:", secureLock);

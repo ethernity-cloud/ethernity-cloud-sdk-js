@@ -8,6 +8,7 @@ const https = require('https');
 const casConfig = require('../cas/config.js');
 const casResolver = require('../cas/resolver.js');
 const sessionRegistry = require('../cas/session_registry.js');
+const { LocalKubo, ownEndpoint } = require('../localKubo.js');
 
 if (!fs.existsSync('.env')) {
     console.error("Error: .env file not found");
@@ -119,6 +120,53 @@ const main = async () => {
         console.error("Error: MEMORY_TO_ALLOCATE is not set in .env; run ecld-build first.");
         process.exit(1);
     }
+
+    // Where the image goes. An IPFS API of the application's own
+    // (IPFS_ENDPOINT, when it is not the public one) takes precedence.
+    // Otherwise the publish runs its own Kubo: the public write API of
+    // ipfs.ethernity.cloud is closing, and the image is held by this Kubo,
+    // peered with the bootnode, until its certificate is on chain.
+    let localKubo = null;
+    let ipfsApi = process.env.IPFS_ENDPOINT || '';
+    if (!ownEndpoint(ipfsApi)) {
+        localKubo = new LocalKubo(process.env.PROJECT_NAME);
+        try {
+            await localKubo.start();
+        } catch (e) {
+            console.error(`Error: ${e.message}`);
+            process.exit(1);
+        }
+        ipfsApi = localKubo.apiUrl;
+        console.log(`\t✔  IPFS node for this publish: ${ipfsApi}`);
+        process.on('exit', () => localKubo.stop());
+    }
+
+    // The compose and the image tree, added through ipfsApi; their CIDs land
+    // in IPFS_DOCKER_COMPOSE_HASH / IPFS_HASH (files and environment).
+    const uploadToIpfs = () => {
+        for (const file of ['IPFS_HASH.ipfs', 'IPFS_DOCKER_COMPOSE_HASH.ipfs']) {
+            if (fs.existsSync(file)) fs.unlinkSync(file);
+        }
+        console.log('Upload docker-compose-final.yml to IPFS');
+        execSync(`node ../ipfs.mjs --host "${ipfsApi}" --action upload --filePath docker-compose-final.yml`, { stdio: "inherit" });
+        if (!fs.existsSync('IPFS_DOCKER_COMPOSE_HASH.ipfs')) {
+            console.error("Error: Could not upload docker-compose-final.yml to IPFS, please try again!");
+            process.exit(1);
+        }
+        process.env.IPFS_DOCKER_COMPOSE_HASH = fs.readFileSync('IPFS_DOCKER_COMPOSE_HASH.ipfs', 'utf8').trim();
+        console.log("IPFS_DOCKER_COMPOSE_HASH: ", process.env.IPFS_DOCKER_COMPOSE_HASH);
+        writeEnv('IPFS_DOCKER_COMPOSE_HASH', process.env.IPFS_DOCKER_COMPOSE_HASH);
+        console.log('Upload docker registry to IPFS');
+        execSync(`node ../ipfs.mjs --host "${ipfsApi}" --action upload --folderPath ${registryPath}`, { stdio: "inherit" });
+        if (!fs.existsSync('IPFS_HASH.ipfs')) {
+            console.error("Error: Could not upload registry to IPFS, please try again!");
+            process.exit(1);
+        }
+        process.env.IPFS_HASH = fs.readFileSync('IPFS_HASH.ipfs', 'utf8').trim();
+        console.log("IPFS_HASH: ", process.env.IPFS_HASH);
+        writeEnv('IPFS_HASH', process.env.IPFS_HASH);
+    };
+
     ['docker-compose.yml', 'docker-compose-final.yml'].forEach(file => {
         const template = `${file}.tmpl`;
         if (!fs.existsSync(template)) {
@@ -248,7 +296,8 @@ const main = async () => {
         const registered = await sessionRegistry.register(
             casChain.rpcUrl, casChain.chainId, casConfig.SESSION_REGISTRY[templateName],
             process.env.PRIVATE_KEY, fs.readFileSync('etny-securelock-test.yaml'),
-            process.env.IPFS_ENDPOINT, '');
+            ipfsApi, '');
+        if (localKubo) await localKubo.provide(registered.cid);
         if (registered.registered) {
             console.log(`\t✔  Session ${registered.name} registered on-chain (body ${registered.cid})`);
             await sessionRegistry.waitVisible(
@@ -478,7 +527,23 @@ const main = async () => {
     // let PUBLIC_KEY_SECURELOCK_RES = execSync(`docker-compose run etny-securelock 2>/dev/null | grep -v Creating | grep -v Pulling | grep -v latest | grep -v Digest | sed 's/.*PUBLIC_KEY:\\s*//' | tr -d '\\r'`).toString().trim();
 
 
-    // TODO: calculate hash of the files localy, and query the public key service, if the hash is already there it means we dont have to do the below.
+    // The image and its compose go out before the certificate is extracted,
+    // whichever way it is: the extraction service fetches them by these CIDs.
+    // On a V2 registry the wallet records the image now (registerImage, with
+    // the publish's node), so the bootnode's mirror pins it and the service
+    // queues it from the chain; the certificate is written below by the same
+    // wallet (setImageCert). A V1 registry takes both in one addImage call.
+    uploadToIpfs();
+    const registryEnv = { ...process.env, PROJECT_NAME: securelock };
+    const registryV2 = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "" "isV2"`, { env: registryEnv }).toString().trim() === 'true';
+    if (registryV2) {
+        if (localKubo) {
+            await localKubo.provide(process.env.IPFS_HASH);
+            await localKubo.provide(process.env.IPFS_DOCKER_COMPOSE_HASH);
+            registryEnv.IPFS_PEER = await localKubo.peerMultiaddr();
+        }
+        execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "${process.env.PRIVATE_KEY}" "registerImage"`, { stdio: "inherit", env: registryEnv });
+    }
 
     if (fs.existsSync('certificate.securelock.crt')) {
         // delete it
@@ -520,43 +585,6 @@ const main = async () => {
             process.exit(0);
         } else {
             console.log("\nGenerating certificates using the Ethernity Cloud signing service...\n");
-            console.log("**** Started ipfs initial pining ****");
-            if (fs.existsSync('IPFS_HASH.ipfs')) {
-                fs.unlinkSync('IPFS_HASH.ipfs');
-            }
-            if (fs.existsSync('IPFS_DOCKER_COMPOSE_HASH.ipfs')) {
-                fs.unlinkSync('IPFS_DOCKER_COMPOSE_HASH.ipfs');
-            }
-
-
-            console.log('Upload docker-compose-final.yml to IPFS');
-            const dockerHash = execSync(`node ../ipfs.mjs --host "${process.env.IPFS_ENDPOINT}" --action upload --filePath docker-compose-final.yml`, { stdio: "inherit" });
-            if (!fs.existsSync('IPFS_DOCKER_COMPOSE_HASH.ipfs')) {
-                console.error("Error: Could not upload docker-compose-final.yml to IPFS, please try again!");
-                process.exit(1);
-            }
-            process.env.IPFS_DOCKER_COMPOSE_HASH = fs.readFileSync('IPFS_DOCKER_COMPOSE_HASH.ipfs', 'utf8').trim();
-            console.log("IPFS_DOCKER_COMPOSE_HASH: ", process.env.IPFS_DOCKER_COMPOSE_HASH);
-            writeEnv('IPFS_DOCKER_COMPOSE_HASH', process.env.IPFS_DOCKER_COMPOSE_HASH);
-            console.log()
-            await new Promise(resolve => setTimeout(resolve, 3000));
-
-            console.log('Upload docker registry to IPFS');
-            const repositoryHash = execSync(`node ../ipfs.mjs --host "${process.env.IPFS_ENDPOINT}" --action upload --folderPath ${registryPath}`, { stdio: "inherit" });
-            if (!fs.existsSync(`./IPFS_HASH.ipfs`)) {
-                console.error("Error: Could not upload registry to IPFS, please try again!");
-                process.exit(1);
-            }
-            process.env.IPFS_HASH = fs.readFileSync(`./IPFS_HASH.ipfs`, 'utf8').trim();
-            console.log("IPFS_HASH: ", process.env.IPFS_HASH);
-            writeEnv('IPFS_HASH', process.env.IPFS_HASH);
-
-            console.log()
-
-            console.log("**** Finished ipfs initial pining ****");
-            console.log()
-            console.log()
-
             console.log(`ENCLAVE_NAME_SECURELOCK: ${ENCLAVE_NAME_SECURELOCK}`);
             execSync(`node ./public_key_service.js --enclave_name "${securelock}" --protocol_version "v3" --network "${process.env.BLOCKCHAIN_NETWORK}" --template_version "${process.env.VERSION}"`, { stdio: 'inherit' });
             PUBLIC_KEY_SECURELOCK_RES = fs.readFileSync('PUBLIC_KEY.txt', 'utf8').trim();
@@ -608,41 +636,51 @@ const main = async () => {
     console.log("Listing certificate PUBLIC_KEY_TRUSTEDZONE:");
     console.log(fs.readFileSync('certificate.trustedzone.crt', 'utf8'));
 
+    // image_registry.js reads the securelock certificate from registry/.
     fs.copyFileSync('certificate.securelock.crt', `${registryPath}/certificate.securelock.crt`);
     fs.copyFileSync('certificate.trustedzone.crt', `${registryPath}/certificate.trustedzone.crt`);
 
-    if (fs.existsSync('IPFS_HASH.ipfs')) {
-        fs.unlinkSync('IPFS_HASH.ipfs');
-    }
-
-    console.log('Upload docker registry to IPFS');
-    execSync(`node ../ipfs.mjs --host "${process.env.IPFS_ENDPOINT}" --action upload --folderPath ${registryPath}`, { stdio: "inherit" });
-    if (!fs.existsSync(`./IPFS_HASH.ipfs`)) {
-        console.error("Error: Could not upload registry to IPFS, please try again!");
-        process.exit(1);
-    }
-    process.env.IPFS_HASH = fs.readFileSync(`./IPFS_HASH.ipfs`, 'utf8').trim();
-    console.log("IPFS_HASH: ", process.env.IPFS_HASH);
-    writeEnv('IPFS_HASH', process.env.IPFS_HASH);
-    process.chdir(currentDir);
-    console.log(`Adding certificates for SECURELOCK ${securelock} into IMAGE REGISTRY smart contract...`);
-    // image_registry.js registers the image under PROJECT_NAME.
-    const registryEnv = { ...process.env, PROJECT_NAME: securelock };
-    let existing = false;
-    try {
-        const existingImages = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "${process.env.VERSION}" "${process.env.PRIVATE_KEY}" "registerSecureLockImage"`, { stdio: "inherit", env: registryEnv });
-        if (existingImages.toString().trim().replace('Image hash: ', '') === process.env.IPFS_HASH) {
-            console.log("Certificates for SECURELOCK already added to IMAGE REGISTRY smart contract");
+    if (registryV2) {
+        // The registered hash is the tree uploaded before the extraction.
+        process.chdir(currentDir);
+        console.log(`Registering the certificate of SECURELOCK ${securelock} in the IMAGE REGISTRY smart contract...`);
+        execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "${process.env.PRIVATE_KEY}" "setImageCert"`, { stdio: "inherit", env: registryEnv });
+    } else {
+        // A V1 registry gets the tree that carries the certificate files,
+        // uploaded again, with the certificate, in one addImage call.
+        if (fs.existsSync('IPFS_HASH.ipfs')) {
+            fs.unlinkSync('IPFS_HASH.ipfs');
         }
-        existing = true;
-    } catch (error) {
-        // console.error("Error: Could not add certificates for SECURELOCK into IMAGE REGISTRY smart contract");
-        // console.error(error);
-        // process.exit(1);
-    }
+        console.log('Upload docker registry to IPFS');
+        execSync(`node ../ipfs.mjs --host "${ipfsApi}" --action upload --folderPath ${registryPath}`, { stdio: "inherit" });
+        if (!fs.existsSync(`./IPFS_HASH.ipfs`)) {
+            console.error("Error: Could not upload registry to IPFS, please try again!");
+            process.exit(1);
+        }
+        process.env.IPFS_HASH = fs.readFileSync(`./IPFS_HASH.ipfs`, 'utf8').trim();
+        console.log("IPFS_HASH: ", process.env.IPFS_HASH);
+        writeEnv('IPFS_HASH', process.env.IPFS_HASH);
+        if (localKubo) await localKubo.provide(process.env.IPFS_HASH);
+        process.chdir(currentDir);
+        console.log(`Adding certificates for SECURELOCK ${securelock} into IMAGE REGISTRY smart contract...`);
+        // image_registry.js registers the image under PROJECT_NAME.
+        registryEnv.IPFS_HASH = process.env.IPFS_HASH;
+        let existing = false;
+        try {
+            const existingImages = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "${process.env.VERSION}" "${process.env.PRIVATE_KEY}" "registerSecureLockImage"`, { stdio: "inherit", env: registryEnv });
+            if (existingImages.toString().trim().replace('Image hash: ', '') === process.env.IPFS_HASH) {
+                console.log("Certificates for SECURELOCK already added to IMAGE REGISTRY smart contract");
+            }
+            existing = true;
+        } catch (error) {
+            // console.error("Error: Could not add certificates for SECURELOCK into IMAGE REGISTRY smart contract");
+            // console.error(error);
+            // process.exit(1);
+        }
 
-    if (!existing) {
-        const res = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "" "" "" "registerSecureLockImage"`, { stdio: "inherit", env: registryEnv });
+        if (!existing) {
+            const res = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "" "" "" "registerSecureLockImage"`, { stdio: "inherit", env: registryEnv });
+        }
     }
     // The on-chain session points at the image it admits, so a validator can
     // pin the image beside the body it serves.
