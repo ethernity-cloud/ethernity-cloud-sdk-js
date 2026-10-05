@@ -46,7 +46,7 @@ The sdk has been tested on the following operating systems:
       from the ValidatorRegistry (`0x0014aB10...`, or `ECLD_CAS_ADDR=host:port`)
       for the compose and the certificate harvest, takes the trustedzone
       session name from the ImageRegistry (ECImageRegistryV2,
-      `0x99A84C62...`), and links the session to the published image. `ecld-build` signs the securelock `--production`.
+      `0xDf8cBCb1...`), and links the session to the published image. `ecld-build` signs the securelock `--production`.
       Harvesting the certificate needs SGX.
     - Testnet Unsafe - the unsafe network beside the testnet (see below).
     - Mainnet - to be provided during the following updates

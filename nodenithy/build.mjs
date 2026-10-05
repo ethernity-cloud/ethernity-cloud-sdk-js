@@ -32,8 +32,8 @@ const writeEnv = (key, value) => {
 // on-chain constants). Covers all supported networks for both dApp types.
 export const ECRunner = {
   // --- bloxberg (the testnet reads ECImageRegistryV2, mainnet the original) ---
-  'etny-pynithy-testnet': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c', '0x99A84C624C028bdf0a855A1E9E3f2fcf7275B3D8', 'https://bloxberg.ethernity.cloud', 8995],
-  'etny-nodenithy-testnet': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c', '0x99A84C624C028bdf0a855A1E9E3f2fcf7275B3D8', 'https://bloxberg.ethernity.cloud', 8995],
+  'etny-pynithy-testnet': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c', '0xDf8cBCb1B57Fa34e7eA6b0f6B104B1aC8EF1dc53', 'https://bloxberg.ethernity.cloud', 8995],
+  'etny-nodenithy-testnet': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c', '0xDf8cBCb1B57Fa34e7eA6b0f6B104B1aC8EF1dc53', 'https://bloxberg.ethernity.cloud', 8995],
   'etny-pynithy': ['0x549A6E06BB2084100148D50F51CF77a3436C3Ae7', '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31', 'https://bloxberg.ethernity.cloud', 8995],
   'etny-nodenithy': ['0x549A6E06BB2084100148D50F51CF77a3436C3Ae7', '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31', 'https://bloxberg.ethernity.cloud', 8995],
   // --- polygon mainnet ---
@@ -52,8 +52,8 @@ export const ECRunner = {
   'ecld-pynithy-litvm-testnet': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441],
   'ecld-nodenithy-litvm-testnet': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441],
   // --- the -unsafe networks: the contracts of the network each is named after ---
-  'etny-pynithy-testnet-unsafe': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c', '0x99A84C624C028bdf0a855A1E9E3f2fcf7275B3D8', 'https://bloxberg.ethernity.cloud', 8995],
-  'etny-nodenithy-testnet-unsafe': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c', '0x99A84C624C028bdf0a855A1E9E3f2fcf7275B3D8', 'https://bloxberg.ethernity.cloud', 8995],
+  'etny-pynithy-testnet-unsafe': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c', '0xDf8cBCb1B57Fa34e7eA6b0f6B104B1aC8EF1dc53', 'https://bloxberg.ethernity.cloud', 8995],
+  'etny-nodenithy-testnet-unsafe': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c', '0xDf8cBCb1B57Fa34e7eA6b0f6B104B1aC8EF1dc53', 'https://bloxberg.ethernity.cloud', 8995],
   'ecld-pynithy-litvm-testnet-unsafe': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441],
   'ecld-nodenithy-litvm-testnet-unsafe': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441]
 };

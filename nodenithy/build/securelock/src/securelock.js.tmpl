@@ -451,26 +451,12 @@ class EtnySecureLock {
     }
 
     loadEnv() {
-        if (process.env.ETNY_CHAIN_ID) {
-            this.chain_id = parseInt(process.env.ETNY_CHAIN_ID);
-        }
-
-        if (process.env.ETNY_SMART_CONTRACT_ADDRESS) {
-            this.smart_contract_address = process.env.ETNY_SMART_CONTRACT_ADDRESS.trim();
-        }
-
-        if (process.env.ETNY_WEB3_PROVIDER) {
-            this.web3_provider = process.env.ETNY_WEB3_PROVIDER.trim();
-        }
-
-        if (process.env.IMAGE_REGISTRY_ADDRESS) {
-            this.image_registry_address = process.env.IMAGE_REGISTRY_ADDRESS.trim();
-        }
-
-        if (process.env.ETNY_BUCKET) {
-            this.etny_bucket = process.env.ETNY_BUCKET.trim();
-        }
-
+        // The chain id, PoX smart contract, Image Registry, Web3 provider and
+        // the SwiftStream bucket are build constants (setInitializers), never
+        // read from process.env: the node supplies the environment, and an
+        // override would let it choose the registry the trustedzone's
+        // certificate comes from. Only the per-task values below are taken
+        // from the environment.
         if (process.env.ETNY_CLIENT_CHALLENGE) {
             this.client_challenge = process.env.ETNY_CLIENT_CHALLENGE.trim();
         }
@@ -496,14 +482,35 @@ class EtnySecureLock {
         // this.iamge_registry_signer = new ethers.Contract(this.image_registry_address, image_registry_abi.abi, this.walletSigner);
     }
 
+    // The node-supplied bucket .env may only contribute these per-task values.
+    // Everything else the securelock trusts is a build constant (chain id, PoX
+    // contract, Image Registry, Web3 provider, ValidatorRegistry, bucket) or a
+    // variable the CAS injects into the enclave process environment (ECAS_*,
+    // SCONE_*). Any key outside this set, and any key already present in
+    // process.env, is ignored.
+    static NODE_ENV_ALLOWLIST = new Set([
+        'ETNY_MODE',
+        'ETNY_ORDER_ID',
+        'ETNY_CLIENT_CHALLENGE',
+    ]);
+
     async readEnv() {
         try {
             console.log('Getting .env if exists...');
             const envFile = await this.swiftStreamService.getFileContent(this.etny_bucket, ".env");
             console.log("Env:", envFile);
-            console.log("Saving .env file...");
-            await fs.promises.writeFile('.env', envFile);
-            require('dotenv').config();
+            // Parsed in memory: dotenv.parse does not touch process.env.
+            const parsed = require('dotenv').parse(Buffer.from(envFile));
+            for (const [key, value] of Object.entries(parsed)) {
+                if (!EtnySecureLock.NODE_ENV_ALLOWLIST.has(key)) {
+                    console.log(`Ignoring non-allowlisted .env key from the node bucket: ${key}`);
+                    continue;
+                }
+                if (Object.prototype.hasOwnProperty.call(process.env, key)) {
+                    continue;
+                }
+                process.env[key] = value;
+            }
 
             this.version = 'v3';
             this.etny_mode = process.env.ETNY_MODE;
