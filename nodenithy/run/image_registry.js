@@ -360,22 +360,41 @@ class ImageRegistry {
     }
 
     // Write the certificate of a registered image, once, from the wallet that
-    // registered it. A certificate already there is left as it is.
-    async setImageCert(ipfsHash, cert) {
-        const details = await this.imageRegistryContract.imageDetails(ipfsHash);
-        if (details.owner === ethers.constants.AddressZero) {
-            throw new Error(`${ipfsHash} is not registered`);
-        }
-        if (details.certPublicKey) {
-            if (details.certPublicKey.trim() === cert.trim()) {
-                console.log(`The certificate of ${ipfsHash} is already registered`);
-                return false;
+    // registered it. A certificate already there is left as it is. The RPC
+    // endpoint balances requests over nodes that can lag the chain by several
+    // blocks, and a read can fail outright, so an image this publish
+    // registered minutes earlier can read as missing, or be refused as "Image
+    // not found" by the simulation: both are tried again every 15 seconds for
+    // `waitMs` before the image is called missing.
+    async setImageCert(ipfsHash, cert, waitMs = 600000) {
+        const deadline = Date.now() + waitMs;
+        for (;;) {
+            let details = null;
+            try {
+                details = await this.imageRegistryContract.imageDetails(ipfsHash);
+            } catch (e) {
+                if (Date.now() >= deadline) throw e;
             }
-            throw new Error(`${ipfsHash} already has a certificate, and it differs from the extracted one`);
+            if (details && details.owner !== ethers.constants.AddressZero) {
+                if (details.certPublicKey) {
+                    if (details.certPublicKey.trim() === cert.trim()) {
+                        console.log(`The certificate of ${ipfsHash} is already registered`);
+                        return false;
+                    }
+                    throw new Error(`${ipfsHash} already has a certificate, and it differs from the extracted one`);
+                }
+                try {
+                    console.log(`Registering the certificate of ${ipfsHash}`);
+                    await this.write('setImageCert', ipfsHash, cert);
+                    return true;
+                } catch (e) {
+                    if (!(e.message || '').includes('Image not found') || Date.now() >= deadline) throw e;
+                }
+            } else if (details && Date.now() >= deadline) {
+                throw new Error(`${ipfsHash} is not registered`);
+            }
+            await new Promise((resolve) => setTimeout(resolve, 15000));
         }
-        console.log(`Registering the certificate of ${ipfsHash}`);
-        await this.write('setImageCert', ipfsHash, cert);
-        return true;
     }
 }
 

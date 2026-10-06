@@ -132,11 +132,19 @@ async function register(rpcUrl, chainId, registryAddress, key, body, ipfsApiUrl,
   return { name, hash, cid, registered: true };
 }
 
-// Point the name's latest version at the published image CID.
-async function linkImage(rpcUrl, chainId, registryAddress, key, name, imageCid) {
+// Point the name's latest version at the published image CID. A node behind
+// the chain can answer that a name registered minutes earlier has no record,
+// so the name is read again every 15 seconds for `waitMs` before it is called
+// unregistered.
+async function linkImage(rpcUrl, chainId, registryAddress, key, name, imageCid, waitMs = 600000) {
   const reg = contract(rpcUrl, registryAddress, key);
-  const latest = await latestRecord(reg, name);
-  if (!latest) throw new Error(`no registered session named ${name}`);
+  const deadline = Date.now() + waitMs;
+  let latest = await latestRecord(reg, name);
+  while (!latest) {
+    if (Date.now() >= deadline) throw new Error(`no registered session named ${name}`);
+    await sleep(15000);
+    latest = await latestRecord(reg, name);
+  }
   await send(reg, chainId, `the link of ${name}`, 'linkImage', latest.id, imageCid);
 }
 
