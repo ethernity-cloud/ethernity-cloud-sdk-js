@@ -90,11 +90,12 @@ const runCommand = (command, canPass = false) => {
 
 // Removes the containers this build and publish create, matched by exact name:
 // `--filter name=` matches a substring, so name=las would also match the LAS of
-// a CAS validator set on the same host.
+// a CAS validator set on the same host. `-v` removes their anonymous volumes
+// too: registry:2 keeps its pushed images in one, about 1.3 GB per build.
 const removeContainer = (name) => {
   const ids = shell.exec(`docker ps -a -q --filter "name=^/${name}$"`, { silent: true }).stdout.trim();
   if (ids) {
-    runCommand(`docker rm -f ${ids.split('\n').join(' ')}`);
+    runCommand(`docker rm -f -v ${ids.split('\n').join(' ')}`);
   }
 };
 
