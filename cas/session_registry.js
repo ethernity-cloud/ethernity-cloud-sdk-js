@@ -14,6 +14,7 @@
 const crypto = require('crypto');
 const axios = require('axios');
 const { ethers } = require('ethers');
+const { revertReason } = require('../revert.js');
 
 // `latest` and `record` name a version by its record key: a record id
 // (keccak256(abi.encode(name, sessionHash))), or the body's hash on the
@@ -95,17 +96,28 @@ async function latestRecord(reg, name) {
   return { id, hash: rec.sessionHash.toLowerCase(), creator: rec.creator };
 }
 
-// A refusal as the registry states it: the custom error and its arguments.
-function refusal(e) {
-  if (e.errorName) return `${e.errorName}(${(e.errorArgs || []).map(String).join(', ')})`;
-  return e.reason || e.message;
+// Send `method(...args)` to the registry. It is simulated first, so a call
+// the registry refuses stops with the registry's reason (`refused` names the
+// call), then sent with its gas estimate plus 30%: a registration's cost
+// grows with the length of the name.
+async function send(reg, chainId, refused, method, ...args) {
+  try {
+    await reg.callStatic[method](...args);
+  } catch (e) {
+    throw new Error(`SessionRegistry refuses ${refused}: ${revertReason(e, reg.interface)}`);
+  }
+  const gas = await reg.estimateGas[method](...args);
+  const tx = await reg[method](...args, {
+    gasLimit: gas.mul(13).div(10), gasPrice: ethers.utils.parseUnits('1', 'mwei'), chainId,
+  });
+  const rcpt = await tx.wait();
+  if (rcpt.status !== 1) throw new Error(`SessionRegistry.${method} reverted for ${refused} (tx ${tx.hash})`);
 }
 
 // Pin `body` and register it under its own `name:`. Returns
 // {name, hash, cid, registered}: `registered` is false when the chain already
 // held these exact bytes as the name's latest version, registered by this
-// wallet. The registration is simulated first, so a refusal is reported with
-// the registry's reason.
+// wallet.
 async function register(rpcUrl, chainId, registryAddress, key, body, ipfsApiUrl, imageCid = '') {
   const { name, rules } = parseNameAndRules(body.toString('utf8'));
   if (!name) throw new Error('the session body has no `name:`');
@@ -116,18 +128,7 @@ async function register(rpcUrl, chainId, registryAddress, key, body, ipfsApiUrl,
   if (latest && latest.hash === hash && latest.creator.toLowerCase() === (await reg.signer.getAddress()).toLowerCase()) {
     return { name, hash, cid, registered: false };
   }
-  try {
-    await reg.callStatic.register(hash, name, cid, imageCid, HASH_ALGO_SHA256, rules);
-  } catch (e) {
-    throw new Error(`SessionRegistry refuses ${name}: ${refusal(e)}`);
-  }
-  const tx = await reg.register(hash, name, cid, imageCid, HASH_ALGO_SHA256, rules, {
-    gasLimit: 800000, gasPrice: ethers.utils.parseUnits('1', 'mwei'), chainId,
-  });
-  const rcpt = await tx.wait();
-  if (rcpt.status !== 1) {
-    throw new Error(`SessionRegistry.register reverted for ${name} (tx ${tx.hash}): this name's creator may be another wallet, or the SessionRules shape differs from the ABI`);
-  }
+  await send(reg, chainId, name, 'register', hash, name, cid, imageCid, HASH_ALGO_SHA256, rules);
   return { name, hash, cid, registered: true };
 }
 
@@ -136,14 +137,7 @@ async function linkImage(rpcUrl, chainId, registryAddress, key, name, imageCid) 
   const reg = contract(rpcUrl, registryAddress, key);
   const latest = await latestRecord(reg, name);
   if (!latest) throw new Error(`no registered session named ${name}`);
-  try {
-    await reg.callStatic.linkImage(latest.id, imageCid);
-  } catch (e) {
-    throw new Error(`SessionRegistry refuses to link ${name}: ${refusal(e)}`);
-  }
-  const tx = await reg.linkImage(latest.id, imageCid, { gasLimit: 300000, gasPrice: ethers.utils.parseUnits('1', 'mwei'), chainId });
-  const rcpt = await tx.wait();
-  if (rcpt.status !== 1) throw new Error(`SessionRegistry.linkImage reverted for ${name} (tx ${tx.hash})`);
+  await send(reg, chainId, `the link of ${name}`, 'linkImage', latest.id, imageCid);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

@@ -3,22 +3,25 @@ const { ethers } = require('ethers');
 const { config } = require('dotenv');
 const fs = require('fs');
 const path = require('path');
+const { isRevert, revertReason } = require('../../revert.js');
 
 config();
 
+// The publishing wallet's key comes from the environment only: a command line
+// is visible to other processes and is printed when the command fails.
 const PRIVATE_KEY = process.env.PRIVATE_KEY || "";
 let BLOCKCHAIN_NETWORK = process.env.BLOCKCHAIN_NETWORK || "Bloxberg_Testnet";
 let NETWORK_RPC = "https://bloxberg.ethernity.cloud";
-let IMAGE_REGISTRY_ADDRESS = "0xDf8cBCb1B57Fa34e7eA6b0f6B104B1aC8EF1dc53"; // bloxberg testnet (ECImageRegistryV2)
+let IMAGE_REGISTRY_ADDRESS = "0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1"; // bloxberg testnet (ECImageRegistryV3)
 let CHAIN_ID = 8995;
 let GAS = 9000000;
 let GAS_PRICE = 1;
 
 function setVars(network = "") {
     if (BLOCKCHAIN_NETWORK.includes("Bloxberg")) {
-        // The bloxberg testnet reads ECImageRegistryV2; mainnet the original registry.
+        // The bloxberg testnet reads ECImageRegistryV3; mainnet the original registry.
         IMAGE_REGISTRY_ADDRESS = BLOCKCHAIN_NETWORK.includes("Testnet")
-            ? "0xDf8cBCb1B57Fa34e7eA6b0f6B104B1aC8EF1dc53"
+            ? "0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1"
             : "0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31";
     } else if (BLOCKCHAIN_NETWORK.includes("Polygon")) {
         if (BLOCKCHAIN_NETWORK.includes("Mainnet")) {
@@ -143,61 +146,12 @@ class ImageRegistry {
         const receipt = await this.provider.sendTransaction(signedTxn.rawTransaction);
     }
 
+    // Record the securelock with its certificate on a V1 registry, in one
+    // addImage call. A failure, including the registry's refusal, throws.
     async addSecureLockImageCert(certContent, ipfsHash, imageName, version, dockerComposeHash, enclaveNameSecureLock, fee) {
-        try {
-            console.log("Adding secure lock image cert to image registry");
-            // Fetch current nonce
-            if (BLOCKCHAIN_NETWORK.includes("Polygon")) {
-                console.log("Polygon Mainnet");
-                let nonce = await this.provider.getTransactionCount(this.acct.address, 'pending');
-                // Fetch current gas price and increase it
-                let gasPrice = await this.provider.getGasPrice();
-                gasPrice = gasPrice.mul(ethers.BigNumber.from(110)).div(ethers.BigNumber.from(100));
-                const unicornTxn = await this.imageRegistryContract.addImage(
-                    ipfsHash, certContent, version, imageName, dockerComposeHash, enclaveNameSecureLock, fee,
-                    {
-                        nonce: nonce,
-                        gasPrice: gasPrice,
-                    });
-                // console.log("Transaction: ", unicornTxn);
-                const receipt = await this.imageRegistryContract.provider.waitForTransaction(unicornTxn.hash);
-
-                // console.log("transaction status: ", receipt.status);
-                console.log("transaction receipt: ", unicornTxn.hash);
-                if (receipt.status === 1) {
-                    console.log("Adding secure lock image cert transaction was successful!");
-                } else {
-                    // console.log("receipt.status", receipt.status)
-                    console.log("Image certificates already exist for this image!");
-                }
-            } else {
-                const unicornTxn = await this.imageRegistryContract.addImage(
-                    ipfsHash, certContent, version, imageName, dockerComposeHash, enclaveNameSecureLock, fee);
-                // console.log("Transaction: ", unicornTxn);
-                const receipt = await this.imageRegistryContract.provider.waitForTransaction(unicornTxn.hash);
-
-                // console.log("transaction status: ", receipt.status);
-                console.log("transaction receipt: ", unicornTxn.hash);
-                if (receipt.status === 1) {
-                    console.log("Adding secure lock image cert transaction was successful!");
-                } else {
-                    // console.log("receipt.status", receipt.status)
-                    console.log("Image certificates already exist for this image!");
-                }
-            }
-
-            // console.log("this.acct.address: ", this.acct.address);
-            // console.log("private key", PRIVATE_KEY);
-            // console.log('Getting nonce');
-            // const nonce = await this.imageRegistryContract.provider.getTransactionCount(this.acct.address);
-
-
-            // const signedTxn = await this.acct.signTransaction(unicornTxn);
-            // const receipt = await this.provider.sendTransaction(signedTxn.rawTransaction);
-        } catch (e) {
-            // console.error(e);
-            console.log("Image certificates already exist for this image!");
-        }
+        console.log("Adding secure lock image cert to image registry");
+        await this.write('addImage', ipfsHash, certContent, version, imageName, dockerComposeHash, enclaveNameSecureLock, fee);
+        console.log("Adding secure lock image cert transaction was successful!");
     }
 
     async getImagePublicKeyCert(ipfsHash) {
@@ -317,13 +271,15 @@ class ImageRegistry {
 
     // Whether the registry is an ECImageRegistryV2 or later, which records an
     // image before its certificate exists (registerImage, then setImageCert).
-    // A V1 registry has no pendingImages() and reverts.
+    // A V1 registry has no pendingImages() and reverts; a node that does not
+    // answer is an error, not a V1 registry.
     async isV2() {
         try {
             await this.imageRegistryContract.pendingImages();
             return true;
         } catch (e) {
-            return false;
+            if (isRevert(e)) return false;
+            throw e;
         }
     }
 
@@ -335,15 +291,22 @@ class ImageRegistry {
         try {
             return await this.imageRegistryContract.imageNameOwner(imageName);
         } catch (e) {
-            return null;
+            if (isRevert(e)) return null;
+            throw e;
         }
     }
 
-    // Send `method(...args)` from the publishing wallet with its gas estimate
-    // plus 30%: what a registry write costs depends on the pending list, which
-    // other publishers change between the estimate and the block. A call the
-    // registry refuses throws at the estimate, with its reason.
+    // Send `method(...args)` from the publishing wallet. It is simulated
+    // first, so a call the registry refuses stops here with the registry's
+    // reason, then sent with its gas estimate plus 30%: what a registry write
+    // costs depends on the pending list, which other publishers change
+    // between the estimate and the block.
     async write(method, ...args) {
+        try {
+            await this.imageRegistryContract.callStatic[method](...args);
+        } catch (e) {
+            throw new Error(`the image registry refuses ${method}: ${revertReason(e, this.imageRegistryContract.interface)}`);
+        }
         const gas = await this.imageRegistryContract.estimateGas[method](...args);
         const overrides = { gasLimit: gas.mul(13).div(10) };
         if (BLOCKCHAIN_NETWORK.includes("Polygon")) {
@@ -360,14 +323,27 @@ class ImageRegistry {
 
     // Record the securelock on a V2 registry before its certificate exists:
     // name, protocol version v3, compose, session, the publisher's fee and the
-    // IPFS node that holds the image (a multiaddr, or ""). A hash the registry
-    // already has is left as it is; a hash another wallet registered is refused,
-    // and so is a name another wallet owns.
+    // IPFS node that holds the image (a multiaddr, or ""). A hash this wallet
+    // already registered with the same name, compose and session is left as
+    // it is; a hash another wallet registered is refused, and so is a name
+    // another wallet owns. The record cannot be changed, so a hash registered
+    // with another compose or session is refused too: the nodes would fetch
+    // the compose the record names.
     async registerImage(ipfsHash, imageName, dockerComposeHash, session, fee, ipfsPeer) {
         const details = await this.imageRegistryContract.imageDetails(ipfsHash);
         if (details.owner !== ethers.constants.AddressZero) {
             if (details.owner.toLowerCase() !== this.acct.address.toLowerCase()) {
                 throw new Error(`${ipfsHash} is registered by ${details.owner}, not by this wallet`);
+            }
+            const differing = [
+                ['name', details.name, imageName],
+                ['compose', details.dockerComposeHash, dockerComposeHash],
+                ['session', details.session, session],
+            ].filter(([, recorded, wanted]) => recorded !== wanted);
+            if (differing.length) {
+                const recorded = differing.map(([field, value]) => `${field} ${value}`).join(', ');
+                const wanted = differing.map(([field, , value]) => `${field} ${value}`).join(', ');
+                throw new Error(`${ipfsHash} is registered with ${recorded}, and this publish has ${wanted}; run ecld-build to publish a new version`);
             }
             console.log(`${ipfsHash} is already registered`);
             return false;
@@ -405,10 +381,10 @@ class ImageRegistry {
 
 (async () => {
     try {
-        const [networkName, projectName, version, privateKey, action] = process.argv.slice(2);
+        const [networkName, projectName, version, action] = process.argv.slice(2);
         if (action === "validateAddress") {
-            if (privateKey) {
-                console.log(isStringPrivateKey(privateKey));
+            if (PRIVATE_KEY) {
+                console.log(isStringPrivateKey(PRIVATE_KEY));
             }
             process.exit(0);
         }
@@ -422,8 +398,8 @@ class ImageRegistry {
             process.exit(0);
         }
         // The certificate of the trustedzone's own record. getLatestImageVersionPublicKey
-        // reads the securelock records instead: ECImageRegistryV2 reverts it for
-        // a trustedzone, and the bloxberg mainnet and LitVM registries return a
+        // reads the securelock records instead: ECImageRegistryV2 and V3 revert it
+        // for a trustedzone, and the bloxberg mainnet and LitVM registries return a
         // different certificate for the same name.
         if (action === 'getTrustedZoneCert') {
             const imageRegistry = new ImageRegistry();
@@ -448,7 +424,12 @@ class ImageRegistry {
         const imageRegistry = new ImageRegistry();
         // Whether the registry records images before their certificate.
         if (action === 'isV2') {
-            console.log((await imageRegistry.isV2()) ? 'true' : 'false');
+            try {
+                console.log((await imageRegistry.isV2()) ? 'true' : 'false');
+            } catch (e) {
+                console.error(`Could not read the image registry ${IMAGE_REGISTRY_ADDRESS}: ${e.reason || e.message}`);
+                process.exit(1);
+            }
             process.exit(0);
         }
         // Record the image before its certificate (V2): IPFS_HASH,
@@ -511,7 +492,17 @@ class ImageRegistry {
             if (enclaveVersion && enclaveVersion !== "v3") versionKeys.push(enclaveVersion);
             for (const versionKey of versionKeys) {
                 console.log(`Registering securelock under version '${versionKey}'`);
-                await imageRegistry.addSecureLockImageCert(secureLock, ipfsHash, imageName, versionKey, ipfsDockerComposeHash, enclaveNameSecureLock, fee);
+                try {
+                    await imageRegistry.addSecureLockImageCert(secureLock, ipfsHash, imageName, versionKey, ipfsDockerComposeHash, enclaveNameSecureLock, fee);
+                } catch (e) {
+                    // The registry refuses a hash the (name, version) channel already holds.
+                    if ((e.message || '').includes('Image hash is already in registry')) {
+                        console.log(`The securelock is already registered under version '${versionKey}'`);
+                        continue;
+                    }
+                    console.error(`Could not register the securelock under version '${versionKey}': ${e.reason || e.message}`);
+                    process.exit(1);
+                }
             }
             // REWARD_ADDRESS: where the image's developer fee is paid, when not
             // the publishing wallet.
@@ -540,8 +531,8 @@ class ImageRegistry {
                 console.log(`Image: '${projectName}' is available on the ${networkName} blockchain.`);
                 process.exit(0);
             }
-            if (privateKey && isStringPrivateKey(privateKey) === "OK"
-                && walletAddress(privateKey).toLowerCase() !== nameOwner.toLowerCase()) {
+            if (PRIVATE_KEY && isStringPrivateKey(PRIVATE_KEY) === "OK"
+                && walletAddress(PRIVATE_KEY).toLowerCase() !== nameOwner.toLowerCase()) {
                 console.log(`!!! Image: '${projectName}' is owned by '${nameOwner}'.\nYou are not the account holder of the image.\nPlease change the project name and try again.\n`);
                 process.exit(1);
             }
@@ -556,9 +547,9 @@ class ImageRegistry {
         }
         const imageOwner = (await imageRegistry.getImageDetails(imageHash))[0];
 
-        if (privateKey) {
-            if (isStringPrivateKey(privateKey) === "OK") {
-                if (imageOwner.toLowerCase() !== walletAddress(privateKey).toLowerCase()) {
+        if (PRIVATE_KEY) {
+            if (isStringPrivateKey(PRIVATE_KEY) === "OK") {
+                if (imageOwner.toLowerCase() !== walletAddress(PRIVATE_KEY).toLowerCase()) {
                     console.log(`!!! Image: '${projectName}' is owned by '${imageOwner}'.\nYou are not the account holder of the image.\nPlease change the project name and try again.\n`);
                     process.exit(1);
                 }

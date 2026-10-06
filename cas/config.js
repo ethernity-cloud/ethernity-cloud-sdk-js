@@ -21,8 +21,8 @@ const VALIDATOR_REGISTRY = {
 };
 
 const SESSION_REGISTRY = {
-  'etny-pynithy-testnet': '0xcb1F389bF4524d1D61EDcbC24eC1F1F9C3FF4Fa6',
-  'etny-nodenithy-testnet': '0xcb1F389bF4524d1D61EDcbC24eC1F1F9C3FF4Fa6',
+  'etny-pynithy-testnet': '0x444429681fCb26470Cb12B5436E48402cF7478A3',
+  'etny-nodenithy-testnet': '0x444429681fCb26470Cb12B5436E48402cF7478A3',
   'ecld-pynithy-litvm-testnet': '0x8ad24b3F406A41a0F8D3440021792EB203957F43',
   'ecld-nodenithy-litvm-testnet': '0x8ad24b3F406A41a0F8D3440021792EB203957F43',
 };

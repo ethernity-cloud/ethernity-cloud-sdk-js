@@ -41,12 +41,15 @@ The sdk has been tested on the following operating systems:
 - Bloxberg:
     - Testnet - tested and working. CAS-attested: the securelock is
       provisioned by the ethernity-cas validator set exactly as on mainnet.
-      `ecld-publish` registers the securelock session on-chain in the
-      SessionRegistry (`0xcb1F389b...`, see `cas/config.js`), resolves a CAS
+      `ecld-publish` registers the image in the ImageRegistry
+      (ECImageRegistryV3, `0xa372a6e1...`) before anything discloses its
+      name, which makes the name the publishing wallet's; then registers the
+      securelock session on-chain in the SessionRegistry (`0x44442968...`, see
+      `cas/config.js`), which takes it only from that wallet, resolves a CAS
       from the ValidatorRegistry (`0x0014aB10...`, or `ECLD_CAS_ADDR=host:port`)
       for the compose and the certificate harvest, takes the trustedzone
-      session name from the ImageRegistry (ECImageRegistryV2,
-      `0xDf8cBCb1...`), and links the session to the published image. `ecld-build` signs the securelock `--production`.
+      session name from the ImageRegistry, and links the session to the
+      published image. `ecld-build` signs the securelock `--production`.
       Harvesting the certificate needs SGX.
     - Testnet Unsafe - the unsafe network beside the testnet (see below).
     - Mainnet - to be provided during the following updates

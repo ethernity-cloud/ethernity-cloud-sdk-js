@@ -485,15 +485,20 @@ const main = async () => {
     console.log("# Update docker-compose files");
 
     // On a CAS-attested testnet the compose names the CAS both enclaves are
-    // provisioned from (a validator resolved from the registry, or
-    // ECLD_CAS_ADDR; the node re-resolves it before each task) and the
-    // trustedzone session the ImageRegistry records for this template.
+    // provisioned from and the trustedzone session the ImageRegistry records
+    // for this template. docker-compose.yml, which harvests the certificate
+    // here, names a validator that answered (or ECLD_CAS_ADDR); the published
+    // docker-compose-final.yml names the first validator in registry order,
+    // so that a rerun of this publish renders the same compose. The node and
+    // the extraction service resolve a CAS again before they run it.
     let casAddr = null;
+    let publishedCasAddr = null;
     let trustedZoneSession = null;
     if (casTestnet) {
         casAddr = await casResolver.casAddressFor(casChain.rpcUrl, casConfig.VALIDATOR_REGISTRY[templateName]);
-        console.log(`\t✔  CAS for this network: ${casAddr}`);
-        trustedZoneSession = execSync(`node ./image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" ${templateName} "v3" "" "getTrustedZoneSession"`).toString().trim();
+        publishedCasAddr = await casResolver.publishedCasAddress(casChain.rpcUrl, casConfig.VALIDATOR_REGISTRY[templateName]);
+        console.log(`\t✔  CAS for this network: ${casAddr} (the published compose names ${publishedCasAddr})`);
+        trustedZoneSession = execSync(`node ./image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" ${templateName} "v3" "getTrustedZoneSession"`).toString().trim();
         if (!trustedZoneSession) {
             console.error(`ERROR! The ImageRegistry records no trustedzone session for ${templateName}.`);
             process.exit(1);
@@ -533,7 +538,8 @@ const main = async () => {
             .replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK)
             .replace(/__ENCLAVE_NAME_TRUSTEDZONE__/g, ENCLAVE_NAME_TRUSTEDZONE);
         if (casTestnet) {
-            updatedContent = updatedContent.replace(/SCONE_CAS_ADDR=scone-cas\.cf/g, `SCONE_CAS_ADDR=${casAddr}`);
+            const fileCasAddr = file === 'docker-compose-final.yml' ? publishedCasAddr : casAddr;
+            updatedContent = updatedContent.replace(/SCONE_CAS_ADDR=scone-cas\.cf/g, `SCONE_CAS_ADDR=${fileCasAddr}`);
         }
 
         fs.writeFileSync(file, updatedContent, 'utf8');
@@ -567,12 +573,12 @@ const main = async () => {
     // bootnode's mirror then pins the image and the extraction service queues
     // it from the chain; the certificate is written below by the same wallet
     // (setImageCert). A V1 registry takes both in one addImage call.
-    const registryV2 = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "" "isV2"`, { env: { ...process.env, PROJECT_NAME: securelock } }).toString().trim() === 'true';
+    const registryV2 = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "isV2"`, { env: { ...process.env, PROJECT_NAME: securelock } }).toString().trim() === 'true';
     let ipfsPeer = '';
     if (registryV2) {
         hashForIpfs();
         if (localKubo) ipfsPeer = await localKubo.peerMultiaddr();
-        execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "${process.env.PRIVATE_KEY}" "registerImage"`, { stdio: "inherit", env: { ...process.env, PROJECT_NAME: securelock, IPFS_PEER: ipfsPeer } });
+        execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "registerImage"`, { stdio: "inherit", env: { ...process.env, PROJECT_NAME: securelock, IPFS_PEER: ipfsPeer } });
     }
     uploadToIpfs();
     const registryEnv = { ...process.env, PROJECT_NAME: securelock, IPFS_PEER: ipfsPeer };
@@ -656,7 +662,7 @@ const main = async () => {
     }
 
     // const scriptPath = path.resolve(__dirname, '/image_registry.js');
-    const trustedZoneCert = execSync(`node ./image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" ${templateName} "v3" "" "getTrustedZoneCert"`).toString().trim();
+    const trustedZoneCert = execSync(`node ./image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" ${templateName} "v3" "getTrustedZoneCert"`).toString().trim();
 
     console.log("trustedZoneCert: ", trustedZoneCert);
 
@@ -681,7 +687,7 @@ const main = async () => {
         // The registered hash is the tree uploaded before the extraction.
         process.chdir(currentDir);
         console.log(`Registering the certificate of SECURELOCK ${securelock} in the IMAGE REGISTRY smart contract...`);
-        execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "${process.env.PRIVATE_KEY}" "setImageCert"`, { stdio: "inherit", env: registryEnv });
+        execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "setImageCert"`, { stdio: "inherit", env: registryEnv });
     } else {
         // A V1 registry gets the tree that carries the certificate files,
         // uploaded again, with the certificate, in one addImage call.
@@ -700,23 +706,14 @@ const main = async () => {
         if (localKubo) await localKubo.provide(process.env.IPFS_HASH);
         process.chdir(currentDir);
         console.log(`Adding certificates for SECURELOCK ${securelock} into IMAGE REGISTRY smart contract...`);
-        // image_registry.js registers the image under PROJECT_NAME.
+        // image_registry.js registers the image under PROJECT_NAME and prints
+        // why when it cannot.
         registryEnv.IPFS_HASH = process.env.IPFS_HASH;
-        let existing = false;
         try {
-            const existingImages = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "${process.env.VERSION}" "${process.env.PRIVATE_KEY}" "registerSecureLockImage"`, { stdio: "inherit", env: registryEnv });
-            if (existingImages.toString().trim().replace('Image hash: ', '') === process.env.IPFS_HASH) {
-                console.log("Certificates for SECURELOCK already added to IMAGE REGISTRY smart contract");
-            }
-            existing = true;
+            execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "${process.env.VERSION}" "registerSecureLockImage"`, { stdio: "inherit", env: registryEnv });
         } catch (error) {
-            // console.error("Error: Could not add certificates for SECURELOCK into IMAGE REGISTRY smart contract");
-            // console.error(error);
-            // process.exit(1);
-        }
-
-        if (!existing) {
-            const res = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "" "" "" "registerSecureLockImage"`, { stdio: "inherit", env: registryEnv });
+            console.error("Error: Could not add the certificates of the SECURELOCK to the IMAGE REGISTRY smart contract");
+            process.exit(1);
         }
     }
     // The on-chain session points at the image it admits, so a validator can

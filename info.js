@@ -46,7 +46,7 @@ const NETWORKS = {
   BLOXBERG_TESTNET: {
     type: 'testnet', chainId: 8995, rpc: 'https://bloxberg.ethernity.cloud',
     protocol: '0x02882F03097fE8cD31afbdFbB5D72a498B41112c',
-    imageRegistry: '0xDf8cBCb1B57Fa34e7eA6b0f6B104B1aC8EF1dc53',
+    imageRegistry: '0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1',
     esr: '0x0Ea1728EAE108FD3B9340ae91451348E2Cc6b4E4',
   },
   LITVM_LITEFORGE: {

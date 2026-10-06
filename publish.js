@@ -46,6 +46,10 @@ async function prompt(question) {
     const { PROJECT_NAME, BLOCKCHAIN_NETWORK, PRIVATE_KEY, DEVELOPER_FEE, SERVICE_TYPE } = process.env;
     const scriptPath = path.resolve(__dirname, 'nodenithy/run/image_registry.js');
     process.env.NODE_NO_WARNINGS = 1
+    // image_registry.js reads the wallet's key from PRIVATE_KEY in its
+    // environment, never from its command line.
+    const registry = (args, privateKey) => execSync(`node ${scriptPath} ${args}`,
+        { env: { ...process.env, PRIVATE_KEY: privateKey } }).toString().trim();
     let result = '';
     if (!PROJECT_NAME || !BLOCKCHAIN_NETWORK || !PRIVATE_KEY || !DEVELOPER_FEE) {
         const hasWallet = await prompt('Do you have an existing wallet? (yes/no) (default value: no) ') || 'no';
@@ -57,12 +61,12 @@ async function prompt(question) {
         }
 
         let privateKey = await prompt('Enter your private key: ');
-        result = execSync(`node ${scriptPath} "" "" "" "${privateKey}" "validateAddress"`).toString().trim();
+        result = registry('"" "" "" "validateAddress"', privateKey);
 
         while (result !== 'OK') {
             console.log(result);
             privateKey = await prompt('Invalid private key. Please enter a valid private key: ');
-            result = execSync(`node ${scriptPath} "" "" "" "${privateKey}" "validateAddress"`).toString().trim();
+            result = registry('"" "" "" "validateAddress"', privateKey);
         }
 
         console.log('Inputted Private key is valid.');
@@ -70,13 +74,19 @@ async function prompt(question) {
         console.log()
         console.log('Checking blockchain for required funds...');
 
-        result = execSync(`node ${scriptPath} "" "" "" "" "checkBalance"`).toString().trim();
+        result = registry('"" "" "" "checkBalance"', privateKey);
 
         console.log(`Available funds: ${result}`);
         console.log()
         const imageName = casConfig.nameOnNetwork(PROJECT_NAME, BLOCKCHAIN_NETWORK);
         console.log(`Checking if project name ${imageName} is available on ${BLOCKCHAIN_NETWORK} network and ownership...`);
-        result = execSync(`node ${scriptPath} ${BLOCKCHAIN_NETWORK} ${imageName} ${process.env.VERSION} ${process.env.PRIVATE_KEY}`,).toString().trim();
+        // Exits 1, with the owner, when another wallet owns the name.
+        try {
+            result = registry(`${BLOCKCHAIN_NETWORK} ${imageName} ${process.env.VERSION}`, privateKey);
+        } catch (e) {
+            console.log((e.stdout || '').toString().trim());
+            process.exit(1);
+        }
         console.log(result);
         console.log()
 
@@ -87,17 +97,17 @@ async function prompt(question) {
     } else {
         console.log('Using PROJECT_NAME, BLOCKCHAIN_NETWORK, PRIVATE_KEY, DEVELOPER_FEE from .env');
         console.log('Checking blockchain for required funds...');
-        result = result = execSync(`node ${scriptPath} "" "" "" "" "checkBalance"`).toString().trim();
+        result = registry('"" "" "" "checkBalance"', PRIVATE_KEY);
 
         console.log(`Available funds: ${result}`);
         console.log()
         let privateKey = PRIVATE_KEY;
-        result = execSync(`node ${scriptPath} "" "" "" "${privateKey}" "validateAddress"`).toString().trim();
+        result = registry('"" "" "" "validateAddress"', privateKey);
 
         while (result !== 'OK') {
             console.log(result);
             privateKey = await prompt('Invalid private key. Please enter a valid private key: ');
-            result = execSync(`node ${scriptPath} "" "" "" "${privateKey}" "validateAddress"`).toString().trim();
+            result = registry('"" "" "" "validateAddress"', privateKey);
         }
         writeEnv('PRIVATE_KEY', privateKey);
     }
