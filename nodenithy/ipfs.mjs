@@ -223,12 +223,13 @@ const retryOnFailure = async (fn, label) => {
   return null;
 };
 
-// Upload a single file: POST it to /api/v0/add and return its hash.
-const uploadFileToIPFSOnce = async (filePath) => {
+// Upload a single file: POST it to /api/v0/add and return its hash. With
+// onlyHash the node computes the same hash and stores nothing.
+const uploadFileToIPFSOnce = async (filePath, onlyHash = false) => {
   const files = [filePath];
   const dir = path.dirname(filePath);
   const { body, boundary, length } = buildMultipartBody(files, dir);
-  const { statusCode, text } = await postAdd('', body, boundary, length, null);
+  const { statusCode, text } = await postAdd(onlyHash ? '?only-hash=true' : '', body, boundary, length, null);
   if (statusCode !== 200) {
     console.log(`Failed to upload to IPFS. Status code: ${statusCode}`);
     return null;
@@ -260,13 +261,15 @@ const uploadFileToIPFS = async (filePath) => {
 };
 
 // Upload a whole directory with wrap-with-directory=true and return the root
-// directory hash -- the exact behaviour of Python's upload_dir.
-const uploadDirOnce = async (dirPath) => {
+// directory hash -- the exact behaviour of Python's upload_dir. With onlyHash
+// the node computes the same root hash and stores nothing.
+const uploadDirOnce = async (dirPath, onlyHash = false) => {
   const abs = path.resolve(dirPath);
   const files = gatherFiles(abs);
   const totalSize = files.reduce((acc, f) => acc + fs.statSync(f).size, 0);
   const totalMb = Math.floor(totalSize / (1024 * 1024));
   const { body, boundary, length } = buildMultipartBody(files, abs);
+  const step = onlyHash ? 'Hashing enclave for IPFS' : 'Uploading and pinning enclave to IPFS';
 
   let lastShownMb = -1;
   let frame = 0;
@@ -276,27 +279,28 @@ const uploadDirOnce = async (dirPath) => {
       frame = (frame + 1) % SPINNER_FRAMES.length;
       lastShownMb = mb;
       process.stdout.write(
-        `\r\t${SPINNER_FRAMES[frame]}  Uploading and pinning enclave to IPFS... ${mb}MB/${totalMb}MB`
+        `\r\t${SPINNER_FRAMES[frame]}  ${step}... ${mb}MB/${totalMb}MB`
       );
     }
   };
 
   const query =
-    '?quieter=true&stream-channels=true&wrap-with-directory=true&progress=false&timeout=5m';
+    '?quieter=true&stream-channels=true&wrap-with-directory=true&progress=false&timeout=5m' +
+    (onlyHash ? '&only-hash=true' : '');
   const { statusCode, text } = await postAdd(query, body, boundary, length, onProgress);
 
   if (statusCode !== 200) {
-    process.stdout.write(`\r\t${FAIL}Uploading and pinning enclave to IPFS\n`);
+    process.stdout.write(`\r\t${FAIL}${step}\n`);
     console.log(`Failed to upload to IPFS. Status code: ${statusCode}`);
     return false;
   }
   const rootHash = parseRootHash(text);
   if (!rootHash) {
-    process.stdout.write(`\r\t${FAIL}Uploading and pinning enclave to IPFS\n`);
+    process.stdout.write(`\r\t${FAIL}${step}\n`);
     console.log('Failed to upload to IPFS. Could not determine root hash.');
     return false;
   }
-  process.stdout.write(`\r\t${CHECK}Uploading and pinning enclave to IPFS\n`);
+  process.stdout.write(`\r\t${CHECK}${step}\n`);
   return rootHash;
 };
 
@@ -318,6 +322,16 @@ const upload = async (p) => {
   const stat = fs.statSync(p);
   if (stat.isFile()) return uploadFileToIPFS(p);
   if (stat.isDirectory()) return uploadFolderToIPFS(p);
+  console.log(`Path ${p} is neither a file nor a directory.`);
+  return null;
+};
+
+// The hash `upload(p)` gives, from the same add call with only-hash: the IPFS
+// node neither stores nor announces anything.
+const hashForIPFS = async (p) => {
+  const stat = fs.statSync(p);
+  if (stat.isFile()) return retryOnFailure(() => uploadFileToIPFSOnce(p, true), 'hash_file');
+  if (stat.isDirectory()) return retryOnFailure(() => uploadDirOnce(p, true), 'hash_dir');
   console.log(`Path ${p} is neither a file nor a directory.`);
   return null;
 };
@@ -397,6 +411,7 @@ const getContentFromIPFS = async (hash, maxRetries = process.env.REACT_APP_IPFS_
 export {
   initialize,
   upload,
+  hashForIPFS,
   uploadFileToIPFS,
   uploadFolderToIPFS,
   getFromIPFS,
@@ -405,7 +420,7 @@ export {
 };
 
 // ---------------------------------------------------------------------------
-// CLI (unchanged interface: --host --action upload/download --filePath/--folderPath)
+// CLI: --host --action upload/hash/download --filePath/--folderPath
 // ---------------------------------------------------------------------------
 
 program
@@ -413,7 +428,7 @@ program
   .option('--hhash <hhash>', 'IPFS hash')
   .option('--filePath <path>', 'Path to the file')
   .option('--folderPath <path>', 'Path to the folder')
-  .option('--action <action>', 'Action to perform (upload, download)')
+  .option('--action <action>', 'Action to perform (upload, hash, download)')
   .option('--token <token>', 'IPFS authorization token')
   .option('--output <path>', 'Output path for download');
 
@@ -445,6 +460,15 @@ if (isMain) {
         console.error('Please provide a filePath or folderPath for upload.');
         process.exit(1);
       }
+    } else if (options.action === 'hash') {
+      const target = options.filePath || options.folderPath;
+      if (!target) {
+        console.error('Please provide a filePath or folderPath to hash.');
+        process.exit(1);
+      }
+      const hhash = await hashForIPFS(target);
+      console.log(`${hhash}`);
+      process.exit(hhash ? 0 : 1);
     } else if (options.action === 'download') {
       if (options.filePath) {
         await getFromIPFS(options.hhash, options.filePath);
@@ -456,7 +480,7 @@ if (isMain) {
         console.error('Please provide a filePath or folderPath for download.');
       }
     } else {
-      console.error('Please provide a valid action (upload, download).');
+      console.error('Please provide a valid action (upload, hash, download).');
       process.exit(1);
     }
   };

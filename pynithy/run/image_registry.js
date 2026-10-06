@@ -1,6 +1,5 @@
 const Web3 = require('web3');
 const { ethers } = require('ethers');
-const { Account } = require('eth-lib/lib/account');
 const { config } = require('dotenv');
 const fs = require('fs');
 const path = require('path');
@@ -56,6 +55,26 @@ function isStringPrivateKey(privateKey) {
     } catch (e) {
         return e.toString();
     }
+}
+
+// The address of a private key given with or without its 0x prefix.
+function walletAddress(privateKey) {
+    return new ethers.Wallet(privateKey.startsWith("0x") ? privateKey : `0x${privateKey}`).address;
+}
+
+// REWARD_ADDRESS from the environment: where the image's developer fee is
+// paid when not the publishing wallet, or "" when unset. ECImageRegistryV3
+// refuses the zero address, so it is refused here before any transaction.
+function rewardAddressFromEnv() {
+    const rewardAddress = (process.env.REWARD_ADDRESS || "").trim();
+    if (!rewardAddress) return "";
+    if (!ethers.utils.isAddress(rewardAddress)) {
+        throw new Error(`REWARD_ADDRESS ${rewardAddress} is not an address`);
+    }
+    if (rewardAddress.toLowerCase() === ethers.constants.AddressZero) {
+        throw new Error("REWARD_ADDRESS is the zero address; leave it empty to be paid at the publishing wallet");
+    }
+    return rewardAddress;
 }
 
 async function checkAccountBalance() {
@@ -262,17 +281,7 @@ class ImageRegistry {
             return;
         }
         console.log(`Setting the reward address to ${rewardAddress}`);
-        const overrides = {};
-        if (BLOCKCHAIN_NETWORK.includes("Polygon")) {
-            overrides.nonce = await this.provider.getTransactionCount(this.acct.address, 'pending');
-            overrides.gasPrice = (await this.provider.getGasPrice()).mul(110).div(100);
-        }
-        const tx = await this.imageRegistryContract.changeImageRewardAddress(ipfsHash, rewardAddress, overrides);
-        const receipt = await this.imageRegistryContract.provider.waitForTransaction(tx.hash);
-        console.log("transaction receipt: ", tx.hash);
-        if (receipt.status !== 1) {
-            throw new Error(`changeImageRewardAddress reverted (${tx.hash})`);
-        }
+        await this.write('changeImageRewardAddress', ipfsHash, rewardAddress);
     }
 
     async getTrustedZoneCert(ipfsHash) {
@@ -306,9 +315,9 @@ class ImageRegistry {
         }
     }
 
-    // Whether the registry is an ECImageRegistryV2, which records an image
-    // before its certificate exists (registerImage, then setImageCert). A V1
-    // registry has no pendingImages() and reverts.
+    // Whether the registry is an ECImageRegistryV2 or later, which records an
+    // image before its certificate exists (registerImage, then setImageCert).
+    // A V1 registry has no pendingImages() and reverts.
     async isV2() {
         try {
             await this.imageRegistryContract.pendingImages();
@@ -318,20 +327,42 @@ class ImageRegistry {
         }
     }
 
-    // The transaction overrides of a write from the publishing wallet.
-    async overrides() {
-        const overrides = {};
+    // The wallet that owns the securelock name on an ECImageRegistryV3 or
+    // later (the zero address while nobody does), or null on a registry
+    // without name owners. Only the owner publishes under the name, and a
+    // name and its -unsafe twin have one owner.
+    async imageNameOwner(imageName) {
+        try {
+            return await this.imageRegistryContract.imageNameOwner(imageName);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // Send `method(...args)` from the publishing wallet with its gas estimate
+    // plus 30%: what a registry write costs depends on the pending list, which
+    // other publishers change between the estimate and the block. A call the
+    // registry refuses throws at the estimate, with its reason.
+    async write(method, ...args) {
+        const gas = await this.imageRegistryContract.estimateGas[method](...args);
+        const overrides = { gasLimit: gas.mul(13).div(10) };
         if (BLOCKCHAIN_NETWORK.includes("Polygon")) {
             overrides.nonce = await this.provider.getTransactionCount(this.acct.address, 'pending');
             overrides.gasPrice = (await this.provider.getGasPrice()).mul(110).div(100);
         }
-        return overrides;
+        const tx = await this.imageRegistryContract[method](...args, overrides);
+        const receipt = await this.imageRegistryContract.provider.waitForTransaction(tx.hash);
+        console.log("transaction receipt: ", tx.hash);
+        if (receipt.status !== 1) {
+            throw new Error(`${method} reverted (${tx.hash})`);
+        }
     }
 
     // Record the securelock on a V2 registry before its certificate exists:
     // name, protocol version v3, compose, session, the publisher's fee and the
     // IPFS node that holds the image (a multiaddr, or ""). A hash the registry
-    // already has is left as it is; a hash another wallet registered is refused.
+    // already has is left as it is; a hash another wallet registered is refused,
+    // and so is a name another wallet owns.
     async registerImage(ipfsHash, imageName, dockerComposeHash, session, fee, ipfsPeer) {
         const details = await this.imageRegistryContract.imageDetails(ipfsHash);
         if (details.owner !== ethers.constants.AddressZero) {
@@ -341,14 +372,14 @@ class ImageRegistry {
             console.log(`${ipfsHash} is already registered`);
             return false;
         }
-        console.log(`Registering ${imageName} v3 as ${ipfsHash} (compose ${dockerComposeHash}, peer ${ipfsPeer || 'none'})`);
-        const tx = await this.imageRegistryContract.registerImage(
-            ipfsHash, "v3", imageName, dockerComposeHash, session, Number(fee), ipfsPeer || "", await this.overrides());
-        const receipt = await this.imageRegistryContract.provider.waitForTransaction(tx.hash);
-        console.log("transaction receipt: ", tx.hash);
-        if (receipt.status !== 1) {
-            throw new Error(`registerImage reverted (${tx.hash})`);
+        const nameOwner = await this.imageNameOwner(imageName);
+        if (nameOwner && nameOwner !== ethers.constants.AddressZero
+            && nameOwner.toLowerCase() !== this.acct.address.toLowerCase()) {
+            throw new Error(`the image name ${imageName} belongs to ${nameOwner}; publish under another PROJECT_NAME`);
         }
+        console.log(`Registering ${imageName} v3 as ${ipfsHash} (compose ${dockerComposeHash}, peer ${ipfsPeer || 'none'})`);
+        await this.write('registerImage',
+            ipfsHash, "v3", imageName, dockerComposeHash, session, Number(fee), ipfsPeer || "");
         return true;
     }
 
@@ -367,12 +398,7 @@ class ImageRegistry {
             throw new Error(`${ipfsHash} already has a certificate, and it differs from the extracted one`);
         }
         console.log(`Registering the certificate of ${ipfsHash}`);
-        const tx = await this.imageRegistryContract.setImageCert(ipfsHash, cert, await this.overrides());
-        const receipt = await this.imageRegistryContract.provider.waitForTransaction(tx.hash);
-        console.log("transaction receipt: ", tx.hash);
-        if (receipt.status !== 1) {
-            throw new Error(`setImageCert reverted (${tx.hash})`);
-        }
+        await this.write('setImageCert', ipfsHash, cert);
         return true;
     }
 }
@@ -431,15 +457,12 @@ class ImageRegistry {
         // (the publish's node) come from the environment.
         if (action === 'registerImage') {
             try {
+                const rewardAddress = rewardAddressFromEnv();
                 await imageRegistry.registerImage(
                     process.env.IPFS_HASH || "", process.env.PROJECT_NAME || "",
                     process.env.IPFS_DOCKER_COMPOSE_HASH || "", process.env.ENCLAVE_NAME_SECURELOCK || "",
                     process.env.DEVELOPER_FEE || "0", process.env.IPFS_PEER || "");
-                const rewardAddress = process.env.REWARD_ADDRESS || "";
                 if (rewardAddress) {
-                    if (!ethers.utils.isAddress(rewardAddress)) {
-                        throw new Error(`REWARD_ADDRESS ${rewardAddress} is not an address`);
-                    }
                     await imageRegistry.setRewardAddress(process.env.IPFS_HASH || "", rewardAddress);
                 }
             } catch (e) {
@@ -492,18 +515,14 @@ class ImageRegistry {
             }
             // REWARD_ADDRESS: where the image's developer fee is paid, when not
             // the publishing wallet.
-            const rewardAddress = process.env.REWARD_ADDRESS || "";
-            if (rewardAddress) {
-                if (!ethers.utils.isAddress(rewardAddress)) {
-                    console.error(`REWARD_ADDRESS ${rewardAddress} is not an address`);
-                    process.exit(1);
-                }
-                try {
+            try {
+                const rewardAddress = rewardAddressFromEnv();
+                if (rewardAddress) {
                     await imageRegistry.setRewardAddress(ipfsHash, rewardAddress);
-                } catch (e) {
-                    console.error(`Could not set the reward address: ${e.reason || e.message}`);
-                    process.exit(1);
                 }
+            } catch (e) {
+                console.error(`Could not set the reward address: ${e.reason || e.message}`);
+                process.exit(1);
             }
             process.exit(0);
         }
@@ -513,6 +532,22 @@ class ImageRegistry {
             process.exit(0);
         }
         console.log(`Checking image: '${projectName}' on the ${networkName} blockchain...`);
+        // On a registry with name owners the name's owner answers, whether or
+        // not an image is certified under the name yet.
+        const nameOwner = await imageRegistry.imageNameOwner(projectName);
+        if (nameOwner !== null) {
+            if (nameOwner === ethers.constants.AddressZero) {
+                console.log(`Image: '${projectName}' is available on the ${networkName} blockchain.`);
+                process.exit(0);
+            }
+            if (privateKey && isStringPrivateKey(privateKey) === "OK"
+                && walletAddress(privateKey).toLowerCase() !== nameOwner.toLowerCase()) {
+                console.log(`!!! Image: '${projectName}' is owned by '${nameOwner}'.\nYou are not the account holder of the image.\nPlease change the project name and try again.\n`);
+                process.exit(1);
+            }
+            console.log(`Image: '${projectName}' is owned by '${nameOwner}'.\nIf you are not the account holder, you will not be able to publish your project with the current name. Please change the project name and try again.\n`);
+            process.exit(0);
+        }
         const imageHash = (await imageRegistry._getLatestImageVersionPublicKey(projectName, version))[0];
         console.log(`Image hash: ${imageHash}`);
         if (!imageHash) {
@@ -523,8 +558,7 @@ class ImageRegistry {
 
         if (privateKey) {
             if (isStringPrivateKey(privateKey) === "OK") {
-                const account = Account.fromPrivate(privateKey);
-                if (imageOwner !== account.address) {
+                if (imageOwner.toLowerCase() !== walletAddress(privateKey).toLowerCase()) {
                     console.log(`!!! Image: '${projectName}' is owned by '${imageOwner}'.\nYou are not the account holder of the image.\nPlease change the project name and try again.\n`);
                     process.exit(1);
                 }

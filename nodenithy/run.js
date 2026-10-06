@@ -140,6 +140,27 @@ const main = async () => {
         process.on('exit', () => localKubo.stop());
     }
 
+    // The CIDs uploadToIpfs gives, from the same add calls with only-hash: the
+    // IPFS node stores and announces nothing. Set by hashForIpfs, after which
+    // uploadToIpfs refuses an upload that gives other CIDs.
+    let expectedCids = null;
+    const hashForIpfs = () => {
+        const hashOf = (target) => {
+            try {
+                const out = execSync(`node ../ipfs.mjs --host "${ipfsApi}" --action hash ${target}`, { stdio: ['ignore', 'pipe', 'inherit'] });
+                return out.toString().trim().split('\n').pop().trim();
+            } catch (e) {
+                console.error(`Error: could not hash ${target} for IPFS: ${e.message}`);
+                process.exit(1);
+            }
+        };
+        process.env.IPFS_DOCKER_COMPOSE_HASH = hashOf('--filePath docker-compose-final.yml');
+        process.env.IPFS_HASH = hashOf(`--folderPath ${registryPath}`);
+        console.log("IPFS_DOCKER_COMPOSE_HASH (before upload): ", process.env.IPFS_DOCKER_COMPOSE_HASH);
+        console.log("IPFS_HASH (before upload): ", process.env.IPFS_HASH);
+        expectedCids = { image: process.env.IPFS_HASH, compose: process.env.IPFS_DOCKER_COMPOSE_HASH };
+    };
+
     // The compose and the image tree, added through ipfsApi; their CIDs land
     // in IPFS_DOCKER_COMPOSE_HASH / IPFS_HASH (files and environment).
     const uploadToIpfs = () => {
@@ -164,6 +185,11 @@ const main = async () => {
         process.env.IPFS_HASH = fs.readFileSync('IPFS_HASH.ipfs', 'utf8').trim();
         console.log("IPFS_HASH: ", process.env.IPFS_HASH);
         writeEnv('IPFS_HASH', process.env.IPFS_HASH);
+        if (expectedCids && (process.env.IPFS_HASH !== expectedCids.image
+            || process.env.IPFS_DOCKER_COMPOSE_HASH !== expectedCids.compose)) {
+            console.error(`Error: the upload gave ${process.env.IPFS_HASH} (compose ${process.env.IPFS_DOCKER_COMPOSE_HASH}), not the registered ${expectedCids.image} (compose ${expectedCids.compose}).`);
+            process.exit(1);
+        }
     };
 
     ['docker-compose.yml', 'docker-compose-final.yml'].forEach(file => {
@@ -287,13 +313,14 @@ const main = async () => {
     // Where the session goes depends on who provisions the securelock. On a
     // CAS-attested testnet it is registered ON-CHAIN in the ethernity-cas
     // SessionRegistry, which the validator set reads and which accepts no
-    // POST; the publish then waits until the validators serve it, because the
-    // public-key harvest below provisions the enclave from them. On mainnet it
-    // is registered with the Scontain CAS. A self-signing testnet has none: a
-    // CAS-issued certificate would not match the key the enclave derives.
-    if (!cas) {
-        console.log(`\t✔  ${process.env.BLOCKCHAIN_NETWORK}: no CAS session; the securelock self-signs from MR_ENCLAVE`);
-    } else if (casTestnet) {
+    // POST. That happens once the image is registered, below: the
+    // SessionRegistry takes a securelock session only from the wallet that
+    // owns the image name. The publish then waits until the validators serve
+    // it, because the public-key harvest provisions the enclave from them. On
+    // mainnet it is registered with the Scontain CAS. A self-signing testnet
+    // has none: a CAS-issued certificate would not match the key the enclave
+    // derives.
+    const registerSessionOnChain = async () => {
         const registered = await sessionRegistry.register(
             casChain.rpcUrl, casChain.chainId, casConfig.SESSION_REGISTRY[templateName],
             process.env.PRIVATE_KEY, fs.readFileSync('etny-securelock-test.yaml'),
@@ -306,7 +333,10 @@ const main = async () => {
         } else {
             console.log(`\t✔  Session ${registered.name} already registered on-chain with this body (${registered.hash})`);
         }
-    } else {
+    };
+    if (!cas) {
+        console.log(`\t✔  ${process.env.BLOCKCHAIN_NETWORK}: no CAS session; the securelock self-signs from MR_ENCLAVE`);
+    } else if (!casTestnet) {
     // don't generate new keys if PREDECESSOR_HASH_SECURELOCK is not empty and the key.pem and cert.pem files exist
     if (PREDECESSOR_HASH_SECURELOCK !== 'EMPTY' && fs.existsSync('key.pem') && fs.existsSync('cert.pem')) {
         console.log("Skipping keypair generation and certificate creation.");
@@ -530,21 +560,28 @@ const main = async () => {
 
     // The image and its compose go out before the certificate is extracted,
     // whichever way it is: the extraction service fetches them by these CIDs.
-    // On a V2 registry the wallet records the image now (registerImage, with
-    // the publish's node), so the bootnode's mirror pins it and the service
-    // queues it from the chain; the certificate is written below by the same
-    // wallet (setImageCert). A V1 registry takes both in one addImage call.
-    uploadToIpfs();
-    const registryEnv = { ...process.env, PROJECT_NAME: securelock };
-    const registryV2 = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "" "isV2"`, { env: registryEnv }).toString().trim() === 'true';
+    // On a two-step registry (ECImageRegistryV2 and later) the wallet records
+    // the image first (registerImage, with the publish's node), under the
+    // CIDs the upload gives, hashed before anything is stored. On
+    // ECImageRegistryV3 that binds the image name to this wallet before the
+    // upload, the session registration or anything else discloses it. The
+    // bootnode's mirror then pins the image and the extraction service queues
+    // it from the chain; the certificate is written below by the same wallet
+    // (setImageCert). A V1 registry takes both in one addImage call.
+    const registryV2 = execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "" "isV2"`, { env: { ...process.env, PROJECT_NAME: securelock } }).toString().trim() === 'true';
+    let ipfsPeer = '';
     if (registryV2) {
-        if (localKubo) {
-            await localKubo.provide(process.env.IPFS_HASH);
-            await localKubo.provide(process.env.IPFS_DOCKER_COMPOSE_HASH);
-            registryEnv.IPFS_PEER = await localKubo.peerMultiaddr();
-        }
-        execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "${process.env.PRIVATE_KEY}" "registerImage"`, { stdio: "inherit", env: registryEnv });
+        hashForIpfs();
+        if (localKubo) ipfsPeer = await localKubo.peerMultiaddr();
+        execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "${process.env.PRIVATE_KEY}" "registerImage"`, { stdio: "inherit", env: { ...process.env, PROJECT_NAME: securelock, IPFS_PEER: ipfsPeer } });
     }
+    uploadToIpfs();
+    const registryEnv = { ...process.env, PROJECT_NAME: securelock, IPFS_PEER: ipfsPeer };
+    if (registryV2 && localKubo) {
+        await localKubo.provide(process.env.IPFS_HASH);
+        await localKubo.provide(process.env.IPFS_DOCKER_COMPOSE_HASH);
+    }
+    if (casTestnet) await registerSessionOnChain();
 
     if (fs.existsSync('certificate.securelock.crt')) {
         // delete it

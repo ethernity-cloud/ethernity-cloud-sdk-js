@@ -28,6 +28,14 @@ const writeEnv = (key, value) => {
   fs.writeFileSync(envFile, content, "utf8");
 };
 
+// The project name is the securelock's image name, and <name>-unsafe on an
+// -unsafe network. ECImageRegistryV3 takes 1 to 128 of [0-9A-Za-z._-], so a
+// project name is at most 121 of them; spaces are written as '_'. It also
+// begins the securelock's session name, <name>_SECURELOCK_V3_..., which the
+// SessionRegistry refuses when "_SECURELOCK_" occurs in it twice, so a project
+// name does not contain "SECURELOCK".
+const PROJECT_NAME_RULE = /^(?!.*SECURELOCK)[0-9A-Za-z._-]{1,121}$/;
+
 const getProjectName = () => {
   return new Promise((resolve) => {
     const askProjectName = () => {
@@ -35,6 +43,11 @@ const getProjectName = () => {
         if (projectName.trim() === "") {
           console.log(
             "Project name cannot be blank. Please enter a valid name.",
+          );
+          askProjectName();
+        } else if (!PROJECT_NAME_RULE.test(projectName.trim().replace(/ /g, "_"))) {
+          console.log(
+            "A project name is 1 to 121 letters, digits, '.', '-' or '_' (a space becomes '_'), and does not contain SECURELOCK. Please enter a valid name.",
           );
           askProjectName();
         } else {

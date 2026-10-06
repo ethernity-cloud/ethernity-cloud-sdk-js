@@ -15,10 +15,19 @@ const crypto = require('crypto');
 const axios = require('axios');
 const { ethers } = require('ethers');
 
+// `latest` and `record` name a version by its record key: a record id
+// (keccak256(abi.encode(name, sessionHash))), or the body's hash on the
+// registries that key records by it. The record holds the body's hash on both.
 const ABI = [
   'function register(bytes32 sessionHash, string name, string bodyCid, string imageCid, uint8 hashAlgo, (string[] tolerate, string[] ignoreAdvisories, string[] mrenclaves, uint16 minIsvSvn, bool debugAllowed, bool skipQuoteVerification) rulesIn) returns (uint32)',
   'function latest(string name) view returns (bytes32)',
-  'function linkImage(bytes32 sessionHash, string imageCid)',
+  'function record(bytes32 id) view returns (bytes32 sessionHash, address creator, string enclaveName, uint32 version, string bodyCid, string imageCid, uint8 hashAlgo, uint64 registeredAt, bool exists)',
+  'function linkImage(bytes32 id, string imageCid)',
+  'error NotCreator(address creator, address caller)',
+  'error DuplicateSession(bytes32 recordId)',
+  'error NotImageNameOwner(string project, address nameOwner, address caller)',
+  'error NotAllowedPublisher(address caller)',
+  'error AmbiguousSecurelockName(string name)',
 ];
 
 const HASH_ALGO_SHA256 = 1;
@@ -78,17 +87,39 @@ function contract(rpcUrl, registryAddress, key) {
   return new ethers.Contract(registryAddress, ABI, signer);
 }
 
+// The latest version of `name`: {id, hash, creator}, or null when it has none.
+async function latestRecord(reg, name) {
+  const id = await reg.latest(name);
+  if (/^0x0+$/.test(id)) return null;
+  const rec = await reg.record(id);
+  return { id, hash: rec.sessionHash.toLowerCase(), creator: rec.creator };
+}
+
+// A refusal as the registry states it: the custom error and its arguments.
+function refusal(e) {
+  if (e.errorName) return `${e.errorName}(${(e.errorArgs || []).map(String).join(', ')})`;
+  return e.reason || e.message;
+}
+
 // Pin `body` and register it under its own `name:`. Returns
 // {name, hash, cid, registered}: `registered` is false when the chain already
-// held these exact bytes as the name's latest version.
+// held these exact bytes as the name's latest version, registered by this
+// wallet. The registration is simulated first, so a refusal is reported with
+// the registry's reason.
 async function register(rpcUrl, chainId, registryAddress, key, body, ipfsApiUrl, imageCid = '') {
   const { name, rules } = parseNameAndRules(body.toString('utf8'));
   if (!name) throw new Error('the session body has no `name:`');
   const hash = sessionHash(body);
   const reg = contract(rpcUrl, registryAddress, key);
   const cid = await pinBody(ipfsApiUrl, body);
-  if ((await reg.latest(name)).toLowerCase() === hash) {
+  const latest = await latestRecord(reg, name);
+  if (latest && latest.hash === hash && latest.creator.toLowerCase() === (await reg.signer.getAddress()).toLowerCase()) {
     return { name, hash, cid, registered: false };
+  }
+  try {
+    await reg.callStatic.register(hash, name, cid, imageCid, HASH_ALGO_SHA256, rules);
+  } catch (e) {
+    throw new Error(`SessionRegistry refuses ${name}: ${refusal(e)}`);
   }
   const tx = await reg.register(hash, name, cid, imageCid, HASH_ALGO_SHA256, rules, {
     gasLimit: 800000, gasPrice: ethers.utils.parseUnits('1', 'mwei'), chainId,
@@ -103,27 +134,36 @@ async function register(rpcUrl, chainId, registryAddress, key, body, ipfsApiUrl,
 // Point the name's latest version at the published image CID.
 async function linkImage(rpcUrl, chainId, registryAddress, key, name, imageCid) {
   const reg = contract(rpcUrl, registryAddress, key);
-  const hash = await reg.latest(name);
-  if (/^0x0+$/.test(hash)) throw new Error(`no registered session named ${name}`);
-  const tx = await reg.linkImage(hash, imageCid, { gasLimit: 300000, gasPrice: ethers.utils.parseUnits('1', 'mwei'), chainId });
+  const latest = await latestRecord(reg, name);
+  if (!latest) throw new Error(`no registered session named ${name}`);
+  try {
+    await reg.callStatic.linkImage(latest.id, imageCid);
+  } catch (e) {
+    throw new Error(`SessionRegistry refuses to link ${name}: ${refusal(e)}`);
+  }
+  const tx = await reg.linkImage(latest.id, imageCid, { gasLimit: 300000, gasPrice: ethers.utils.parseUnits('1', 'mwei'), chainId });
   const rcpt = await tx.wait();
   if (rcpt.status !== 1) throw new Error(`SessionRegistry.linkImage reverted for ${name} (tx ${tx.hash})`);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Block until the chain reports `name` at `hash`, then hold while the
-// validators pick it up: the elected writer's poll (ECAS_SESSION_WATCH_SECS,
-// 60 s) notices the registration and generates the secrets, its recordKey
-// transaction confirms, and the other validators' next poll adopts the
-// recorded blob. The enclave cannot retry and the validator it dials is the
-// node's choice, so the wait covers the LAST validator to adopt.
+// Block until the chain reports `name`'s latest version at body hash `hash`,
+// then hold while the validators pick it up: the elected writer's poll
+// (ECAS_SESSION_WATCH_SECS, 60 s) notices the registration and generates the
+// secrets, its recordKey transaction confirms, and the other validators' next
+// poll adopts the recorded blob. The enclave cannot retry and the validator
+// it dials is the node's choice, so the wait covers the LAST validator to
+// adopt.
 async function waitVisible(rpcUrl, registryAddress, name, hash, timeoutMs = 180000) {
   const reg = contract(rpcUrl, registryAddress, null);
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     let got;
-    try { got = (await reg.latest(name)).toLowerCase(); } catch (e) { got = `(read failed: ${e.message})`; }
+    try {
+      const latest = await latestRecord(reg, name);
+      got = latest ? latest.hash : '(none)';
+    } catch (e) { got = `(read failed: ${e.message})`; }
     if (got === hash.toLowerCase()) {
       console.log(`\t✔  session ${name} visible on chain at ${got}`);
       break;
