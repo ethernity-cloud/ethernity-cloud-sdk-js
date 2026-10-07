@@ -523,6 +523,27 @@ class EtnySecureLock {
         }
     }
 
+    // The order metadata, from the chain, retried over transient RPC failures.
+    // It names the trustedzone whose certificate checks the handover and
+    // encrypts the result, so without it no result reaches the trustedzone.
+    // Returns whether it was loaded; a persistent failure sets SYSTEM_ERROR.
+    async loadOrderMetadata() {
+        const maxRetries = 5;
+        for (let attempt = 1; ; attempt++) {
+            try {
+                await this.getDORequestMetadata();
+                return true;
+            } catch (e) {
+                if (attempt === maxRetries) {
+                    this.task_code = TaskStatus.SYSTEM_ERROR;
+                    this.task_result = `Failed to fetch metadata after ${maxRetries} attempts: ${e && e.message ? e.message : e}`;
+                    this.is_valid_client_data = false;
+                    return false;
+                }
+            }
+        }
+    }
+
     // v4 checksum validation: the DO-request is submitted on-chain by the owner,
     // so the metadata checksum is already authenticated by the transaction sender;
     // we only confirm the file content hashes to that recorded checksum. An
@@ -533,24 +554,6 @@ class EtnySecureLock {
     // not hashed. Kept identical across securelock / trustedzone / validator so
     // all three agree.
     async validateClientPayload(payload_data, input_data) {
-        // The order metadata comes from the chain; a transient RPC failure
-        // must end in a signed failure result the trustedzone can hand over,
-        // not in a task that produces nothing until the trustedzone times out.
-        const maxRetries = 5;
-        for (let attempt = 1; ; attempt++) {
-            try {
-                await this.getDORequestMetadata();
-                break;
-            } catch (e) {
-                if (attempt === maxRetries) {
-                    this.task_code = TaskStatus.SYSTEM_ERROR;
-                    this.task_result = `Failed to fetch metadata after ${maxRetries} attempts: ${e && e.message ? e.message : e}`;
-                    this.is_valid_client_data = false;
-                    return;
-                }
-            }
-        }
-
         if (typeof payload_data !== 'string') {
             this.task_code = TaskStatus.PAYLOAD_CHECKSUM_ERROR;
             this.task_result = 'PAYLOAD NOT AVAILABLE';
@@ -637,7 +640,8 @@ class EtnySecureLock {
 
             const encryptedTuple = etny_crypto.encryptedDataFromBase64Json(encryptedBase64);
             const decryptedResult = etny_crypto.decrypt(this.privateKeyMaterial(), encryptedTuple);
-            return decryptedResult.toString();
+            // decrypt() returns false for an object that does not decrypt.
+            return decryptedResult === false ? false : decryptedResult.toString();
         } catch (e) {
             console.log(`Failed to get ${objectName} file`);
             return false;
@@ -814,6 +818,12 @@ class EtnySecureLock {
 
     async saveResult() {
         try {
+            // A failure reported before execute() loaded the order metadata
+            // (one thrown in create(), see reportFailure) loads it here.
+            if (!this._metadata && !(await this.loadOrderMetadata())) {
+                console.log('Save result: no order metadata, so no trustedzone certificate to encrypt the result to');
+                return;
+            }
             await this.getTrustedZonePublicKey();
             // THE HANDOVER IS ALWAYS SIGNED: the trustedzone refuses an
             // unverifiable result/result-code, so the operator's storage
@@ -876,6 +886,40 @@ class EtnySecureLock {
     }
 
     async execute() {
+        // The order metadata names the trustedzone whose certificate checks
+        // the handover and encrypts the result, and the task binding is signed
+        // into the result; both are read before any check that can end the
+        // task, so every outcome below reaches the trustedzone as a result it
+        // can verify.
+        if (!(await this.loadOrderMetadata())) {
+            return false;
+        }
+        await this.getTrustedZonePublicKey();
+
+        // Task binding: the order id and enclave challenge the trustedzone
+        // generated for this task, forwarded as task.securelock + .sig. When
+        // present (and only with a valid trustedzone signature) the result and
+        // the code are signed over "<challenge>:<order_id>:" and the envelope
+        // carries both, so the trustedzone can refuse a result captured from
+        // any other run. Absent with an older trustedzone, which then verifies
+        // the bare result as before.
+        this.task_binding = null;
+        try {
+            const taskValue = await this.getFileContentAndDecrypt(this.etny_bucket, 'task.securelock');
+            const taskSig = await this.getFileContentAndDecrypt(this.etny_bucket, 'task.securelock.sig');
+            if (etny_crypto.verifySignature(this.trustedZonePublicKey, taskValue, taskSig)) {
+                const task = JSON.parse(String(taskValue));
+                if (Number.isInteger(Number(task.order_id)) && typeof task.challenge === 'string' && task.challenge) {
+                    this.task_binding = { order_id: Number(task.order_id), challenge: task.challenge };
+                    console.log(`Task binding attested by trustedzone: order ${this.task_binding.order_id}`);
+                }
+            } else {
+                console.error('task.securelock signature validation FAILED; result will not be bound');
+            }
+        } catch (e) {
+            console.log('No task binding supplied; result will not be bound');
+        }
+
         // ADJUDICATE the CAS attestation verdict recorded at startup. An
         // INVALID CAS quote terminates the task before the payload is
         // handled; the failure result (CAS_ATTESTATION_FAULT, 40) reaches
@@ -895,7 +939,6 @@ class EtnySecureLock {
         // handover -- the operator's storage layer between the enclaves must
         // not be able to substitute either. Mirrors the pynithy
         // validate_trustedzone_data behavior.
-        await this.getTrustedZonePublicKey();
         const payloadSig = await this.getFileContentAndDecrypt(this.etny_bucket, this.payload + '.sig');
         const inputSig = await this.getFileContentAndDecrypt(this.etny_bucket, this.input + '.sig');
         if (payloadSig === false ||
@@ -934,7 +977,6 @@ class EtnySecureLock {
             const callerValue = await this.getFileContentAndDecrypt(this.etny_bucket, 'caller.securelock');
             const callerSig = await this.getFileContentAndDecrypt(this.etny_bucket, 'caller.securelock.sig');
             if (typeof etny_crypto.verifySignature === 'function') {
-                await this.getTrustedZonePublicKey();
                 if (etny_crypto.verifySignature(this.trustedZonePublicKey, callerValue, callerSig)) {
                     this.task_caller = String(callerValue).trim();
                     console.log(`Task caller attested by trustedzone: ${this.task_caller}`);
@@ -946,31 +988,6 @@ class EtnySecureLock {
             }
         } catch (e) {
             console.log('No attested task caller supplied; treating task as anonymous');
-        }
-
-        // Task binding: the order id and enclave challenge the trustedzone
-        // generated for this task, forwarded as task.securelock + .sig. When
-        // present (and only with a valid trustedzone signature) the result and
-        // the code are signed over "<challenge>:<order_id>:" and the envelope
-        // carries both, so the trustedzone can refuse a result captured from
-        // any other run. Absent with an older trustedzone, which then verifies
-        // the bare result as before.
-        this.task_binding = null;
-        try {
-            const taskValue = await this.getFileContentAndDecrypt(this.etny_bucket, 'task.securelock');
-            const taskSig = await this.getFileContentAndDecrypt(this.etny_bucket, 'task.securelock.sig');
-            await this.getTrustedZonePublicKey();
-            if (etny_crypto.verifySignature(this.trustedZonePublicKey, taskValue, taskSig)) {
-                const task = JSON.parse(String(taskValue));
-                if (Number.isInteger(Number(task.order_id)) && typeof task.challenge === 'string' && task.challenge) {
-                    this.task_binding = { order_id: Number(task.order_id), challenge: task.challenge };
-                    console.log(`Task binding attested by trustedzone: order ${this.task_binding.order_id}`);
-                }
-            } else {
-                console.error('task.securelock signature validation FAILED; result will not be bound');
-            }
-        } catch (e) {
-            console.log('No task binding supplied; result will not be bound');
         }
 
         this.configureStateRegistry();
