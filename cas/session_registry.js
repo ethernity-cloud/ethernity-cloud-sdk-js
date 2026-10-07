@@ -99,8 +99,14 @@ async function latestRecord(reg, name) {
 // Send `method(...args)` to the registry. It is simulated first, so a call
 // the registry refuses stops with the registry's reason (`refused` names the
 // call), then sent with its gas estimate plus 30%: a registration's cost
-// grows with the length of the name.
+// grows with the length of the name. The wallet signs for the chain its RPC
+// serves (ethers takes no chainId override on a contract call), so an RPC
+// serving another chain than `chainId` is refused before anything is sent.
 async function send(reg, chainId, refused, method, ...args) {
+  const { chainId: served } = await reg.provider.getNetwork();
+  if (served !== chainId) {
+    throw new Error(`SessionRegistry: the RPC serves chain ${served}, not ${chainId}`);
+  }
   try {
     await reg.callStatic[method](...args);
   } catch (e) {
@@ -108,7 +114,7 @@ async function send(reg, chainId, refused, method, ...args) {
   }
   const gas = await reg.estimateGas[method](...args);
   const tx = await reg[method](...args, {
-    gasLimit: gas.mul(13).div(10), gasPrice: ethers.utils.parseUnits('1', 'mwei'), chainId,
+    gasLimit: gas.mul(13).div(10), gasPrice: ethers.utils.parseUnits('1', 'mwei'),
   });
   const rcpt = await tx.wait();
   if (rcpt.status !== 1) throw new Error(`SessionRegistry.${method} reverted for ${refused} (tx ${tx.hash})`);
