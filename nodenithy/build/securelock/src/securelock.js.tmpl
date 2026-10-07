@@ -325,6 +325,19 @@ class EtnySecureLock {
         const attributes = quote.slice(96, 112);
         const quoteMrenclave = quote.slice(112, 144).toString('hex');
         const reportData = quote.slice(368, 432);
+        // TWO report_data layouts, distinguished by which one names a
+        // REGISTERED validator (checked below):
+        //   fresh  (per-session): [0:32] freshness commitment, [32:52] address
+        //   legacy (boot quote):  [0:20] address,              [20:52] cert hash
+        // The fresh layout is what a current CAS injects; legacy remains only
+        // for a CAS that could not read this enclave's nonce. Reading the wrong
+        // one would parse commitment bytes as an address and fail every task,
+        // so both are resolved and the registry decides which is real.
+        const casCandidates = [
+            [ethers.utils.getAddress('0x' + reportData.slice(32, 52).toString('hex')), null],
+            [ethers.utils.getAddress('0x' + reportData.slice(0, 20).toString('hex')),
+             reportData.slice(20, 52).toString('hex')],
+        ];
 
         const vrAbi = [
             'function isValidator(address) view returns (bool)',
@@ -430,8 +443,11 @@ class EtnySecureLock {
             console.log('CAS environment binding OK: quote commits to ' +
                         `attestation session ${sessionId.slice(0, 16)}...`);
         }
-        // SGX ATTRIBUTES.FLAGS bit 1 = DEBUG. Tolerated only when the session
-        // explicitly says so (testnet debug CAS).
+        // SGX ATTRIBUTES.FLAGS bit 1 = DEBUG. A debug CAS protects nothing: its
+        // memory is readable from outside the enclave, so its keys and the
+        // session it serves are not secret. Both CAS modes (mainnet and
+        // testnet_cas) REFUSE one. Only plain 'testnet' tolerates it, and there
+        // the enclave never contacts a CAS at all so the check never runs.
         if ((attributes[0] & 0x02) && NETWORK_TYPE !== 'testnet') {
             return fault('CAS enclave runs in SGX DEBUG mode');
         }
