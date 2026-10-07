@@ -83,7 +83,7 @@ process.env.REGISTRY_PATH = `${currentDir}/registry`;
 const registryPath = process.env.REGISTRY_PATH;
 
 const runDockerCommand = (service) => {
-    const command = `docker-compose run -e SCONE_LOG=INFO -e SCONE_HASH=1 ${service}`;
+    const command = `docker-compose run --rm -e SCONE_LOG=INFO -e SCONE_HASH=1 ${service}`;
     const output = execSync(command).toString().trim();
     console.log(`Output of ${command}: ${output}`);
     return output.split('\n').filter(line => !/Creating|Pulling|latest|Digest/.test(line)).join('');
@@ -103,7 +103,7 @@ const extractSconeHash = (service) => {
 // Returns '' if the file is absent (testnet builds).
 const extractSignedMrenclave = (service) => {
     try {
-        const command = `docker-compose -f docker-compose.yml run --no-deps --entrypoint cat ${service} /signed_mrenclave.txt`;
+        const command = `docker-compose -f docker-compose.yml run --rm --no-deps --entrypoint cat ${service} /signed_mrenclave.txt`;
         const output = execSync(command, { stdio: ['pipe', 'pipe', 'pipe'] }).toString().trim();
         const m = output.match(/\b[a-fA-F0-9]{64}\b/);
         return m ? m[0] : '';
@@ -595,7 +595,7 @@ const main = async () => {
 
     let PUBLIC_KEY_SECURELOCK_RES = '';
     try {
-        const output = execSync(`docker-compose run etny-securelock`, { cwd: runDir }).toString();
+        const output = execSync(`docker-compose run --rm etny-securelock`, { cwd: runDir }).toString();
         console.log("Output of docker-compose run etny-securelock:");
         // Extract the WHOLE multi-line PEM certificate block from the enclave
         // output. A previous version grabbed only the single line containing
