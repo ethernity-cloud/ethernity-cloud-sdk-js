@@ -63,8 +63,23 @@ const generatePublicKey = (x, y) => {
     return curve.keyFromPublic(pub, 'hex');
 }
 
+// A ciphertext tuple's coordinate as elliptic reads it: hex without a prefix.
+// runner-py writes the 0x prefix, runner-js and these enclaves write none.
+const bareHex = (v) => String(v).trim().replace(/^0x/i, '');
+
 function getPublicPointFromCoords(x, y) {
-    const publicKey = generatePublicKey(x, y);
+    const publicKey = generatePublicKey(bareHex(x), bareHex(y));
+    // The coordinates come from an untrusted ciphertext tuple. keyFromPublic
+    // builds the point with no on-curve check, and elliptic's add/double
+    // arithmetic never uses the curve's b, so an off-curve or small-order
+    // point multiplied by the identity scalar would leak that scalar modulo
+    // the point's order through the AES-GCM tag oracle. validate() rejects
+    // the point at infinity, any point not on P-384 (the b-dependent check),
+    // and any point whose order is not the group order.
+    const check = publicKey.validate();
+    if (!check.result) {
+        throw new Error('ECIES public point rejected: ' + check.reason);
+    }
     return publicKey.getPublic();
 }
 
@@ -138,7 +153,10 @@ function decrypt_ecc(encryptedMsg, privatePoint) {
         decrypted += decipher.final('utf8');
         return decrypted;
     } catch (e) {
-        console.log(`Error while decrypting ECC:`, e.message);
+        // Opaque on purpose: the failure cause (rejected point vs. tag
+        // mismatch) is not logged, so the caller of the decrypt sees only
+        // success or failure and gets no oracle on the identity key.
+        console.log('Error while decrypting ECC');
         return false;
     }
 }

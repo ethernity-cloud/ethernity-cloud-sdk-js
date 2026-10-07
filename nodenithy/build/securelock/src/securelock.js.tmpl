@@ -525,9 +525,13 @@ class EtnySecureLock {
 
     // v4 checksum validation: the DO-request is submitted on-chain by the owner,
     // so the metadata checksum is already authenticated by the transaction sender;
-    // we only confirm the file content hashes to that recorded checksum. Empty
-    // input carries no checksum (has_checksum === false) and is skipped. Kept
-    // identical across securelock / trustedzone / validator so all three agree.
+    // we only confirm the file content hashes to that recorded checksum. An
+    // empty input (no CID) is checked against its recorded checksum when there
+    // is one (the runners record the checksum of the empty string) and is the
+    // empty string when there is none; an input that names a CID must carry a
+    // checksum. Data that could not be read or decrypted (false) is reported,
+    // not hashed. Kept identical across securelock / trustedzone / validator so
+    // all three agree.
     async validateClientPayload(payload_data, input_data) {
         // The order metadata comes from the chain; a transient RPC failure
         // must end in a signed failure result the trustedzone can hand over,
@@ -547,6 +551,18 @@ class EtnySecureLock {
             }
         }
 
+        if (typeof payload_data !== 'string') {
+            this.task_code = TaskStatus.PAYLOAD_CHECKSUM_ERROR;
+            this.task_result = 'PAYLOAD NOT AVAILABLE';
+            this.is_valid_client_data = false;
+            return;
+        }
+        if (typeof input_data !== 'string') {
+            this.task_code = TaskStatus.INPUT_CHECKSUM_ERROR;
+            this.task_result = 'INPUT NOT AVAILABLE';
+            this.is_valid_client_data = false;
+            return;
+        }
         const pmeta = this._metadata.payload_metadata_obj;
         if (pmeta.has_checksum) {
             const expected = pmeta.checksum.toLowerCase().replace(/^0x/, '');
@@ -572,6 +588,14 @@ class EtnySecureLock {
                 this.task_result = 'INPUT CHECKSUM DOESN\'T MATCH';
                 this.is_valid_client_data = false;
             }
+        } else if (imeta.ipfs_hash) {
+            this.task_code = TaskStatus.INPUT_CHECKSUM_ERROR;
+            this.task_result = 'INPUT CHECKSUM DOESN\'T EXIST';
+            this.is_valid_client_data = false;
+        } else if (input_data !== '') {
+            this.task_code = TaskStatus.INPUT_CHECKSUM_ERROR;
+            this.task_result = 'INPUT CHECKSUM DOESN\'T MATCH';
+            this.is_valid_client_data = false;
         }
     }
 
