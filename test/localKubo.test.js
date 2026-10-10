@@ -4,7 +4,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { LocalKubo, ownEndpoint } = require('../localKubo.js');
+const { LocalKubo, ownEndpoint, apiPortIn } = require('../localKubo.js');
 
 const PEER = '12D3KooWB8qpxeHqcdb6xTNu3FXjrWE4zTFPverw8XMpms2Qm4pJ';
 
@@ -45,6 +45,13 @@ test('the first public address is registered', async () => {
 test('behind NAT the bare peer id is registered', async () => {
     const k = kubo([`/ip4/127.0.0.1/tcp/4001/p2p/${PEER}`, `/ip4/192.168.1.20/udp/4001/quic-v1/p2p/${PEER}`]);
     assert.equal(await k.peerMultiaddr(), `/p2p/${PEER}`);
+});
+
+test('the API port of a kept node is read from docker port', () => {
+    assert.equal(apiPortIn('127.0.0.1:60823\n'), 60823);
+    assert.equal(apiPortIn('127.0.0.1:60823\n[::1]:60823\n'), 60823);
+    assert.equal(apiPortIn(''), null);
+    assert.equal(apiPortIn("Error: No public port '5001/tcp' published"), null);
 });
 
 function releasing(k) {

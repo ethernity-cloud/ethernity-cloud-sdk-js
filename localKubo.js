@@ -46,6 +46,14 @@ function freePort() {
     });
 }
 
+// The host port in the first line of `docker port <container> 5001/tcp`
+// (`127.0.0.1:60823`), or null when there is none.
+function apiPortIn(dockerPortOutput) {
+    const first = String(dockerPortOutput || '').trim().split('\n')[0] || '';
+    const match = /:(\d+)$/.exec(first.trim());
+    return match ? Number(match[1]) : null;
+}
+
 // Whether the configured endpoint is one of the application's own; the public
 // API and an empty setting both mean "run a Kubo for this publish".
 function ownEndpoint(endpoint) {
@@ -73,21 +81,40 @@ class LocalKubo {
         return response.data;
     }
 
-    // Start the container and wait for its API; peer it with the bootnode.
-    // Throws when docker cannot run it or the API does not come up in time.
-    async start() {
-        const apiPort = await freePort();
-        this.apiUrl = `http://127.0.0.1:${apiPort}`;
-        try { execFileSync('docker', ['rm', '-f', this.container], { stdio: 'ignore' }); } catch (e) { /* not running */ }
-        const args = ['run', '-d', '--name', this.container, '-p', `127.0.0.1:${apiPort}:5001`];
-        if (await portFree(SWARM_PORT)) {
-            args.push('-p', `${SWARM_PORT}:4001`, '-p', `${SWARM_PORT}:4001/udp`);
-        }
-        args.push(KUBO_IMAGE, 'daemon', '--init', '--migrate=true');
+    // The API port of the container a previous publish of this project left
+    // running (release), or null when none runs.
+    keptApiPort() {
         try {
-            execFileSync('docker', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+            return apiPortIn(execFileSync('docker', ['port', this.container, '5001/tcp'], { stdio: ['ignore', 'pipe', 'ignore'] }));
         } catch (e) {
-            throw new Error(`docker could not start ${KUBO_IMAGE}: ${String(e.stderr || e.message).trim()}`);
+            return null;
+        }
+    }
+
+    // Start the container and wait for its API, or take over the one a
+    // previous publish of this project left serving its registered image,
+    // whose peer id that image's registry entry names; peer it with the
+    // bootnode. Throws when docker cannot run it or the API does not come up
+    // in time.
+    async start() {
+        const kept = this.keptApiPort();
+        if (kept !== null) {
+            this.apiUrl = `http://127.0.0.1:${kept}`;
+            console.log(`\t✔  IPFS node of the previous publish kept: ${this.container}`);
+        } else {
+            const apiPort = await freePort();
+            this.apiUrl = `http://127.0.0.1:${apiPort}`;
+            try { execFileSync('docker', ['rm', '-f', this.container], { stdio: 'ignore' }); } catch (e) { /* not running */ }
+            const args = ['run', '-d', '--name', this.container, '-p', `127.0.0.1:${apiPort}:5001`];
+            if (await portFree(SWARM_PORT)) {
+                args.push('-p', `${SWARM_PORT}:4001`, '-p', `${SWARM_PORT}:4001/udp`);
+            }
+            args.push(KUBO_IMAGE, 'daemon', '--init', '--migrate=true');
+            try {
+                execFileSync('docker', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+            } catch (e) {
+                throw new Error(`docker could not start ${KUBO_IMAGE}: ${String(e.stderr || e.message).trim()}`);
+            }
         }
         const deadline = Date.now() + API_READY_MS;
         for (;;) {
@@ -163,7 +190,7 @@ class LocalKubo {
     // End the publish's use of the Kubo: stop it, unless it is the source of
     // a registered image whose certificate is not on chain yet, which it keeps
     // serving to the extraction service and the bootnode's mirror; the next
-    // publish of the project replaces it, `docker rm -f` stops it.
+    // publish of the project takes it over, `docker rm -f` stops it.
     release() {
         if (!this.serving) {
             this.stop();
@@ -175,4 +202,4 @@ class LocalKubo {
     }
 }
 
-module.exports = { LocalKubo, ownEndpoint, PUBLIC_IPFS_HOST };
+module.exports = { LocalKubo, ownEndpoint, apiPortIn, PUBLIC_IPFS_HOST };
