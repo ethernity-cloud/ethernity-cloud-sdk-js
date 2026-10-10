@@ -138,7 +138,7 @@ const main = async () => {
         }
         ipfsApi = localKubo.apiUrl;
         console.log(`\t✔  IPFS node for this publish: ${ipfsApi}`);
-        process.on('exit', () => localKubo.stop());
+        process.on('exit', () => localKubo.release());
     }
 
     // The CIDs uploadToIpfs gives, from the same add calls with only-hash: the
@@ -579,6 +579,9 @@ const main = async () => {
         hashForIpfs();
         if (localKubo) ipfsPeer = await localKubo.peerMultiaddr();
         execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "registerImage"`, { stdio: "inherit", env: { ...process.env, PROJECT_NAME: securelock, IPFS_PEER: ipfsPeer } });
+        // From here the registered image's source is this Kubo, until its
+        // certificate is on chain.
+        if (localKubo) localKubo.serving = true;
     }
     uploadToIpfs();
     const registryEnv = { ...process.env, PROJECT_NAME: securelock, IPFS_PEER: ipfsPeer };
@@ -688,6 +691,7 @@ const main = async () => {
         process.chdir(currentDir);
         console.log(`Registering the certificate of SECURELOCK ${securelock} in the IMAGE REGISTRY smart contract...`);
         execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "setImageCert"`, { stdio: "inherit", env: registryEnv });
+        if (localKubo) localKubo.serving = false;
     } else {
         // A V1 registry gets the tree that carries the certificate files,
         // uploaded again, with the certificate, in one addImage call.

@@ -50,7 +50,8 @@ The sdk has been tested on the following operating systems:
       for the compose and the certificate harvest, takes the trustedzone
       session name from the ImageRegistry, and links the session to the
       published image. `ecld-build` signs the securelock `--production`.
-      Harvesting the certificate needs SGX.
+      The certificate is harvested on an SGX host or, without one, extracted
+      by publickey.ethernity.cloud (see "How the image reaches the network").
     - Testnet Unsafe - the unsafe network beside the testnet (see below).
     - Mainnet - to be provided during the following updates
 - LitVM:

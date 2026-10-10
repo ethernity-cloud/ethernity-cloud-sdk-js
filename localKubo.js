@@ -62,6 +62,10 @@ class LocalKubo {
         this.container = `ecld-kubo-${String(name || 'publish').replace(/[^A-Za-z0-9_.-]/g, '-')}`;
         this.peers = (process.env.ECLD_IPFS_PEERS || BOOTNODE_MULTIADDR).split(',').map((p) => p.trim()).filter(Boolean);
         this.apiUrl = null;
+        // True while a registered image has this Kubo as its source: from the
+        // image's registration on chain until its certificate is on chain. A
+        // publish that ends in between leaves the Kubo running (release).
+        this.serving = false;
     }
 
     async api(command, params, timeout) {
@@ -154,6 +158,20 @@ class LocalKubo {
 
     stop() {
         try { execFileSync('docker', ['rm', '-f', this.container], { stdio: 'ignore' }); } catch (e) { /* already gone */ }
+    }
+
+    // End the publish's use of the Kubo: stop it, unless it is the source of
+    // a registered image whose certificate is not on chain yet, which it keeps
+    // serving to the extraction service and the bootnode's mirror; the next
+    // publish of the project replaces it, `docker rm -f` stops it.
+    release() {
+        if (!this.serving) {
+            this.stop();
+            return;
+        }
+        console.log(`\t⚠  The registered image stays available from this publish's IPFS node, the docker`);
+        console.log(`\t   container ${this.container}, for the extraction service and the bootnode.`);
+        console.log(`\t   Publish again to retry; \`docker rm -f ${this.container}\` stops it.`);
     }
 }
 
