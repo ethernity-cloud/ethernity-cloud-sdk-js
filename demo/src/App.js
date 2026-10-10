@@ -11,9 +11,9 @@ const code = `___etny_result___("Hello, World!")`;
 function App() {
     const executeTask = async () => {
         const runner = new EthernityCloudRunner();
-        // this is a server provided by Ethernity CLOUD, please bear in mind that you can use your own Decentralized Storage server
-        const ipfsAddress = 'https://ipfs.ethernity.cloud';
-        runner.initializeStorage(ipfsAddress);
+        // The task's artefacts go through the bootnode's payload intake; an IPFS
+        // API of your own goes in initializeStorage(url) instead.
+        runner.initializePublicIntake();
 
         const onTaskProgress = (e) => {
             if (e.detail.status === ECStatus.ERROR) {

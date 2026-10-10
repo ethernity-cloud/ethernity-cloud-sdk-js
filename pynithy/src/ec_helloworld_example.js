@@ -23,7 +23,11 @@ function App() {
         if (UNSAFE_NETWORK) {
             await runner.setNetwork(...UNSAFE_NETWORK);
         }
-        runner.initializeStorage(IPFS_ENDPOINT);
+        // An IPFS API of the dApp's own carries the task's artefacts; without
+        // one they go through the bootnode's payload intake (the public API's
+        // add is closed to callers without a token).
+        if (IPFS_ENDPOINT && !IPFS_ENDPOINT.includes("ipfs.ethernity.cloud")) runner.initializeStorage(IPFS_ENDPOINT);
+        else runner.initializePublicIntake();
 
         // Events are named by task status; detail is { message, status, progress }.
         runner.addEventListener(ECStatus.DEFAULT, (e) => {

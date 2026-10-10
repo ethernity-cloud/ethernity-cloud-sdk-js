@@ -42,7 +42,12 @@ try { require('dotenv').config(); } catch (e) { /* dotenv optional */ }
 const casConfig = require('./cas/config.js');
 const { networkFor, unsafeVariant } = require('./network.js');
 
-const DEFAULT_IPFS = 'https://ipfs.ethernity.cloud/api/v0';
+// `--ipfs intake` (the default): the artefacts' CIDs are computed locally and
+// the bytes delivered to the bootnode's payload intake once the DO request is
+// on chain (runner initializePublicIntake); `--ipfs <url>` uploads and reads
+// through that Kubo RPC API instead. The public API's add is closed to callers
+// without a token.
+const DEFAULT_IPFS = 'intake';
 
 function parseArgs(argv) {
   const opts = { ipfs: DEFAULT_IPFS, timeout: 600, taskPrice: 3, cpu: 1, memory: 1, storage: 10, bandwidth: 1, duration: 1, validators: 1, node: '' };
@@ -86,7 +91,8 @@ enclaves:  --securelock <name> (default PROJECT_NAME), --trustedzone <name> (def
            on an -unsafe network the default is each one's -unsafe variant
 key:       PRIVATE_KEY (a funded 0x key) from .env / env, or ECLD_PRIVATE_KEY
 resources: --task-price 3 --cpu 1 --memory 1 --storage 10 --bandwidth 1 --duration 1 --validators 1
-other:     --node <addr>  --ipfs <url>  --timeout <sec>  --json`;
+other:     --node <addr>  --ipfs intake|<kubo api url> (default intake: the bootnode's payload intake)
+           --timeout <sec>  --json`;
 
 async function main() {
   const { opts, positional } = parseArgs(process.argv.slice(2));
@@ -173,7 +179,8 @@ async function main() {
     console.error('ecld-run: could not initialise the runner: ' + e.message);
     process.exit(1);
   }
-  runner.initializeStorage(opts.ipfs);
+  if (opts.ipfs === 'intake') runner.initializePublicIntake();
+  else runner.initializeStorage(opts.ipfs);
 
   let lastPhase = null;
   const onProgress = (e) => {
