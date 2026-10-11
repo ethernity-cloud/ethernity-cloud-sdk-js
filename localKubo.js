@@ -1,15 +1,15 @@
 // The Kubo a publish runs for its own upload.
 //
 // An image is published by adding it to IPFS and registering its CID. The
-// public write API of ipfs.ethernity.cloud is closing, so a publish without an
-// IPFS endpoint of its own runs a Kubo in docker (the SDK already requires
-// docker), adds the image through that Kubo's HTTP API with the same call the
-// public API received (so a build gives the same CIDs as before), peers the
-// Kubo with the bootnode, whose mirror pins every registered image and from
-// which the certificate extraction service fetches, and stops it once the
-// certificate is on chain. The Kubo listens for the API on the loopback
-// interface only; its swarm port is published when free, so a publisher with
-// a reachable address is also dialed directly.
+// public API of ipfs.ethernity.cloud takes no adds or pins without a writer
+// token, so a publish without an IPFS endpoint of its own runs a Kubo in
+// docker (the SDK already requires docker), adds the image through that Kubo's
+// HTTP API with the same add call (so a build gives the same CIDs on every
+// node), peers the Kubo with the bootnode, whose mirror pins every registered
+// image and from which the certificate extraction service fetches, and stops
+// it once the certificate is on chain. The Kubo listens for the API on the
+// loopback interface only; its swarm port is published when free, so a
+// publisher with a reachable address is also dialed directly.
 const { execFileSync } = require('child_process');
 const net = require('net');
 const axios = require('axios');
@@ -63,6 +63,14 @@ function ownEndpoint(endpoint) {
     } catch (e) {
         return false;
     }
+}
+
+// The IPFS_ENDPOINT a dApp's template is built with (src/preStart.mjs): the
+// setting when it is an endpoint of the application's own, '' otherwise, on
+// which the dApp delivers its task artefacts through the bootnode's payload
+// intake.
+function dappEndpoint(endpoint) {
+    return ownEndpoint(endpoint) ? endpoint : '';
 }
 
 class LocalKubo {
@@ -202,4 +210,4 @@ class LocalKubo {
     }
 }
 
-module.exports = { LocalKubo, ownEndpoint, apiPortIn, PUBLIC_IPFS_HOST };
+module.exports = { LocalKubo, ownEndpoint, dappEndpoint, apiPortIn, PUBLIC_IPFS_HOST };

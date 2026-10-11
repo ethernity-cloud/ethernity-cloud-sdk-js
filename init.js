@@ -4,10 +4,8 @@ const { spawn, execSync } = require("child_process");
 const path = require("path");
 const casConfig = require("./cas/config.js");
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
+// The prompt, opened by main.
+let rl = null;
 
 const writeEnv = (key, value) => {
   const envFile = ".env";
@@ -35,6 +33,23 @@ const writeEnv = (key, value) => {
 // SessionRegistry refuses when "_SECURELOCK_" occurs in it twice, so a project
 // name does not contain "SECURELOCK".
 const PROJECT_NAME_RULE = /^(?!.*SECURELOCK)[0-9A-Za-z._-]{1,121}$/;
+
+// Where the publish adds the image and the dApp delivers its task artefacts.
+// The first choice has the publish run its own IPFS node and the dApp use the
+// bootnode's payload intake (IPFS_ENDPOINT empty); the second names an IPFS
+// (Kubo) RPC API of the dApp's own, with the Authorization header value it
+// takes. The public API, ipfs.ethernity.cloud, takes no adds or pins without
+// a writer token.
+const IPFS_OPTIONS = [
+  "the publish's own IPFS node in docker (default)",
+  "an IPFS (Kubo) RPC API of your own (URL, optional Authorization token)",
+];
+
+// The .env values (IPFS_ENDPOINT, IPFS_TOKEN) of an IPFS_OPTIONS choice.
+const ipfsSettings = (choice, url, token) =>
+  choice === IPFS_OPTIONS[1]
+    ? { IPFS_ENDPOINT: String(url || "").trim(), IPFS_TOKEN: String(token || "").trim() }
+    : { IPFS_ENDPOINT: "", IPFS_TOKEN: "" };
 
 const getProjectName = () => {
   return new Promise((resolve) => {
@@ -159,6 +174,10 @@ const printIntro = () => {
 };
 
 const main = async () => {
+  rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
   printIntro();
   const projectName = await getProjectName();
   console.log();
@@ -256,30 +275,28 @@ const main = async () => {
   // });
 
   console.log();
-  const ipfsServiceOptions = ["Ethernity (best effort)", "Custom IPFS"];
   const ipfsService = await promptOptions(
-    "Select the IPFS pinning service you want to use (default is Ethernity): ",
-    ipfsServiceOptions,
-    "Ethernity (best effort)",
+    "Which IPFS API do the publish and the dApp write through? (default is 1): ",
+    IPFS_OPTIONS,
+    IPFS_OPTIONS[0],
   );
 
-  let customUrl, ipfsToken;
-  if (ipfsService === "Custom IPFS") {
-    customUrl = await new Promise((resolve) =>
+  let ipfsUrl, ipfsToken;
+  if (ipfsService === IPFS_OPTIONS[1]) {
+    ipfsUrl = await new Promise((resolve) =>
       rl.question(
-        "Enter the endpoint URL for the IPFS pinning service you want to use: ",
+        "Enter the URL of the IPFS RPC API (e.g. http://127.0.0.1:5001): ",
         resolve,
       ),
     );
     ipfsToken = await new Promise((resolve) =>
       rl.question(
-        "Enter the access token to be used when calling the IPFS pinning service: ",
+        "Enter its Authorization header value (empty for none): ",
         resolve,
       ),
     );
-  } else {
-    customUrl = "https://ipfs.ethernity.cloud";
   }
+  const ipfs = ipfsSettings(ipfsService, ipfsUrl, ipfsToken);
 
   fs.mkdirSync("src/serverless", { recursive: true });
 
@@ -379,10 +396,10 @@ const main = async () => {
 
 
   writeEnv("BLOCKCHAIN_NETWORK", network);
-  writeEnv("IPFS_ENDPOINT", customUrl);
+  writeEnv("IPFS_ENDPOINT", ipfs.IPFS_ENDPOINT);
+  writeEnv("IPFS_TOKEN", ipfs.IPFS_TOKEN);
   console.log();
   await configureEsr();
-  writeEnv("IPFS_TOKEN", ipfsToken || "");
   writeEnv("VERSION", "v1");
   console.log();
   console.log(
@@ -391,4 +408,6 @@ const main = async () => {
   rl.close();
 };
 
-main();
+if (require.main === module) main();
+
+module.exports = { IPFS_OPTIONS, ipfsSettings, writeEnv };

@@ -1,6 +1,10 @@
 // ipfs.mjs
 //
-// IPFS client for the Ethernity Cloud JS SDK.
+// IPFS client of the publish (nodenithy/run.js, pynithy/run.js): adds, hashes
+// and reads through the IPFS API named with --host, the publish's own Kubo
+// (http://127.0.0.1:<port>) or an IPFS API of the dApp's own; --token, or
+// IPFS_TOKEN in the environment when the flag is absent, is the Authorization
+// header value that API takes, when it takes one.
 //
 // The UPLOAD path is a faithful port of the Python SDK's IPFSClient
 // (ethernity_cloud_sdk_py/commands/pynithy/ipfs_client.py): it posts directly
@@ -12,7 +16,7 @@
 // the Python pipeline step-for-step so both SDKs upload identically (e.g. for
 // the certex / public-key extraction flow).
 //
-// The DOWNLOAD path keeps the existing kubo-rpc-client based helpers.
+// The DOWNLOAD path uses kubo-rpc-client, with the same Authorization header.
 import http from 'http';
 import https from 'https';
 import { URL } from 'url';
@@ -31,29 +35,33 @@ const getRetryDelay = (retryCount, baseDelay = 1) => baseDelay * 2 ** retryCount
 const RETRY_COUNT = 10; // mirrors Python ipfs_client.RETRY_COUNT
 
 // Endpoint + auth, mirroring the Python IPFSClient constructor.
-//   apiUrl : e.g. "https://ipfs.ethernity.cloud"
-//   addUrl : `${apiUrl}/api/v0/add`
+//   apiUrl     : the API's base URL, e.g. "http://127.0.0.1:5001"; adds go to
+//                `${apiUrl}/api/v0/add`
+//   authHeader : the Authorization header value (--token), or null
 let apiUrl = null;
-let authHeader = null; // Authorization header value, or null
+let authHeader = null;
 
 // kubo-rpc-client instance, used only for the download helpers below.
 let ipfs = null;
 
 const initialize = (host, protocol, port, token) => {
+  authHeader = token && token !== '' ? token : null;
   // Normalise the endpoint to a base URL string, matching how the Python client
   // treats `ipfs_endpoint` (it just prepends it to `/api/v0/add`).
+  let opts;
   if (host && host.search('http') !== -1) {
-    apiUrl = host.replace(/\/+$/, '');
-    ipfs = create(host);
+    // The API's base URL: a trailing /api/v0 is dropped, since addUrl appends it.
+    apiUrl = host.replace(/\/+$/, '').replace(/\/api\/v0$/, '');
+    opts = { url: apiUrl };
   } else {
     const proto = protocol || 'http';
     const p = port ? `:${port}` : '';
     apiUrl = `${proto}://${host}${p}`.replace(/\/+$/, '');
-    const opts = { host, protocol: proto, port };
-    if (token) opts.headers = { authorization: token };
-    ipfs = create(opts);
+    opts = { host, protocol: proto, port };
   }
-  authHeader = token && token !== '' ? token : null;
+  // The reads send the same Authorization header as the adds.
+  if (authHeader) opts.headers = { authorization: authHeader };
+  ipfs = create(opts);
 };
 
 // ---------------------------------------------------------------------------
@@ -337,7 +345,7 @@ const hashForIPFS = async (p) => {
 };
 
 // ---------------------------------------------------------------------------
-// Download helpers (kubo-rpc-client based; unchanged behaviour)
+// Download helpers (kubo-rpc-client, with the Authorization header of initialize())
 // ---------------------------------------------------------------------------
 
 const getFromIPFS = async (hhash, filePath, maxRetries = process.env.REACT_APP_IPFS_RETRIES || 5) => {
@@ -424,12 +432,12 @@ export {
 // ---------------------------------------------------------------------------
 
 program
-  .option('--host <host>', 'IPFS host')
+  .requiredOption('--host <host>', "IPFS API URL: the publish's own Kubo (http://127.0.0.1:<port>) or an IPFS API of the dApp's own")
   .option('--hhash <hhash>', 'IPFS hash')
   .option('--filePath <path>', 'Path to the file')
   .option('--folderPath <path>', 'Path to the folder')
   .option('--action <action>', 'Action to perform (upload, hash, download)')
-  .option('--token <token>', 'IPFS authorization token')
+  .option('--token <token>', 'Authorization header value for the API (IPFS_TOKEN in the environment when absent)')
   .option('--output <path>', 'Output path for download');
 
 const isMain = process.argv[1] && process.argv[1].endsWith('ipfs.mjs');
@@ -439,8 +447,7 @@ if (isMain) {
   const options = program.opts();
 
   const main = async () => {
-    const host = options.host || 'localhost';
-    initialize(host, undefined, undefined, options.token || '');
+    initialize(options.host, undefined, undefined, options.token || process.env.IPFS_TOKEN || '');
 
     if (options.action === 'upload') {
       if (options.filePath) {

@@ -3,7 +3,10 @@
 // .env, the way ecld-run reads the same values. PROJECT_NAME and
 // TRUSTED_ZONE_IMAGE take their -unsafe form on an -unsafe network; the
 // network's token address, chain id and -unsafe (network, type) come from the
-// runner's own enums through the SDK's network table.
+// runner's own enums through the SDK's network table; IPFS_ENDPOINT is the
+// IPFS API of the dApp's own, or '' (no setting, or the public API, which
+// takes no writes without a token), on which the dApp delivers its task
+// artefacts through the bootnode's payload intake.
 import fs from 'fs';
 import { createRequire } from 'module';
 import dotenv from 'dotenv';
@@ -13,6 +16,7 @@ dotenv.config();
 const require = createRequire(import.meta.url);
 const casConfig = require('@ethernity-cloud/sdk-js/cas/config.js');
 const { networkFor } = require('@ethernity-cloud/sdk-js/network.js');
+const { dappEndpoint } = require('@ethernity-cloud/sdk-js/localKubo.js');
 
 const { PROJECT_NAME, TRUSTED_ZONE_IMAGE, BLOCKCHAIN_NETWORK, IPFS_ENDPOINT } = process.env;
 if (!PROJECT_NAME || !BLOCKCHAIN_NETWORK) {
@@ -31,7 +35,7 @@ const constants = {
   NETWORK_ADDRESS: network.address,
   CHAIN_ID: network.chainId || null,
   UNSAFE_NETWORK: network.unsafe || null,
-  IPFS_ENDPOINT: IPFS_ENDPOINT || 'https://ipfs.ethernity.cloud',
+  IPFS_ENDPOINT: dappEndpoint(IPFS_ENDPOINT),
 };
 
 const filePath = 'src/ec_helloworld_example.js';

@@ -5,7 +5,8 @@ import { ECStatus } from "@ethernity-cloud/runner/enums";
 // Filled in from the project's .env by src/preStart.mjs on `npm start`: the
 // securelock this dApp is published as, the trustedzone it was built against,
 // the network's token address and chain id, the -unsafe network when the dApp
-// runs without a CAS (null otherwise), and the IPFS endpoint.
+// runs without a CAS (null otherwise), and the IPFS API of the dApp's own ('' when
+// the task's artefacts go through the bootnode's payload intake).
 const PROJECT_NAME = "";
 const TRUSTED_ZONE_IMAGE = "";
 const NETWORK_ADDRESS = "";
@@ -23,10 +24,9 @@ function App() {
         if (UNSAFE_NETWORK) {
             await runner.setNetwork(...UNSAFE_NETWORK);
         }
-        // An IPFS API of the dApp's own carries the task's artefacts; without
-        // one they go through the bootnode's payload intake (the public API's
-        // add is closed to callers without a token).
-        if (IPFS_ENDPOINT && !IPFS_ENDPOINT.includes("ipfs.ethernity.cloud")) runner.initializeStorage(IPFS_ENDPOINT);
+        // An IPFS API of the dApp's own (IPFS_ENDPOINT) carries the task's
+        // artefacts; without one they go through the bootnode's payload intake.
+        if (IPFS_ENDPOINT) runner.initializeStorage(IPFS_ENDPOINT);
         else runner.initializePublicIntake();
 
         // Events are named by task status; detail is { message, status, progress }.

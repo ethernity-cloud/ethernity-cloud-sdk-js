@@ -120,11 +120,14 @@ sets the enclave heap (default `1024M`).
   unless `REWARD_ADDRESS` names another one; the image's owner can change it
   later with the registry's `changeImageRewardAddress`.
 
-  How the image reaches the network: unless `.env` names an IPFS API of your
-  own (`IPFS_ENDPOINT` other than the public `ipfs.ethernity.cloud`), the
-  publish runs its own IPFS node in docker (`ipfs/kubo`), adds the image and
-  its compose there and peers it with the network's bootnode, which pins
-  every registered image. On a network whose image registry records images
+  How the image reaches the network: leave `IPFS_ENDPOINT` in `.env` empty
+  unless it names an IPFS API of your own (`IPFS_TOKEN` is the Authorization
+  header value that API takes, when it takes one); the public API
+  `ipfs.ethernity.cloud` takes no adds or pins without a writer token. With
+  no API of your own the publish runs its own IPFS node in docker
+  (`ipfs/kubo`), adds the image and its compose there and peers it with the
+  network's bootnode, which pins every registered image. On a network whose
+  image registry records images
   before their certificate (the bloxberg testnet), the publish registers the
   image from your wallet first (`registerImage`, with your node's address),
   has the certificate extracted (on your SGX host, or by
@@ -160,13 +163,22 @@ sets the enclave heap (default `1024M`).
   npx ecld-run --unsafe 'hello("World")'
   ```
   This is the network-side sibling of `ecld-test`: instead of executing locally
-  it drives the runner end to end — encrypt → IPFS → on-chain request → wait for
-  a node → download and decrypt the result. It **costs gas and needs a funded
-  key**. Network and enclaves come from `.env` (`BLOCKCHAIN_NETWORK`,
-  `PROJECT_NAME`, `TRUSTED_ZONE_IMAGE`), overridable with
+  it drives the runner end to end — encrypt → on-chain request → payload intake
+  (or the IPFS API named with `--ipfs <url>`) → wait for a node → download and
+  decrypt the result. It **costs gas and needs a funded key**. Network and
+  enclaves come from `.env` (`BLOCKCHAIN_NETWORK`, `PROJECT_NAME`,
+  `TRUSTED_ZONE_IMAGE`), overridable with
   `--network`/`--securelock`/`--trustedzone`; the signing key is `PRIVATE_KEY`
   (or `ECLD_PRIVATE_KEY`) — a funded `0x` key that pays for the order. Resources
   are tunable with `--task-price`/`--cpu`/`--memory`/`--storage`/`--bandwidth`/`--duration`/`--validators`.
+  `--ipfs intake` (the default) delivers the payload to the bootnode's payload
+  intake once the request is on chain; `--ipfs <url>` writes and reads through
+  that IPFS RPC API instead, with `ECLD_IPFS_TOKEN` (or `IPFS_TOKEN`) as its
+  Authorization header, and a URL naming the public API is refused without one.
+  The intake serves the networks the bootnode's agent runs, today the bloxberg
+  testnet and its unsafe twin: a dApp on any other network (Bloxberg mainnet,
+  Polygon, LitVM, IoTeX, Sepolia) needs an IPFS API of its own (`IPFS_ENDPOINT`
+  for the Hello World template, `--ipfs <url>` for `ecld-run`).
   Exit code 0 on a `SUCCESS` task result, 1 otherwise. `--unsafe` runs the
   network's unsafe variant; on an unsafe network the securelock and
   trustedzone default to their `-unsafe` names.
@@ -214,13 +226,17 @@ function hello(msg='World') {
 
 module.exports = { hello };
 ```
-From your frontend application, using the ethernity cloud runner library (`@ethernity-cloud/runner`, installed by `ecld-init` at the version this SDK depends on), you will be calling the function as seen in the below example, where we pass `hello("World");` to be executed on the backend which will run in the Blockchain. `npm start` runs `src/preStart.mjs` first, which fills the constants at the top from the project's `.env`: the securelock name the dApp is published as, the trustedzone it was built against, the network's token address and chain id, the `-unsafe` network when the dApp runs without a CAS, and the IPFS endpoint.
+From your frontend application, using the ethernity cloud runner library (`@ethernity-cloud/runner`, installed by `ecld-init` at the version this SDK depends on), you will be calling the function as seen in the below example, where we pass `hello("World");` to be executed on the backend which will run in the Blockchain. `npm start` runs `src/preStart.mjs` first, which fills the constants at the top from the project's `.env`: the securelock name the dApp is published as, the trustedzone it was built against, the network's token address and chain id, the `-unsafe` network when the dApp runs without a CAS, and the IPFS API of the dApp's own (empty when the task's artefacts go through the bootnode's payload intake).
 ```js
 import './App.css';
 import EthernityCloudRunner from "@ethernity-cloud/runner";
 import { ECStatus } from "@ethernity-cloud/runner/enums";
 
-// Filled in from the project's .env by src/preStart.mjs on `npm start`.
+// Filled in from the project's .env by src/preStart.mjs on `npm start`: the
+// securelock this dApp is published as, the trustedzone it was built against,
+// the network's token address and chain id, the -unsafe network when the dApp
+// runs without a CAS (null otherwise), and the IPFS API of the dApp's own ('' when
+// the task's artefacts go through the bootnode's payload intake).
 const PROJECT_NAME = "";
 const TRUSTED_ZONE_IMAGE = "";
 const NETWORK_ADDRESS = "";
@@ -238,7 +254,10 @@ function App() {
         if (UNSAFE_NETWORK) {
             await runner.setNetwork(...UNSAFE_NETWORK);
         }
-        runner.initializeStorage(IPFS_ENDPOINT);
+        // An IPFS API of the dApp's own (IPFS_ENDPOINT) carries the task's
+        // artefacts; without one they go through the bootnode's payload intake.
+        if (IPFS_ENDPOINT) runner.initializeStorage(IPFS_ENDPOINT);
+        else runner.initializePublicIntake();
 
         // Events are named by task status; detail is { message, status, progress }.
         runner.addEventListener(ECStatus.DEFAULT, (e) => {
@@ -250,6 +269,7 @@ function App() {
         runner.addEventListener(ECStatus.SUCCESS, async () => {
             const result = await runner.getResult();
             console.log(`Task Result: ${result}`);
+            // display the result in page below the buttons
             const line = document.createElement("p");
             line.textContent = `Task Result: ${result}`;
             document.body.appendChild(line);

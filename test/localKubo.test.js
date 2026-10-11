@@ -4,7 +4,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { LocalKubo, ownEndpoint, apiPortIn } = require('../localKubo.js');
+const { LocalKubo, ownEndpoint, dappEndpoint, apiPortIn } = require('../localKubo.js');
 
 const PEER = '12D3KooWB8qpxeHqcdb6xTNu3FXjrWE4zTFPverw8XMpms2Qm4pJ';
 
@@ -25,6 +25,15 @@ test('an empty setting and the public API mean a Kubo of the publish\'s own', ()
 test('another endpoint is the application\'s own', () => {
     assert.equal(ownEndpoint('http://172.18.0.30:5001'), true);
     assert.equal(ownEndpoint('https://ipfs.example.org/api/v0'), true);
+});
+
+test('a dApp is built with an endpoint of its own, else with none (preStart)', () => {
+    assert.equal(dappEndpoint(''), '');
+    assert.equal(dappEndpoint(undefined), '');
+    assert.equal(dappEndpoint('https://ipfs.ethernity.cloud'), '');
+    assert.equal(dappEndpoint('https://ipfs.ethernity.cloud:443/api/v0'), '');
+    assert.equal(dappEndpoint('http://127.0.0.1:5001'), 'http://127.0.0.1:5001');
+    assert.equal(dappEndpoint('https://ipfs.example.org/api/v0'), 'https://ipfs.example.org/api/v0');
 });
 
 test('the container is named after the project', () => {

@@ -74,11 +74,13 @@ function sessionHash(body) {
   return '0x' + crypto.createHash('sha256').update(body).digest('hex');
 }
 
-// Pin the exact bytes as CIDv1/raw/sha2-256 and return the CID.
-async function pinBody(ipfsApiUrl, body) {
+// Pin the exact bytes as CIDv1/raw/sha2-256 and return the CID. `token` is
+// the API's Authorization header value (IPFS_TOKEN), sent when set.
+async function pinBody(ipfsApiUrl, body, token = '') {
   const form = new FormData();
   form.append('file', new Blob([body]), 'session');
-  const r = await axios.post(`${ipfsApiUrl}/api/v0/add?cid-version=1&raw-leaves=true&pin=true`, form, { timeout: 60000 });
+  const headers = token ? { Authorization: token } : {};
+  const r = await axios.post(`${ipfsApiUrl}/api/v0/add?cid-version=1&raw-leaves=true&pin=true`, form, { headers, timeout: 60000 });
   return r.data.Hash;
 }
 
@@ -120,16 +122,17 @@ async function send(reg, chainId, refused, method, ...args) {
   if (rcpt.status !== 1) throw new Error(`SessionRegistry.${method} reverted for ${refused} (tx ${tx.hash})`);
 }
 
-// Pin `body` and register it under its own `name:`. Returns
+// Pin `body` through `ipfsApiUrl` (with `ipfsToken` as its Authorization
+// header when set) and register it under its own `name:`. Returns
 // {name, hash, cid, registered}: `registered` is false when the chain already
 // held these exact bytes as the name's latest version, registered by this
 // wallet.
-async function register(rpcUrl, chainId, registryAddress, key, body, ipfsApiUrl, imageCid = '') {
+async function register(rpcUrl, chainId, registryAddress, key, body, ipfsApiUrl, imageCid = '', ipfsToken = '') {
   const { name, rules } = parseNameAndRules(body.toString('utf8'));
   if (!name) throw new Error('the session body has no `name:`');
   const hash = sessionHash(body);
   const reg = contract(rpcUrl, registryAddress, key);
-  const cid = await pinBody(ipfsApiUrl, body);
+  const cid = await pinBody(ipfsApiUrl, body, ipfsToken);
   const latest = await latestRecord(reg, name);
   if (latest && latest.hash === hash && latest.creator.toLowerCase() === (await reg.signer.getAddress()).toLowerCase()) {
     return { name, hash, cid, registered: false };

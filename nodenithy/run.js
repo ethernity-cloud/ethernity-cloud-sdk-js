@@ -1,5 +1,5 @@
 const fs = require('fs');
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 require('dotenv').config();
 const readline = require('readline');
 const forge = require('node-forge');
@@ -121,13 +121,17 @@ const main = async () => {
     const trustedZoneHeap = isMainnet ? '256M' : '1024M';
 
     // Where the image goes. An IPFS API of the application's own
-    // (IPFS_ENDPOINT, when it is not the public one) takes precedence.
-    // Otherwise the publish runs its own Kubo: the public write API of
-    // ipfs.ethernity.cloud is closing, and the image is held by this Kubo,
-    // peered with the bootnode, until its certificate is on chain.
+    // (IPFS_ENDPOINT, with IPFS_TOKEN as its Authorization header when set)
+    // takes precedence. Otherwise the publish runs its own Kubo: the public
+    // API of ipfs.ethernity.cloud takes no adds or pins without a writer
+    // token, and the image is held by this Kubo, peered with the bootnode,
+    // until its certificate is on chain.
     let localKubo = null;
     let ipfsApi = process.env.IPFS_ENDPOINT || '';
-    if (!ownEndpoint(ipfsApi)) {
+    let ipfsToken = '';
+    if (ownEndpoint(ipfsApi)) {
+        ipfsToken = process.env.IPFS_TOKEN || '';
+    } else {
         localKubo = new LocalKubo(process.env.PROJECT_NAME);
         try {
             await localKubo.start();
@@ -139,23 +143,28 @@ const main = async () => {
         console.log(`\t✔  IPFS node for this publish: ${ipfsApi}`);
         process.on('exit', () => localKubo.release());
     }
+    // node ../ipfs.mjs against ipfsApi, with the token as IPFS_TOKEN in its
+    // environment: the command line is in a failure's message and in the
+    // process list. A non-zero exit ends the publish.
+    const ipfsEnv = { ...process.env, IPFS_TOKEN: ipfsToken };
+    const ipfsCli = (args, stdio) => {
+        try {
+            return execFileSync(process.execPath, ['../ipfs.mjs', '--host', ipfsApi, ...args], { stdio, env: ipfsEnv });
+        } catch (e) {
+            console.error(`Error: node ../ipfs.mjs ${args.join(' ')} failed (${e.status != null ? `exit ${e.status}` : (e.signal || e.code)}).`);
+            process.exit(1);
+        }
+    };
 
     // The CIDs uploadToIpfs gives, from the same add calls with only-hash: the
     // IPFS node stores and announces nothing. Set by hashForIpfs, after which
     // uploadToIpfs refuses an upload that gives other CIDs.
     let expectedCids = null;
     const hashForIpfs = () => {
-        const hashOf = (target) => {
-            try {
-                const out = execSync(`node ../ipfs.mjs --host "${ipfsApi}" --action hash ${target}`, { stdio: ['ignore', 'pipe', 'inherit'] });
-                return out.toString().trim().split('\n').pop().trim();
-            } catch (e) {
-                console.error(`Error: could not hash ${target} for IPFS: ${e.message}`);
-                process.exit(1);
-            }
-        };
-        process.env.IPFS_DOCKER_COMPOSE_HASH = hashOf('--filePath docker-compose-final.yml');
-        process.env.IPFS_HASH = hashOf(`--folderPath ${registryPath}`);
+        const hashOf = (target) => ipfsCli(['--action', 'hash', ...target], ['ignore', 'pipe', 'inherit'])
+            .toString().trim().split('\n').pop().trim();
+        process.env.IPFS_DOCKER_COMPOSE_HASH = hashOf(['--filePath', 'docker-compose-final.yml']);
+        process.env.IPFS_HASH = hashOf(['--folderPath', registryPath]);
         console.log("IPFS_DOCKER_COMPOSE_HASH (before upload): ", process.env.IPFS_DOCKER_COMPOSE_HASH);
         console.log("IPFS_HASH (before upload): ", process.env.IPFS_HASH);
         expectedCids = { image: process.env.IPFS_HASH, compose: process.env.IPFS_DOCKER_COMPOSE_HASH };
@@ -168,7 +177,7 @@ const main = async () => {
             if (fs.existsSync(file)) fs.unlinkSync(file);
         }
         console.log('Upload docker-compose-final.yml to IPFS');
-        execSync(`node ../ipfs.mjs --host "${ipfsApi}" --action upload --filePath docker-compose-final.yml`, { stdio: "inherit" });
+        ipfsCli(['--action', 'upload', '--filePath', 'docker-compose-final.yml'], 'inherit');
         if (!fs.existsSync('IPFS_DOCKER_COMPOSE_HASH.ipfs')) {
             console.error("Error: Could not upload docker-compose-final.yml to IPFS, please try again!");
             process.exit(1);
@@ -177,7 +186,7 @@ const main = async () => {
         console.log("IPFS_DOCKER_COMPOSE_HASH: ", process.env.IPFS_DOCKER_COMPOSE_HASH);
         writeEnv('IPFS_DOCKER_COMPOSE_HASH', process.env.IPFS_DOCKER_COMPOSE_HASH);
         console.log('Upload docker registry to IPFS');
-        execSync(`node ../ipfs.mjs --host "${ipfsApi}" --action upload --folderPath ${registryPath}`, { stdio: "inherit" });
+        ipfsCli(['--action', 'upload', '--folderPath', registryPath], 'inherit');
         if (!fs.existsSync('IPFS_HASH.ipfs')) {
             console.error("Error: Could not upload registry to IPFS, please try again!");
             process.exit(1);
@@ -324,7 +333,7 @@ const main = async () => {
         const registered = await sessionRegistry.register(
             casChain.rpcUrl, casChain.chainId, casConfig.SESSION_REGISTRY[templateName],
             process.env.PRIVATE_KEY, fs.readFileSync('etny-securelock-test.yaml'),
-            ipfsApi, '');
+            ipfsApi, '', ipfsToken);
         if (localKubo) await localKubo.provide(registered.cid);
         if (registered.registered) {
             console.log(`\t✔  Session ${registered.name} registered on-chain (body ${registered.cid})`);
@@ -722,7 +731,7 @@ const main = async () => {
             fs.unlinkSync('IPFS_HASH.ipfs');
         }
         console.log('Upload docker registry to IPFS');
-        execSync(`node ../ipfs.mjs --host "${ipfsApi}" --action upload --folderPath ${registryPath}`, { stdio: "inherit" });
+        ipfsCli(['--action', 'upload', '--folderPath', registryPath], 'inherit');
         if (!fs.existsSync(`./IPFS_HASH.ipfs`)) {
             console.error("Error: Could not upload registry to IPFS, please try again!");
             process.exit(1);

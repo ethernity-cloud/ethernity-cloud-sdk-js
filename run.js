@@ -4,8 +4,10 @@
  * The network-side sibling of `ecld-test`: same payload flags (a code string,
  * --file, --input/--input-text), but instead of executing locally it drives the
  * real runner (@ethernity-cloud/runner's EthernityCloudRunner) end to end —
- * encrypt the payload, push to IPFS, place the on-chain DO request, wait for a
- * node to process it, download and decrypt the result.
+ * encrypt the payload, place the on-chain DO request, deliver the payload to
+ * the bootnode's payload intake once the request is on chain (or to the IPFS
+ * API named with --ipfs <url>), wait for a node to process it, download and
+ * decrypt the result.
  *
  * Where ecld-test answers "does my CALL work?", ecld-run answers "does it work
  * on the network, on the enclave I published?" — it costs gas and needs a
@@ -41,12 +43,14 @@ const fs = require('fs');
 try { require('dotenv').config(); } catch (e) { /* dotenv optional */ }
 const casConfig = require('./cas/config.js');
 const { networkFor, unsafeVariant } = require('./network.js');
+const { PUBLIC_IPFS_HOST } = require('./localKubo.js');
 
 // `--ipfs intake` (the default): the artefacts' CIDs are computed locally and
 // the bytes delivered to the bootnode's payload intake once the DO request is
 // on chain (runner initializePublicIntake); `--ipfs <url>` uploads and reads
-// through that Kubo RPC API instead. The public API's add is closed to callers
-// without a token.
+// through that IPFS RPC API instead, with ECLD_IPFS_TOKEN or IPFS_TOKEN as its
+// Authorization header. The public API takes writes only with a writer token,
+// so a URL naming it is refused without one.
 const DEFAULT_IPFS = 'intake';
 
 function parseArgs(argv) {
@@ -91,7 +95,8 @@ enclaves:  --securelock <name> (default PROJECT_NAME), --trustedzone <name> (def
            on an -unsafe network the default is each one's -unsafe variant
 key:       PRIVATE_KEY (a funded 0x key) from .env / env, or ECLD_PRIVATE_KEY
 resources: --task-price 3 --cpu 1 --memory 1 --storage 10 --bandwidth 1 --duration 1 --validators 1
-other:     --node <addr>  --ipfs intake|<kubo api url> (default intake: the bootnode's payload intake)
+other:     --node <addr>  --ipfs intake|<ipfs api url> (default intake: the bootnode's payload intake;
+           a URL takes ECLD_IPFS_TOKEN or IPFS_TOKEN as its Authorization header)
            --timeout <sec>  --json`;
 
 async function main() {
@@ -179,8 +184,19 @@ async function main() {
     console.error('ecld-run: could not initialise the runner: ' + e.message);
     process.exit(1);
   }
-  if (opts.ipfs === 'intake') runner.initializePublicIntake();
-  else runner.initializeStorage(opts.ipfs);
+  if (opts.ipfs === 'intake') {
+    runner.initializePublicIntake();
+  } else {
+    const token = (process.env.ECLD_IPFS_TOKEN || process.env.IPFS_TOKEN || '').trim();
+    let host = '';
+    try { host = new URL(opts.ipfs).hostname; } catch (e) { /* not a URL: the runner reports it */ }
+    if (host === PUBLIC_IPFS_HOST && !token) {
+      console.error(`ecld-run: the public API ${PUBLIC_IPFS_HOST} takes writes only with a writer token `
+        + '(ECLD_IPFS_TOKEN or IPFS_TOKEN); use the intake (--ipfs intake) or your own Kubo.');
+      process.exit(2);
+    }
+    runner.initializeStorage(opts.ipfs, undefined, undefined, token || undefined);
+  }
 
   let lastPhase = null;
   const onProgress = (e) => {
