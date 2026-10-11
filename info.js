@@ -51,7 +51,7 @@ const NETWORKS = {
   },
   LITVM_LITEFORGE: {
     type: 'testnet', chainId: 4441, rpc: 'https://liteforge.rpc.caldera.xyz/infra-partner-http',
-    protocol: '0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2',
+    protocol: '0xE35991de1f2A435e29E70406FA2781b1AffCb168',
     imageRegistry: '0x55e0ad455Be85162b71a790f00Fc305680E3CE53',
     esr: '0x709052Fe77Af543d3d9FE2Ac06a15c635c8D4Be5',
   },
