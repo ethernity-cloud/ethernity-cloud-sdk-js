@@ -8,7 +8,7 @@ const https = require('https');
 const casConfig = require('../cas/config.js');
 const casResolver = require('../cas/resolver.js');
 const sessionRegistry = require('../cas/session_registry.js');
-const { LocalKubo, ownEndpoint } = require('../localKubo.js');
+const { LocalKubo, ownEndpoint, PUBLIC_IPFS_HOST } = require('../localKubo.js');
 
 if (!fs.existsSync('.env')) {
     console.error("Error: .env file not found");
@@ -597,6 +597,29 @@ const main = async () => {
     if (registryV2 && localKubo) {
         await localKubo.provide(process.env.IPFS_HASH);
         await localKubo.provide(process.env.IPFS_DOCKER_COMPOSE_HASH);
+    } else if (!registryV2 && localKubo) {
+        // On a V1 registry nothing is recorded before the certificate, so the
+        // bootnode's mirror pins nothing from this Kubo, and the certificate
+        // extraction service and the nodes, which fetch from the bootnode,
+        // would wait on an image it never receives: the compose and the image
+        // are pinned on the public API, which fetches them from this Kubo over
+        // the connection it holds. The pin takes a token (IPFS_TOKEN); without
+        // one the publish stops here, before anything is on chain.
+        const publicToken = process.env.IPFS_TOKEN || '';
+        if (!publicToken) {
+            console.error("Error: this network's image registry records an image only with its certificate, so the image must be pinned on the public IPFS API before the certificate is extracted, and the public API takes a pin only with a token.");
+            console.error(`       Set IPFS_TOKEN to a writer token of ${PUBLIC_IPFS_HOST} and publish again.`);
+            process.exit(1);
+        }
+        for (const cid of [process.env.IPFS_DOCKER_COMPOSE_HASH, process.env.IPFS_HASH]) {
+            console.log(`Pinning ${cid} on the public IPFS API`);
+            try {
+                execFileSync(process.execPath, ['../ipfs.mjs', '--host', `https://${PUBLIC_IPFS_HOST}`, '--action', 'pin', '--hhash', cid], { stdio: 'inherit', env: { ...process.env, IPFS_TOKEN: publicToken } });
+            } catch (e) {
+                console.error(`Error: the public IPFS API did not pin ${cid} (${e.status != null ? `exit ${e.status}` : (e.signal || e.code)}).`);
+                process.exit(1);
+            }
+        }
     }
     if (casTestnet) await registerSessionOnChain();
 

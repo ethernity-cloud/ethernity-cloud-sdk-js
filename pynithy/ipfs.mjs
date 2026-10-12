@@ -344,6 +344,46 @@ const hashForIPFS = async (p) => {
   return null;
 };
 
+// Pin `cid` on the API (`pin/add`), which fetches the blocks it does not hold
+// from the peers that provide them and answers once the pin is complete.
+// Resolves true when the API names the CID among its pins.
+const pinOnIPFS = (cid, timeoutMs = 3600000) =>
+  new Promise((resolve, reject) => {
+    const url = new URL(`${apiUrl}/api/v0/pin/add?arg=${encodeURIComponent(cid)}&recursive=true`);
+    const mod = url.protocol === 'https:' ? https : http;
+    const headers = { 'Content-Length': '0' };
+    if (authHeader) headers.Authorization = authHeader;
+    const req = mod.request(
+      {
+        method: 'POST',
+        hostname: url.hostname,
+        port: url.port || (url.protocol === 'https:' ? 443 : 80),
+        path: `${url.pathname}${url.search}`,
+        headers,
+        timeout: timeoutMs
+      },
+      (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => {
+          text += chunk;
+        });
+        res.on('end', () => {
+          if (res.statusCode !== 200) {
+            console.log(`Failed to pin ${cid} on ${apiUrl}: status ${res.statusCode}`);
+            console.log(text.slice(0, 300));
+            resolve(false);
+            return;
+          }
+          resolve(text.includes(cid));
+        });
+      }
+    );
+    req.on('timeout', () => req.destroy(new Error(`pin/add of ${cid} took longer than ${timeoutMs} ms`)));
+    req.on('error', reject);
+    req.end();
+  });
+
 // ---------------------------------------------------------------------------
 // Download helpers (kubo-rpc-client, with the Authorization header of initialize())
 // ---------------------------------------------------------------------------
@@ -420,6 +460,7 @@ export {
   initialize,
   upload,
   hashForIPFS,
+  pinOnIPFS,
   uploadFileToIPFS,
   uploadFolderToIPFS,
   getFromIPFS,
@@ -436,7 +477,7 @@ program
   .option('--hhash <hhash>', 'IPFS hash')
   .option('--filePath <path>', 'Path to the file')
   .option('--folderPath <path>', 'Path to the folder')
-  .option('--action <action>', 'Action to perform (upload, hash, download)')
+  .option('--action <action>', 'Action to perform (upload, hash, pin, download)')
   .option('--token <token>', 'Authorization header value for the API (IPFS_TOKEN in the environment when absent)')
   .option('--output <path>', 'Output path for download');
 
@@ -476,6 +517,14 @@ if (isMain) {
       const hhash = await hashForIPFS(target);
       console.log(`${hhash}`);
       process.exit(hhash ? 0 : 1);
+    } else if (options.action === 'pin') {
+      if (!options.hhash) {
+        console.error('Please provide --hhash, the CID to pin.');
+        process.exit(1);
+      }
+      const pinned = await pinOnIPFS(options.hhash);
+      if (pinned) console.log(`${options.hhash}`);
+      process.exit(pinned ? 0 : 1);
     } else if (options.action === 'download') {
       if (options.filePath) {
         await getFromIPFS(options.hhash, options.filePath);
@@ -487,7 +536,7 @@ if (isMain) {
         console.error('Please provide a filePath or folderPath for download.');
       }
     } else {
-      console.error('Please provide a valid action (upload, hash, download).');
+      console.error('Please provide a valid action (upload, hash, pin, download).');
       process.exit(1);
     }
   };
