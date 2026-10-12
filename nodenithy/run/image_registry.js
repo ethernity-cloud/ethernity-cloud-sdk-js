@@ -39,7 +39,7 @@ function setVars(network = "") {
         }
     } else if (BLOCKCHAIN_NETWORK.includes("LitVM")) {
         NETWORK_RPC = "https://liteforge.rpc.caldera.xyz/infra-partner-http";
-        IMAGE_REGISTRY_ADDRESS = "0x55e0ad455Be85162b71a790f00Fc305680E3CE53";
+        IMAGE_REGISTRY_ADDRESS = "0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D";
         CHAIN_ID = 4441;
     }
 }

@@ -48,14 +48,14 @@ export const ECRunner = {
   // --- ethereum sepolia ---
   'ecld-pynithy-ethereum-sepolia': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://ethereum-sepolia-rpc.publicnode.com', 11155111],
   'ecld-nodenithy-ethereum-sepolia': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://ethereum-sepolia-rpc.publicnode.com', 11155111],
-  // --- litvm liteforge testnet: the PoX is the EthernityImplementationV2 1.1 of 2026-10-11; the image registry is the sepolia-family deployment on chain 4441 ---
-  'ecld-pynithy-litvm-testnet': ['0xE35991de1f2A435e29E70406FA2781b1AffCb168', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441],
-  'ecld-nodenithy-litvm-testnet': ['0xE35991de1f2A435e29E70406FA2781b1AffCb168', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441],
+  // --- litvm liteforge testnet: the PoX is the EthernityImplementationV2 1.1 of 2026-10-11; the image registry is the ECImageRegistryV3 of 2026-10-12 ---
+  'ecld-pynithy-litvm-testnet': ['0xE35991de1f2A435e29E70406FA2781b1AffCb168', '0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441],
+  'ecld-nodenithy-litvm-testnet': ['0xE35991de1f2A435e29E70406FA2781b1AffCb168', '0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441],
   // --- the -unsafe networks: the contracts of the network each is named after ---
   'etny-pynithy-testnet-unsafe': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c', '0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1', 'https://bloxberg.ethernity.cloud', 8995],
   'etny-nodenithy-testnet-unsafe': ['0x02882F03097fE8cD31afbdFbB5D72a498B41112c', '0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1', 'https://bloxberg.ethernity.cloud', 8995],
-  'ecld-pynithy-litvm-testnet-unsafe': ['0xE35991de1f2A435e29E70406FA2781b1AffCb168', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441],
-  'ecld-nodenithy-litvm-testnet-unsafe': ['0xE35991de1f2A435e29E70406FA2781b1AffCb168', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441]
+  'ecld-pynithy-litvm-testnet-unsafe': ['0xE35991de1f2A435e29E70406FA2781b1AffCb168', '0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441],
+  'ecld-nodenithy-litvm-testnet-unsafe': ['0xE35991de1f2A435e29E70406FA2781b1AffCb168', '0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441]
 };
 
 // ethernity-cas ValidatorRegistry per template, baked into the enclave so it
