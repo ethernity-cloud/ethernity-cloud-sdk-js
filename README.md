@@ -56,7 +56,7 @@ The sdk has been tested on the following operating systems:
     - Mainnet - to be provided during the following updates
 - LitVM:
     - LiteForge - CAS-attested the same way, by LitVM's own ethernity-cas
-      validator set (SessionRegistry `0x8ad24b3F...`, ValidatorRegistry
+      validator set (SessionRegistry `0xfA70B5Df...`, ValidatorRegistry
       `0xbE3759f3...`).
     - LiteForge Unsafe - the unsafe network beside LiteForge (see below).
 - Polyhon:
@@ -176,9 +176,9 @@ sets the enclave heap (default `1024M`).
   that IPFS RPC API instead, with `ECLD_IPFS_TOKEN` (or `IPFS_TOKEN`) as its
   Authorization header, and a URL naming the public API is refused without one.
   The intake serves the networks the bootnode's agent runs, today the bloxberg
-  testnet and its unsafe twin: a dApp on any other network (Bloxberg mainnet,
-  Polygon, LitVM, IoTeX, Sepolia) needs an IPFS API of its own (`IPFS_ENDPOINT`
-  for the Hello World template, `--ipfs <url>` for `ecld-run`).
+  testnet and LitVM LiteForge, each with its unsafe twin: a dApp on any other
+  network (Bloxberg mainnet, Polygon, IoTeX, Sepolia) needs an IPFS API of its
+  own (`IPFS_ENDPOINT` for the Hello World template, `--ipfs <url>` for `ecld-run`).
   Exit code 0 on a `SUCCESS` task result, 1 otherwise. `--unsafe` runs the
   network's unsafe variant; on an unsafe network the securelock and
   trustedzone default to their `-unsafe` names.
