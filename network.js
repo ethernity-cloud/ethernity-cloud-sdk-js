@@ -31,6 +31,7 @@ function networkFor({ ECAddress, ECNetworkByChainId }, raw) {
     IOTEX_TESTNET: { address: ECAddress.IOTEX.TESTNET_ADDRESS, chainId: ECNetworkByChainId.IOTEX.TESTNET },
     ETHEREUM_SEPOLIA: sepolia,
     SEPOLIA: sepolia,
+    ETHEREUM_SEPOLIA_UNSAFE: { ...sepolia, unsafe: ['SEPOLIA', 'TESTNET_UNSAFE'] },
     LITVM_LITEFORGE: litvm,
     LITVM: litvm,
     LITVM_LITEFORGE_UNSAFE: { ...litvm, unsafe: ['LITVM', 'TESTNET_UNSAFE'] },

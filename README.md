@@ -59,20 +59,26 @@ The sdk has been tested on the following operating systems:
       validator set (SessionRegistry `0xfA70B5Df...`, ValidatorRegistry
       `0xbE3759f3...`).
     - LiteForge Unsafe - the unsafe network beside LiteForge (see below).
+- Ethereum:
+    - Sepolia - CAS-attested the same way, by Sepolia's own ethernity-cas
+      validator set (SessionRegistry `0xDbB249E1...`, ValidatorRegistry
+      `0x8ad24b3F...`), on the PoX family of 2026-10-14.
+    - Sepolia Unsafe - the unsafe network beside Sepolia (see below).
 - Polyhon:
     - Amoy Testnet - to be provided during the following updates
     - Mainnet - to be provided during the following updates
 
-The remaining testnets (Amoy, IoTeX, Sepolia) have no ethernity-cas
+The remaining testnets (Amoy, IoTeX) have no ethernity-cas
 deployment: their enclaves are debug-signed and sign their own certificates
 from their measurement, and `ecld-publish` registers no CAS session for them.
 
 ### The testnets and their unsafe networks
-`Bloxberg Testnet` and `LitVM LiteForge` run your securelock in an enclave
+`Bloxberg Testnet`, `LitVM LiteForge` and `Ethereum Sepolia` run your securelock in an enclave
 attested through that chain's ethernity-cas validator set, on nodes whose
 platform the CAS can attest (DCAP). Each has an unsafe network beside it,
-`Bloxberg Testnet Unsafe` (`Bloxberg_Testnet_Unsafe`) and `LitVM LiteForge
-Unsafe` (`LitVM_LiteForge_Unsafe`): the same chain and contracts, for hardware
+`Bloxberg Testnet Unsafe` (`Bloxberg_Testnet_Unsafe`), `LitVM LiteForge
+Unsafe` (`LitVM_LiteForge_Unsafe`) and `Ethereum Sepolia Unsafe`
+(`Ethereum_Sepolia_Unsafe`): the same chain and contracts, for hardware
 SGX platforms the CAS cannot attest (EPID-only, SGX1). No CAS and no LAS: the
 enclaves are debug-signed and sign their own certificates from their
 measurement, so a result proves which image ran but not that an enclave ran
@@ -82,7 +88,8 @@ always says so in the network it names. A dApp publishes one securelock per
 network from two project directories with the same project name: the unsafe
 one is registered as `<project>-unsafe` and runs on the
 `etny-<nodenithy|pynithy>-testnet-unsafe`
-(`ecld-<nodenithy|pynithy>-litvm-testnet-unsafe`) trustedzone. Both dApp types
+(`ecld-<nodenithy|pynithy>-litvm-testnet-unsafe`,
+`ecld-<nodenithy|pynithy>-ethereum-sepolia-unsafe`) trustedzone. Both dApp types
 build for both networks. Mainnet has no unsafe network.
 
 ### Pynithy dApps
@@ -176,8 +183,8 @@ sets the enclave heap (default `1024M`).
   that IPFS RPC API instead, with `ECLD_IPFS_TOKEN` (or `IPFS_TOKEN`) as its
   Authorization header, and a URL naming the public API is refused without one.
   The intake serves the networks the bootnode's agent runs, today the bloxberg
-  testnet and LitVM LiteForge, each with its unsafe twin: a dApp on any other
-  network (Bloxberg mainnet, Polygon, IoTeX, Sepolia) needs an IPFS API of its
+  testnet, LitVM LiteForge and Ethereum Sepolia, each with its unsafe twin: a dApp on any other
+  network (Bloxberg mainnet, Polygon, IoTeX) needs an IPFS API of its
   own (`IPFS_ENDPOINT` for the Hello World template, `--ipfs <url>` for `ecld-run`).
   Exit code 0 on a `SUCCESS` task result, 1 otherwise. `--unsafe` runs the
   network's unsafe variant; on an unsafe network the securelock and

@@ -214,6 +214,7 @@ const main = async () => {
     "LitVM LiteForge",
     "Bloxberg Testnet Unsafe",
     "LitVM LiteForge Unsafe",
+    "Ethereum Sepolia Unsafe",
   ];
   const blockchainNetwork = await promptOptions(
     "On which Blockchain network do you want to have the app set up, as a starting point? (default is Bloxberg Testnet): ",
@@ -390,6 +391,7 @@ const main = async () => {
     "LitVM LiteForge": `ecld-${svc}-litvm-testnet`,
     "Bloxberg Testnet Unsafe": `etny-${svc}-testnet-unsafe`,
     "LitVM LiteForge Unsafe": `ecld-${svc}-litvm-testnet-unsafe`,
+    "Ethereum Sepolia Unsafe": `ecld-${svc}-ethereum-sepolia-unsafe`,
   };
   const trustedZoneImage = imageByNetwork[blockchainNetwork] || `etny-${svc}-testnet`;
   writeEnv("TRUSTED_ZONE_IMAGE", trustedZoneImage);

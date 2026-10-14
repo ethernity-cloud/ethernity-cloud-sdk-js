@@ -55,6 +55,14 @@ const NETWORKS = {
     imageRegistry: '0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D',
     esr: '0x709052Fe77Af543d3d9FE2Ac06a15c635c8D4Be5',
   },
+  // The family of 2026-10-14, owned by 0xA247...; the previous PoX 0x29D3eC87...
+  // and V1 registry 0x55e0ad45... are abandoned.
+  ETHEREUM_SEPOLIA: {
+    type: 'testnet', chainId: 11155111, rpc: 'https://sepolia.gateway.tenderly.co',
+    protocol: '0x798975F9FdD90A21Cb11Ac26F1377e1542c58f9c',
+    imageRegistry: '0xa7E43a269E3307cf9d246b07df2B89CAA1b4C42F',
+    esr: '0x9927809B61122B2af3f3b3A3303875e0687b8eE3',
+  },
 };
 // The -unsafe networks: the chain and contracts of the network each is the
 // unsafe variant of, without a CAS.

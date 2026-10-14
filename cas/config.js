@@ -18,6 +18,8 @@ const VALIDATOR_REGISTRY = {
   'etny-nodenithy-testnet': '0x0014aB102FEa6b02e3D793FF4b9a0Af309fB4E14',
   'ecld-pynithy-litvm-testnet': '0xbE3759f327e8643fC5A1717fb2072A0dAcBAD29E',
   'ecld-nodenithy-litvm-testnet': '0xbE3759f327e8643fC5A1717fb2072A0dAcBAD29E',
+  'ecld-pynithy-ethereum-sepolia': '0x8ad24b3F406A41a0F8D3440021792EB203957F43',
+  'ecld-nodenithy-ethereum-sepolia': '0x8ad24b3F406A41a0F8D3440021792EB203957F43',
 };
 
 const SESSION_REGISTRY = {
@@ -25,14 +27,20 @@ const SESSION_REGISTRY = {
   'etny-nodenithy-testnet': '0x444429681fCb26470Cb12B5436E48402cF7478A3',
   'ecld-pynithy-litvm-testnet': '0xfA70B5Df7C773A21164cAc5413704117e4dEaB76',
   'ecld-nodenithy-litvm-testnet': '0xfA70B5Df7C773A21164cAc5413704117e4dEaB76',
+  // Bound to Sepolia's ECImageRegistryV3 of 2026-10-14.
+  'ecld-pynithy-ethereum-sepolia': '0xDbB249E108d19fC1691483Bf897bA8BA0dA99c06',
+  'ecld-nodenithy-ethereum-sepolia': '0xDbB249E108d19fC1691483Bf897bA8BA0dA99c06',
 };
 
-// The chain the registries above live on.
+// The chain the registries above live on. Sepolia's RPC is Tenderly's gateway:
+// publicnode caps eth_getLogs at 50,000 blocks and prunes older ranges.
 const CHAIN = {
   'etny-pynithy-testnet': { rpcUrl: 'https://bloxberg.ethernity.cloud', chainId: 8995 },
   'etny-nodenithy-testnet': { rpcUrl: 'https://bloxberg.ethernity.cloud', chainId: 8995 },
   'ecld-pynithy-litvm-testnet': { rpcUrl: 'https://liteforge.rpc.caldera.xyz/infra-partner-http', chainId: 4441 },
   'ecld-nodenithy-litvm-testnet': { rpcUrl: 'https://liteforge.rpc.caldera.xyz/infra-partner-http', chainId: 4441 },
+  'ecld-pynithy-ethereum-sepolia': { rpcUrl: 'https://sepolia.gateway.tenderly.co', chainId: 11155111 },
+  'ecld-nodenithy-ethereum-sepolia': { rpcUrl: 'https://sepolia.gateway.tenderly.co', chainId: 11155111 },
 };
 
 // Whether the securelock takes its certificate from a CAS session: mainnet
@@ -55,6 +63,7 @@ const isMainnetNetwork = (network) =>
 const UNSAFE_NETWORKS = {
   Bloxberg_Testnet_Unsafe: 'Bloxberg_Testnet',
   LitVM_LiteForge_Unsafe: 'LitVM_LiteForge',
+  Ethereum_Sepolia_Unsafe: 'Ethereum_Sepolia',
 };
 
 // Case-insensitive: ecld-init writes Bloxberg_Testnet_Unsafe, a --network

@@ -41,6 +41,17 @@ function setVars(network = "") {
         NETWORK_RPC = "https://liteforge.rpc.caldera.xyz/infra-partner-http";
         IMAGE_REGISTRY_ADDRESS = "0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D";
         CHAIN_ID = 4441;
+    } else if (BLOCKCHAIN_NETWORK.includes("Sepolia")) {
+        // Sepolia's ECImageRegistryV3 of 2026-10-14; Tenderly's gateway serves
+        // the log ranges publicnode prunes.
+        NETWORK_RPC = "https://sepolia.gateway.tenderly.co";
+        IMAGE_REGISTRY_ADDRESS = "0xa7E43a269E3307cf9d246b07df2B89CAA1b4C42F";
+        CHAIN_ID = 11155111;
+        // Sepolia's EVM charges storage-heavy calls several times the local
+        // EVM's gas (a contract creation about seven times); the base fee is
+        // under 0.0001 gwei, so 0.1 gwei is paid in full as the tip.
+        GAS = 20000000;
+        GAS_PRICE = 100000000;
     }
 }
 
