@@ -142,7 +142,9 @@ sets the enclave heap (default `1024M`).
   bootnode and reports its progress) and writes it from the same wallet
   (`setImageCert`). Keep the publish running until it prints the registration:
   your node is the image's first source. `ECLD_KUBO_SWARM_PORT` (default
-  4001) is the port your node listens on when it is free.
+  4001) is the port your node listens on when it is free. `ECLD_ASSUME_YES=1`
+  accepts the extraction-service prompt without asking, for a publish run
+  from a script.
 
 - **Test (local, no chain)**: To run your backend locally with the enclave's own
   executor — no SGX, no gas, instant — run:
@@ -182,6 +184,9 @@ sets the enclave heap (default `1024M`).
   intake once the request is on chain; `--ipfs <url>` writes and reads through
   that IPFS RPC API instead, with `ECLD_IPFS_TOKEN` (or `IPFS_TOKEN`) as its
   Authorization header, and a URL naming the public API is refused without one.
+  The chain calls of a run go through the network's own RPC (publicnode's Sepolia
+  endpoint, LitVM's Caldera endpoint, IoTeX's babel API); the runner's defaults
+  cover the other networks.
   The intake serves the networks the bootnode's agent runs, today the bloxberg
   testnet, LitVM LiteForge and Ethereum Sepolia, each with its unsafe twin: a dApp on any other
   network (Bloxberg mainnet, Polygon, IoTeX) needs an IPFS API of its

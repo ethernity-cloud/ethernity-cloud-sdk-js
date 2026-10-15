@@ -90,7 +90,7 @@ usage: ecld-run 'hello("World")' | ecld-run --file payload.js | ecld-run --input
 payload:   a code string, or --file <path>; input via --input <file> / --input-text <str>
 network:   --network BLOXBERG_TESTNET (default: BLOCKCHAIN_NETWORK from .env)
            --unsafe: the network's -unsafe variant, which runs without a CAS
-           (BLOXBERG_TESTNET_UNSAFE, LITVM_LITEFORGE_UNSAFE)
+           (BLOXBERG_TESTNET_UNSAFE, LITVM_LITEFORGE_UNSAFE, ETHEREUM_SEPOLIA_UNSAFE)
 enclaves:  --securelock <name> (default PROJECT_NAME), --trustedzone <name> (default TRUSTED_ZONE_IMAGE);
            on an -unsafe network the default is each one's -unsafe variant
 key:       PRIVATE_KEY (a funded 0x key) from .env / env, or ECLD_PRIVATE_KEY
@@ -178,7 +178,7 @@ async function main() {
   // ---- drive the runner ----
   let runner;
   try {
-    runner = new EthernityCloudRunner(network.address, { privateKey }, network.chainId);
+    runner = new EthernityCloudRunner(network.address, network.rpcUrl ? { privateKey, rpcUrl: network.rpcUrl } : { privateKey }, network.chainId);
     if (network.unsafe) await runner.setNetwork(...network.unsafe);
   } catch (e) {
     console.error('ecld-run: could not initialise the runner: ' + e.message);

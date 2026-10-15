@@ -178,7 +178,7 @@ const main = async () => {
             if (fs.existsSync(file)) fs.unlinkSync(file);
         }
         console.log('Upload docker-compose-final.yml to IPFS');
-        ipfsCli(['--action', 'upload', '--filePath', 'docker-compose-final.yml'], 'inherit');
+        ipfsCli(['--action', 'upload', '--filePath', 'docker-compose-final.yml'], ['ignore', 'inherit', 'inherit']);
         if (!fs.existsSync('IPFS_DOCKER_COMPOSE_HASH.ipfs')) {
             console.error("Error: Could not upload docker-compose-final.yml to IPFS, please try again!");
             process.exit(1);
@@ -187,7 +187,7 @@ const main = async () => {
         console.log("IPFS_DOCKER_COMPOSE_HASH: ", process.env.IPFS_DOCKER_COMPOSE_HASH);
         writeEnv('IPFS_DOCKER_COMPOSE_HASH', process.env.IPFS_DOCKER_COMPOSE_HASH);
         console.log('Upload docker registry to IPFS');
-        ipfsCli(['--action', 'upload', '--folderPath', registryPath], 'inherit');
+        ipfsCli(['--action', 'upload', '--folderPath', registryPath], ['ignore', 'inherit', 'inherit']);
         if (!fs.existsSync('IPFS_HASH.ipfs')) {
             console.error("Error: Could not upload registry to IPFS, please try again!");
             process.exit(1);
@@ -656,7 +656,7 @@ const main = async () => {
         console.log("");
 
         const opt = ["yes", "no"];
-        const choice = await promptOptions("Do you want to continue by generating the necessary certificates using the Ethernity Cloud public certificate extraction services? (yes/no) (default: no): ", opt, "no");
+        const choice = process.env.ECLD_ASSUME_YES ? 'yes' : await promptOptions("Do you want to continue by generating the necessary certificates using the Ethernity Cloud public certificate extraction services? (yes/no) (default: no): ", opt, "no");
 
         if (choice.toLowerCase() !== 'yes') {
             console.log("Exiting.");
@@ -731,7 +731,7 @@ const main = async () => {
             fs.unlinkSync('IPFS_HASH.ipfs');
         }
         console.log('Upload docker registry to IPFS');
-        ipfsCli(['--action', 'upload', '--folderPath', registryPath], 'inherit');
+        ipfsCli(['--action', 'upload', '--folderPath', registryPath], ['ignore', 'inherit', 'inherit']);
         if (!fs.existsSync(`./IPFS_HASH.ipfs`)) {
             console.error("Error: Could not upload registry to IPFS, please try again!");
             process.exit(1);

@@ -14,13 +14,14 @@
 const casConfig = require('./cas/config.js');
 
 /* Accepts a few spellings per network. Returns the normalised key, the
- * network ({ address, chainId?, unsafe? }) or null, and the known keys. */
+ * network ({ address, chainId?, unsafe? }) or null, and the known keys; rpcUrl names
+ * the RPC of a network whose token the runner cannot key an RPC by. */
 function networkFor({ ECAddress, ECNetworkByChainId }, raw) {
   const key = String(raw || '').trim().toUpperCase().replace(/\s+/g, '_');
   const bloxbergTestnet = { address: ECAddress.BLOXBERG.TESTNET_ADDRESS };
   const amoy = { address: ECAddress.POLYGON.TESTNET_ADDRESS };
-  const sepolia = { address: ECAddress.SEPOLIA.TESTNET_ADDRESS, chainId: ECNetworkByChainId.SEPOLIA.TESTNET };
-  const litvm = { address: ECAddress.LITVM.TESTNET_ADDRESS, chainId: ECNetworkByChainId.LITVM.TESTNET };
+  const sepolia = { address: ECAddress.SEPOLIA.TESTNET_ADDRESS, chainId: ECNetworkByChainId.SEPOLIA.TESTNET, rpcUrl: 'https://ethereum-sepolia-rpc.publicnode.com' };
+  const litvm = { address: ECAddress.LITVM.TESTNET_ADDRESS, chainId: ECNetworkByChainId.LITVM.TESTNET, rpcUrl: 'https://liteforge.rpc.caldera.xyz/infra-partner-http' };
   const table = {
     BLOXBERG_TESTNET: bloxbergTestnet,
     BLOXBERG_TESTNET_UNSAFE: { ...bloxbergTestnet, unsafe: ['BLOXBERG', 'TESTNET_UNSAFE'] },
@@ -28,7 +29,7 @@ function networkFor({ ECAddress, ECNetworkByChainId }, raw) {
     POLYGON_MAINNET: { address: ECAddress.POLYGON.MAINNET_ADDRESS },
     POLYGON_AMOY: amoy,
     POLYGON_AMOY_TESTNET: amoy,
-    IOTEX_TESTNET: { address: ECAddress.IOTEX.TESTNET_ADDRESS, chainId: ECNetworkByChainId.IOTEX.TESTNET },
+    IOTEX_TESTNET: { address: ECAddress.IOTEX.TESTNET_ADDRESS, chainId: ECNetworkByChainId.IOTEX.TESTNET, rpcUrl: 'https://babel-api.testnet.iotex.io' },
     ETHEREUM_SEPOLIA: sepolia,
     SEPOLIA: sepolia,
     ETHEREUM_SEPOLIA_UNSAFE: { ...sepolia, unsafe: ['SEPOLIA', 'TESTNET_UNSAFE'] },
