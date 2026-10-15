@@ -45,9 +45,11 @@ export const ECRunner = {
   // --- iotex testnet ---
   'ecld-pynithy-iotex-testnet': ['0xD56385A97413Ed80E28B1b54A193b98F2C49c975', '0xa7467A6391816be9367a1cC52E0ef0c15FfE3cCC', 'https://babel-api.testnet.iotex.io', 4690],
   'ecld-nodenithy-iotex-testnet': ['0xD56385A97413Ed80E28B1b54A193b98F2C49c975', '0xa7467A6391816be9367a1cC52E0ef0c15FfE3cCC', 'https://babel-api.testnet.iotex.io', 4690],
-  // --- ethereum sepolia ---
-  'ecld-pynithy-ethereum-sepolia': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://ethereum-sepolia-rpc.publicnode.com', 11155111],
-  'ecld-nodenithy-ethereum-sepolia': ['0x29D3eC870565B6A1510232bd950A8Bc8336f0EB2', '0x55e0ad455Be85162b71a790f00Fc305680E3CE53', 'https://ethereum-sepolia-rpc.publicnode.com', 11155111],
+  // --- ethereum sepolia: the family of 2026-10-14 (PoX EthernityImplementationV2 1.1, ECImageRegistryV3) ---
+  'ecld-pynithy-ethereum-sepolia': ['0x798975F9FdD90A21Cb11Ac26F1377e1542c58f9c', '0xa7E43a269E3307cf9d246b07df2B89CAA1b4C42F', 'https://ethereum-sepolia-rpc.publicnode.com', 11155111],
+  'ecld-nodenithy-ethereum-sepolia': ['0x798975F9FdD90A21Cb11Ac26F1377e1542c58f9c', '0xa7E43a269E3307cf9d246b07df2B89CAA1b4C42F', 'https://ethereum-sepolia-rpc.publicnode.com', 11155111],
+  'ecld-pynithy-ethereum-sepolia-unsafe': ['0x798975F9FdD90A21Cb11Ac26F1377e1542c58f9c', '0xa7E43a269E3307cf9d246b07df2B89CAA1b4C42F', 'https://ethereum-sepolia-rpc.publicnode.com', 11155111],
+  'ecld-nodenithy-ethereum-sepolia-unsafe': ['0x798975F9FdD90A21Cb11Ac26F1377e1542c58f9c', '0xa7E43a269E3307cf9d246b07df2B89CAA1b4C42F', 'https://ethereum-sepolia-rpc.publicnode.com', 11155111],
   // --- litvm liteforge testnet: the PoX is the EthernityImplementationV2 1.1 of 2026-10-11; the image registry is the ECImageRegistryV3 of 2026-10-12 ---
   'ecld-pynithy-litvm-testnet': ['0xE35991de1f2A435e29E70406FA2781b1AffCb168', '0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441],
   'ecld-nodenithy-litvm-testnet': ['0xE35991de1f2A435e29E70406FA2781b1AffCb168', '0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D', 'https://liteforge.rpc.caldera.xyz/infra-partner-http', 4441],
