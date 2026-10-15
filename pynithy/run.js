@@ -664,7 +664,7 @@ const main = async () => {
         } else {
             console.log("\nGenerating certificates using the Ethernity Cloud signing service...\n");
             console.log(`ENCLAVE_NAME_SECURELOCK: ${ENCLAVE_NAME_SECURELOCK}`);
-            execSync(`node ./public_key_service.js --enclave_name "${securelock}" --protocol_version "v3" --network "${process.env.BLOCKCHAIN_NETWORK}" --template_version "${process.env.VERSION}"`, { stdio: 'inherit' });
+            execSync(`node ./public_key_service.js --enclave_name "${securelock}" --protocol_version "v3" --network "${process.env.BLOCKCHAIN_NETWORK}" --template_version "${process.env.VERSION}"${registryV2 ? ' --chain-registered' : ''}`, { stdio: 'inherit' });
             PUBLIC_KEY_SECURELOCK_RES = fs.readFileSync('PUBLIC_KEY.txt', 'utf8').trim();
             console.log(`PUBLIC_KEY_SECURELOCK_RES: ${PUBLIC_KEY_SECURELOCK_RES}`);
             if (!PUBLIC_KEY_SECURELOCK_RES || PUBLIC_KEY_SECURELOCK_RES === '-1') {

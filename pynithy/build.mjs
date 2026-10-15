@@ -224,7 +224,7 @@ fs.writeFileSync('Dockerfile', fs.readFileSync('Dockerfile.tpl', 'utf8')
   .replace(/__NETWORK_TYPE__/g, isMainnet ? 'mainnet' : 'testnet')
   .replace(/__VALIDATOR_REGISTRY_ADDRESS__/g, VALIDATOR_REGISTRY[templateName] || '')
   .replace(/__MEMORY_TO_ALLOCATE__/g, MEMORY_TO_ALLOCATE)
-  .replace(/__ESR_ENV__\n/, esrEnvBlock)
+  .replace(/__ESR_ENV__\r?\n/, esrEnvBlock)
   .replace('__SCONE_ALLOW_DLOPEN__', 'ENV SCONE_ALLOW_DLOPEN=1')
   .replace('__SCONE_SIGN__',
     `RUN scone-signer sign ${signFlags}${casProvisioned ? ' --production' : ''} /usr/local/bin/python`));

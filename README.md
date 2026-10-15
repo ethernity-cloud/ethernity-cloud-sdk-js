@@ -144,7 +144,9 @@ sets the enclave heap (default `1024M`).
   your node is the image's first source. `ECLD_KUBO_SWARM_PORT` (default
   4001) is the port your node listens on when it is free. `ECLD_ASSUME_YES=1`
   accepts the extraction-service prompt without asking, for a publish run
-  from a script.
+  from a script. On a two-step registry the publish waits up to three
+  minutes for the service to queue the image from the chain event before
+  posting the hash itself.
 
 - **Test (local, no chain)**: To run your backend locally with the enclave's own
   executor — no SGX, no gas, instant — run:
