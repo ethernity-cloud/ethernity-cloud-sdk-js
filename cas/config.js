@@ -71,6 +71,26 @@ const UNSAFE_NETWORKS = {
 const isUnsafeNetwork = (network) =>
   Object.keys(UNSAFE_NETWORKS).some((name) => name.toUpperCase() === String(network || '').toUpperCase());
 
+// The testnets, by BLOCKCHAIN_NETWORK: every network ecld-init offers but the
+// two mainnets, the -unsafe ones included. A session relaxes attestation on
+// these alone (sessionAttestation).
+const TESTNETS = [
+  'Bloxberg_Testnet', 'Polygon_Amoy_Testnet', 'IoTeX_Testnet', 'Ethereum_Sepolia', 'LitVM_LiteForge',
+  ...Object.keys(UNSAFE_NETWORKS),
+];
+const isTestnetNetwork = (network) =>
+  TESTNETS.some((name) => name.toUpperCase() === String(network || '').toUpperCase());
+
+// The attestation rules a securelock session declares on `network`, as the
+// YAML flow sequences its template takes for __TOLERATE__ and
+// __IGNORE_ADVISORIES__. A testnet tolerates a debug-signed enclave and ignores
+// every Intel advisory. Any other network, a mainnet or a name not in TESTNETS,
+// gets the production rules: no debug-mode, and INTEL-SA-00615 the one
+// advisory ignored.
+const sessionAttestation = (network) => (isTestnetNetwork(network)
+  ? { tolerate: '[hyperthreading, outdated-tcb, software-hardening-needed, debug-mode]', ignoreAdvisories: '["*"]' }
+  : { tolerate: '[hyperthreading, outdated-tcb, software-hardening-needed]', ignoreAdvisories: '["INTEL-SA-00615"]' });
+
 // The name an image is registered and run under on `network`: <name>-unsafe
 // on an -unsafe network. A dApp's securelock is <project>-unsafe there, so its
 // two variants never share an image name, and an -unsafe network's
@@ -99,5 +119,6 @@ const renderCompose = (content, cas, unsafe) => content
 
 module.exports = {
   VALIDATOR_REGISTRY, SESSION_REGISTRY, CHAIN, casProvisioned, isMainnetNetwork,
-  UNSAFE_NETWORKS, isUnsafeNetwork, nameOnNetwork, sessionTag, renderCompose,
+  UNSAFE_NETWORKS, isUnsafeNetwork, TESTNETS, isTestnetNetwork, sessionAttestation,
+  nameOnNetwork, sessionTag, renderCompose,
 };

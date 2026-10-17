@@ -258,15 +258,13 @@ const main = async () => {
             const regex = new RegExp(`__${key}__`, 'g');
             content = content.replace(regex, value);
         }
-        // Mainnet attests production enclaves only; a testnet tolerates a
-        // debug-signed one. Both lines were edited by text replacement, which
-        // had to repeat the advisory list verbatim to delete it and broke the
-        // moment either string moved. Written out per network instead.
+        // The session's attestation rules for this network: a debug-signed
+        // enclave and every Intel advisory are tolerated on a testnet only
+        // (cas/config.js sessionAttestation).
+        const attestation = casConfig.sessionAttestation(process.env.BLOCKCHAIN_NETWORK);
         content = content
-            .replace(/__TOLERATE__/g, isMainnet
-                ? '[hyperthreading, outdated-tcb, software-hardening-needed]'
-                : '[hyperthreading, outdated-tcb, software-hardening-needed, debug-mode]')
-            .replace(/__IGNORE_ADVISORIES__/g, isMainnet ? '["INTEL-SA-00615"]' : '["*"]');
+            .replace(/__TOLERATE__/g, attestation.tolerate)
+            .replace(/__IGNORE_ADVISORIES__/g, attestation.ignoreAdvisories);
 
         fs.writeFileSync(outputFile, content);
         // console.log(`Contents of ${outputFile}:`);
