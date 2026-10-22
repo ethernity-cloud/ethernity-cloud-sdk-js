@@ -14,8 +14,9 @@
 // Kept in sync with etny-{pynithy,nodenithy}/v3/networks.yaml
 // (cas_session_registry_address, validator_registry_address).
 const VALIDATOR_REGISTRY = {
-  'etny-pynithy-testnet': '0x0014aB102FEa6b02e3D793FF4b9a0Af309fB4E14',
-  'etny-nodenithy-testnet': '0x0014aB102FEa6b02e3D793FF4b9a0Af309fB4E14',
+  // The Phase 2 ValidatorRegistry of 2026-10-21 (ethernity-cas CAS-SETUP.md).
+  'etny-pynithy-testnet': '0x8CC8B1dc22f0E06193161CeC79d75987b0640e02',
+  'etny-nodenithy-testnet': '0x8CC8B1dc22f0E06193161CeC79d75987b0640e02',
   'ecld-pynithy-litvm-testnet': '0xbE3759f327e8643fC5A1717fb2072A0dAcBAD29E',
   'ecld-nodenithy-litvm-testnet': '0xbE3759f327e8643fC5A1717fb2072A0dAcBAD29E',
   'ecld-pynithy-ethereum-sepolia': '0x8ad24b3F406A41a0F8D3440021792EB203957F43',
@@ -23,8 +24,10 @@ const VALIDATOR_REGISTRY = {
 };
 
 const SESSION_REGISTRY = {
-  'etny-pynithy-testnet': '0x444429681fCb26470Cb12B5436E48402cF7478A3',
-  'etny-nodenithy-testnet': '0x444429681fCb26470Cb12B5436E48402cF7478A3',
+  // The SessionRegistry with image binding of 2026-10-22; it links an image
+  // only once the Image Registry records it under the session's name.
+  'etny-pynithy-testnet': '0x78f0c5E92E7A9Ec2f2A36A4509ED4a75D0f9463B',
+  'etny-nodenithy-testnet': '0x78f0c5E92E7A9Ec2f2A36A4509ED4a75D0f9463B',
   'ecld-pynithy-litvm-testnet': '0xfA70B5Df7C773A21164cAc5413704117e4dEaB76',
   'ecld-nodenithy-litvm-testnet': '0xfA70B5Df7C773A21164cAc5413704117e4dEaB76',
   // Bound to Sepolia's ECImageRegistryV3 of 2026-10-14.
