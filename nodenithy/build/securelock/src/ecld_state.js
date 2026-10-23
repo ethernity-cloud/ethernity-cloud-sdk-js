@@ -119,6 +119,14 @@ const MAX_COMMITS_PER_TASK = 256;
 
 class StateLimitError extends Error {}
 
+// A state object is stored as one raw IPFS block: the CID committed to the
+// chain is computed here from the encrypted bytes, and the node can store the
+// object under it only up to Kubo's largest block. A commit above it is NOT
+// made.
+const STATE_OBJECT_MAX = 1048576;
+
+class StateSizeError extends Error {}
+
 function unwrapStored(stored) {
   if (stored && typeof stored === 'object' && stored[CONTAINER_MARK] === 1) {
     return [stored.acl || null, stored.data];
@@ -589,6 +597,12 @@ class StateRegistry {
       const stored = wrapStored(nextAcl, newData, nextAcl ? _taskCaller : null, finalNonce);
 
       const blob = encrypt(Buffer.from(JSON.stringify(stored), 'utf8'));
+      if (blob.length > STATE_OBJECT_MAX) {
+        throw new StateSizeError(
+          `the state object for '${key}' is ${blob.length} bytes encrypted; ` +
+            `the limit is ${STATE_OBJECT_MAX}. Split the state across keys.`
+        );
+      }
       // Compute the CID from OUR bytes — never accept one from the node.
       const cid = cidv1Raw(blob);
 
@@ -835,6 +849,7 @@ module.exports = {
   StatePermissionError,
   StateNonceError,
   StateLimitError,
+  StateSizeError,
   esrGrant,
   esrRevoke,
   esrSetPublicRead,

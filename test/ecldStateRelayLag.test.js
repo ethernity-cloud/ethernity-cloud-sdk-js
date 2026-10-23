@@ -68,6 +68,17 @@ test('the object named by the committed CID is read before the key slot', async 
   assert.deepEqual(await newTask().get('counter'), { n: 1 });
 });
 
+test('a state object above one block is not committed', async () => {
+  const { ecldState, swift, relay, newTask } = setup();
+  await assert.rejects(
+    newTask().commit('big', () => ({ payload: 'x'.repeat(1048576) })),
+    (e) => e instanceof ecldState.StateSizeError && /limit is 1048576/.test(e.message)
+  );
+  relay();
+  assert.equal(await swift.getFileContentBytes('ecld-local', 'state.big.enc').catch(() => null), null);
+  assert.deepEqual(await newTask().get('big'), {});
+});
+
 test('a blob that matches no committed CID is refused', async () => {
   const { swift, relay, newTask } = setup();
   await newTask().commit('counter', increment);
