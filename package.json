@@ -1,6 +1,6 @@
 {
   "name": "@ethernity-cloud/sdk-js",
-  "version": "1.7.15",
+  "version": "1.7.16",
   "description": "A package to run ethernity cloud build scripts",
   "scripts": {
     "test": "node --test \"test/**/*.test.js\"",
@@ -40,7 +40,7 @@
     "!**/*.pyc"
   ],
   "dependencies": {
-    "@ethernity-cloud/runner": "^0.6.11",
+    "@ethernity-cloud/runner": "^0.6.12",
     "acorn": "^8.11.0",
     "adm-zip": "^0.5.14",
     "axios": "^1.7.2",
