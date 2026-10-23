@@ -182,6 +182,11 @@ sets the enclave heap (default `1024M`).
   `--network`/`--securelock`/`--trustedzone`; the signing key is `PRIVATE_KEY`
   (or `ECLD_PRIVATE_KEY`) — a funded `0x` key that pays for the order. Resources
   are tunable with `--task-price`/`--cpu`/`--memory`/`--storage`/`--bandwidth`/`--duration`/`--validators`.
+  `--input <file>` / `--input-text <string>` send the task's input dataset, read
+  as `___etny_data_set___`; it travels encrypted, and the trustedzone checks it
+  against the sha256 the request carries. Exit code 0 on a `SUCCESS` task result,
+  1 otherwise; a task that raised in the enclave prints its task code (e.g.
+  `4 (BASE_EXCEPTION)`) and the enclave's error report as its result.
   `--ipfs intake` (the default) delivers the payload to the bootnode's payload
   intake once the request is on chain; `--ipfs <url>` writes and reads through
   that IPFS RPC API instead, with `ECLD_IPFS_TOKEN` (or `IPFS_TOKEN`) as its

@@ -44,6 +44,7 @@ try { require('dotenv').config(); } catch (e) { /* dotenv optional */ }
 const casConfig = require('./cas/config.js');
 const { networkFor, unsafeVariant } = require('./network.js');
 const { PUBLIC_IPFS_HOST } = require('./localKubo.js');
+const { reportRun } = require('./runReport.js');
 
 // `--ipfs intake` (the default): the artefacts' CIDs are computed locally and
 // the bytes delivered to the bootnode's payload intake once the DO request is
@@ -116,20 +117,19 @@ async function main() {
   let input = null;
   if (opts.inputFile !== undefined) input = fs.readFileSync(opts.inputFile, 'utf8');
   else if (opts.inputText !== undefined) input = opts.inputText;
-  // The enclave executor exposes the input as ___etny_data_set___; the runner
-  // passes it as part of the code's scope, so a payload references it by name.
-  // ecld-run mirrors ecld-test: input is delivered via the payload call itself.
+  // The input is the task's input dataset (runner option inputData): sent
+  // sealed for the trustedzone and read in the payload as ___etny_data_set___.
 
   // ---- runner (ESM) ----
-  let EthernityCloudRunner, ECStatus, ECEvent, ECOrderTaskStatus, enums;
+  let EthernityCloudRunner, ECStatus, ECEvent, enums;
   try {
     const runnerMod = await import('@ethernity-cloud/runner');
     EthernityCloudRunner = runnerMod.default || runnerMod.EthernityCloudRunner;
     enums = await import('@ethernity-cloud/runner/enums.js');
-    ({ ECStatus, ECEvent, ECOrderTaskStatus } = enums);
+    ({ ECStatus, ECEvent } = enums);
   } catch (e) {
     console.error('ecld-run: the runner package is not installed or is too old '
-      + '(need @ethernity-cloud/runner >= 0.6.0): ' + e.message);
+      + '(need @ethernity-cloud/runner >= 0.6.11): ' + e.message);
     process.exit(1);
   }
 
@@ -228,10 +228,9 @@ async function main() {
   const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve('TIMEOUT'), timeoutMs); });
 
   try {
-    const runArgs = [resources, securelock, code, opts.node];
-    if (trustedzone) runArgs.push(trustedzone);
     // Fire the run; its own promise also settles on completion.
-    const runPromise = runner.run(...runArgs).catch((e) => ({ error: e.message }));
+    const runPromise = runner.run(resources, securelock, code, opts.node, trustedzone || null, { inputData: input })
+      .catch((e) => ({ error: e.message }));
     const outcome = await Promise.race([done, timeout, runPromise]);
     clearTimeout(timer);
 
@@ -239,28 +238,7 @@ async function main() {
       console.error(`\necld-run: no result after ${opts.timeout}s; the order may still process on-chain.`);
       process.exit(1);
     }
-    if (outcome && outcome.error) {
-      console.error(`\nstatus     : ERROR`);
-      console.error(`error      : ${outcome.error}`);
-      process.exit(1);
-    }
-
-    // SUCCESS
-    const result = await runner.getResult();
-    const typed = (runner.getStructuredResult && runner.getStructuredResult()) || null;
-    const taskCode = runner.resultTaskCode;
-    const taskName = runner.resultTaskCodeName
-      || (ECOrderTaskStatus && taskCode !== undefined ? ECOrderTaskStatus[taskCode] : undefined);
-
-    if (opts.json) {
-      console.log(JSON.stringify({ task_code: taskCode, task_code_name: taskName, value: result, structured: typed }, null, 2));
-    } else {
-      if (taskName && taskName !== 'SUCCESS') console.log(`task code  : ${taskCode} (${taskName})`);
-      console.log('result     :');
-      console.log(result);
-    }
-    // A non-zero enclave task code is a failed run even though the order landed.
-    process.exit(taskCode === undefined || taskCode === 0 ? 0 : 1);
+    process.exit(await reportRun(runner, outcome, { json: opts.json }));
   } catch (e) {
     clearTimeout(timer);
     console.error('ecld-run: run failed: ' + (e && e.stack ? e.stack : e));
