@@ -119,14 +119,6 @@ const MAX_COMMITS_PER_TASK = 256;
 
 class StateLimitError extends Error {}
 
-// A state object is stored as one raw IPFS block: the CID committed to the
-// chain is computed here from the encrypted bytes, and the node can store the
-// object under it only up to Kubo's largest block. A commit above it is NOT
-// made.
-const STATE_OBJECT_MAX = 1048576;
-
-class StateSizeError extends Error {}
-
 function unwrapStored(stored) {
   if (stored && typeof stored === 'object' && stored[CONTAINER_MARK] === 1) {
     return [stored.acl || null, stored.data];
@@ -269,15 +261,86 @@ function stateKey() {
   return keccak256(Buffer.concat([Buffer.from(DOMAIN_SEP_STATE, 'utf8'), material]));
 }
 
+// A state object is stored as the node's Kubo stores it with `add
+// --cid-version=1 --raw-leaves` and its default chunker: in raw sha256 blocks
+// of BLOCK_SIZE bytes (the last one shorter), a single block as it is, several
+// under a balanced UnixFS tree of at most LINKS_PER_NODE blocks per node.
+// unixfsCid() computes the resulting CID from the bytes, so the enclave
+// commits a CID it derived itself rather than one a node handed it, and the
+// node stores the object under that CID (mvp-pox-node utils.py unixfs_cid).
+const BLOCK_SIZE = 262144;
+const LINKS_PER_NODE = 174;
+
+function cidB32(cid) {
+  return 'b' + base32Encode(cid).toLowerCase().replace(/=+$/, '');
+}
+
+function pbVarint(n) {
+  const out = [];
+  for (;;) {
+    const byte = n % 128;
+    n = Math.floor(n / 128);
+    if (n === 0) {
+      out.push(byte);
+      return Buffer.from(out);
+    }
+    out.push(byte | 0x80);
+  }
+}
+
+// A protobuf field: varint (wire 0) or length-delimited (wire 2).
+function pbField(number, wire, payload) {
+  const tag = pbVarint(number * 8 + wire);
+  return wire === 2 ? Buffer.concat([tag, pbVarint(payload.length), payload]) : Buffer.concat([tag, payload]);
+}
+
+// CIDv1, codec raw (0x55), sha2-256 (0x12, 32 bytes).
+function pbRawCid(content) {
+  return Buffer.concat([Buffer.from([0x01, 0x55, 0x12, 0x20]), crypto.createHash('sha256').update(content).digest()]);
+}
+
+// A dag-pb UnixFS File node over `children`, each [cid, tsize, filesize];
+// returns [cid, tsize, filesize]. Links come before Data in dag-pb; a link
+// carries the child's CID, an empty Name and its Tsize, the size of the
+// child's subtree; Data is UnixFS Type=File(2), filesize, blocksizes.
+function pbFileNode(children) {
+  const links = Buffer.concat(children.map(([cid, tsize]) =>
+    pbField(2, 2, Buffer.concat([pbField(1, 2, cid), pbField(2, 2, Buffer.alloc(0)), pbField(3, 0, pbVarint(tsize))]))));
+  const filesize = children.reduce((n, [, , size]) => n + size, 0);
+  const data = Buffer.concat([pbField(1, 0, pbVarint(2)), pbField(3, 0, pbVarint(filesize)),
+    ...children.map(([, , size]) => pbField(4, 0, pbVarint(size)))]);
+  const block = Buffer.concat([links, pbField(1, 2, data)]);
+  const cid = Buffer.concat([Buffer.from([0x01, 0x70, 0x12, 0x20]), crypto.createHash('sha256').update(block).digest()]);
+  return [cid, block.length + children.reduce((n, [, tsize]) => n + tsize, 0), filesize];
+}
+
 /**
- * CIDv1/raw/sha2-256 for `content`, computed without touching IPFS.
- * Matches `ipfs add --cid-version=1 --raw-leaves`, which is what lets the
- * enclave commit a CID it derived itself rather than one a node handed it.
+ * The CID the node's Kubo gives `content`: the raw block's CID up to one
+ * block, else the root of the balanced UnixFS tree over the blocks,
+ * LINKS_PER_NODE to a node, every node full but the last.
+ */
+function unixfsCid(content, blockSize = BLOCK_SIZE) {
+  const buf = Buffer.isBuffer(content) ? content : Buffer.from(content);
+  if (buf.length <= blockSize) return cidB32(pbRawCid(buf));
+  let nodes = [];
+  for (let i = 0; i < buf.length; i += blockSize) {
+    const chunk = buf.subarray(i, i + blockSize);
+    nodes.push([pbRawCid(chunk), chunk.length, chunk.length]);
+  }
+  while (nodes.length > 1) {
+    const next = [];
+    for (let i = 0; i < nodes.length; i += LINKS_PER_NODE) next.push(pbFileNode(nodes.slice(i, i + LINKS_PER_NODE)));
+    nodes = next;
+  }
+  return cidB32(nodes[0][0]);
+}
+
+/**
+ * CIDv1/raw/sha2-256 for `content`: its CID as one raw block, which is its CID
+ * through the node's Kubo up to BLOCK_SIZE bytes.
  */
 function cidv1Raw(content) {
-  const digest = crypto.createHash('sha256').update(content).digest();
-  const raw = Buffer.concat([Buffer.from([0x01, 0x55, 0x12, 0x20]), digest]);
-  return 'b' + base32Encode(raw).toLowerCase().replace(/=+$/, '');
+  return cidB32(pbRawCid(content));
 }
 
 // RFC4648 base32, no padding stripped here (the caller strips it).
@@ -597,14 +660,8 @@ class StateRegistry {
       const stored = wrapStored(nextAcl, newData, nextAcl ? _taskCaller : null, finalNonce);
 
       const blob = encrypt(Buffer.from(JSON.stringify(stored), 'utf8'));
-      if (blob.length > STATE_OBJECT_MAX) {
-        throw new StateSizeError(
-          `the state object for '${key}' is ${blob.length} bytes encrypted; ` +
-            `the limit is ${STATE_OBJECT_MAX}. Split the state across keys.`
-        );
-      }
       // Compute the CID from OUR bytes — never accept one from the node.
-      const cid = cidv1Raw(blob);
+      const cid = unixfsCid(blob);
 
       // Hand the blob and the CID to the node for pinning. It verifies the CID
       // matches; it does not get to choose it. Fire-and-forget.
@@ -661,7 +718,7 @@ class StateRegistry {
       const data = await _swift.getFileContentBytes(_bucket, name).catch(() => null);
       if (data && data.length) {
         const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-        if (cidv1Raw(buf) === cid) {
+        if (unixfsCid(buf) === cid) {
           return buf;
         }
         mismatched.push(name);
@@ -849,7 +906,7 @@ module.exports = {
   StatePermissionError,
   StateNonceError,
   StateLimitError,
-  StateSizeError,
+  unixfsCid,
   esrGrant,
   esrRevoke,
   esrSetPublicRead,

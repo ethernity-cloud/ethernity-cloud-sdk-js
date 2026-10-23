@@ -68,15 +68,19 @@ test('the object named by the committed CID is read before the key slot', async 
   assert.deepEqual(await newTask().get('counter'), { n: 1 });
 });
 
-test('a state object above one block is not committed', async () => {
+test('a state object above one block commits under its UnixFS root and reads back', async () => {
+  // A state object is stored as IPFS blocks of 256 KiB; above one block its
+  // CID is the root of the UnixFS tree over them, computed in the enclave as
+  // the node's Kubo computes it, so the node stores the object under the
+  // committed CID. get() verifies the stored bytes against that CID.
   const { ecldState, swift, relay, newTask } = setup();
-  await assert.rejects(
-    newTask().commit('big', () => ({ payload: 'x'.repeat(1048576) })),
-    (e) => e instanceof ecldState.StateSizeError && /limit is 1048576/.test(e.message)
-  );
+  const payload = { payload: 'x'.repeat(300000) };
+  await newTask().commit('big', () => payload);
   relay();
-  assert.equal(await swift.getFileContentBytes('ecld-local', 'state.big.enc').catch(() => null), null);
-  assert.deepEqual(await newTask().get('big'), {});
+  const stored = await swift.getFileContentBytes('ecld-local', 'state.big.enc');
+  assert.ok(stored.length > 262144);
+  assert.match(ecldState.unixfsCid(stored), /^bafybei/);
+  assert.deepEqual(await newTask().get('big'), payload);
 });
 
 test('a blob that matches no committed CID is refused', async () => {
