@@ -72,6 +72,7 @@ function configure({ identityPriv, swiftStreamService, bucket, contractAddress, 
   _provider = provider;
   _esrLedger = [];
   _taskNonces = {};
+  _taskWrites = {};
   _taskRelayNonces = {};
   _taskLedger = {};
   _taskCaller = normAddr(caller);
@@ -356,6 +357,12 @@ let _esrLedger = [];
 // even before the node's relay lands on-chain.
 let _taskNonces = {};
 
+// Per-task memo of this task's last commit per key, [acl, data, version, cid]
+// as the chain shows them once the node's relay lands. A read prefers it while
+// the chain still shows an older version, so get() after commit() returns the
+// committed state and a second commit to the key builds on the first.
+let _taskWrites = {};
+
 // Per-task memo of the NEXT relay nonce per key hash, so multiple commits to
 // the same key within one task sign sequential relay nonces even while the
 // node is still relaying the earlier ones.
@@ -429,6 +436,10 @@ class StateRegistry {
   /** [acl, data, version, cid] for `key`; NO permission check here. */
   async _readContainer(key, fallback = {}) {
     const [cid, version] = await this._contract().getState(this.walletAddress, keyHash(key));
+    const own = _taskWrites[key];
+    if (own && own[2] > Number(version || 0)) {
+      return own;
+    }
     if (!version || !cid) {
       return [null, fallback, 0, null];
     }
@@ -597,6 +608,7 @@ class StateRegistry {
         // results): this is what the chain shows once the relay lands.
         ledgerRecord(key, currentVersion + 1, cid, newData);
         _taskNonces[key] = finalNonce;
+        _taskWrites[key] = [nextAcl, newData, currentVersion + 1, cid];
         return [nextAcl, newData];
       } catch (e) {
         const msg = String(e && e.message ? e.message : e);
@@ -623,20 +635,28 @@ class StateRegistry {
    * the node stages state objects in the bucket. That makes the node the
    * delivery path but not a trusted one: content is checked against the CID the
    * chain records, so a substituted blob is rejected rather than decrypted.
+   *
+   * The node stages it as state.<cid>.enc. state.<key>.enc is the last blob a
+   * commit of this key published, which matches only while no later commit
+   * was published; one that does not match is passed over.
    */
   async _fetch(key, cid) {
-    for (const name of [`state.${key}.enc`, `state.${cid}.enc`]) {
+    const mismatched = [];
+    for (const name of [`state.${cid}.enc`, `state.${key}.enc`]) {
       // eslint-disable-next-line no-await-in-loop
       const data = await _swift.getFileContentBytes(_bucket, name).catch(() => null);
       if (data && data.length) {
         const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-        if (cidv1Raw(buf) !== cid) {
-          throw new Error(
-            `State object ${name} does not match the committed CID ${cid} — refusing to use it`
-          );
+        if (cidv1Raw(buf) === cid) {
+          return buf;
         }
-        return buf;
+        mismatched.push(name);
       }
+    }
+    if (mismatched.length) {
+      throw new Error(
+        `State object ${mismatched.join(' and ')} does not match the committed CID ${cid} — refusing to use it`
+      );
     }
     throw new Error(`Could not read state object for '${key}' (${cid})`);
   }
