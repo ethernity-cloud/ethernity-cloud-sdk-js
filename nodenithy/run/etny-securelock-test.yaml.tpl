@@ -20,6 +20,9 @@ services:
      pwd: /
      environment:
         GREETING: hello from ETNY SECURELOCK!!!!
+        # A CAS-provisioned enclave takes its environment from this session,
+        # not from the image's ENV; run.js fills in the ESR registry address.
+        __ESR_ENVIRONMENT__
 
 images:
    - name: application_image

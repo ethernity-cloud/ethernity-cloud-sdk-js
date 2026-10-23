@@ -309,7 +309,8 @@ const main = async () => {
     const replacementsSecurelock = {
         PREDECESSOR: PREDECESSOR_HASH_SECURELOCK === 'EMPTY' ? `# predecessor: ${PREDECESSOR_HASH_SECURELOCK}` : `predecessor: ${PREDECESSOR_HASH_SECURELOCK}`,
         MRENCLAVE: process.env.MRENCLAVE_SECURELOCK,
-        ENCLAVE_NAME: ENCLAVE_NAME_SECURELOCK
+        ENCLAVE_NAME: ENCLAVE_NAME_SECURELOCK,
+        ESR_ENVIRONMENT: casConfig.esrSessionEnvironment(process.env)
     };
     if (cas) {
         processYamlTemplate('etny-securelock-test.yaml.tpl', 'etny-securelock-test.yaml', replacementsSecurelock);

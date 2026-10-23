@@ -120,8 +120,19 @@ const renderCompose = (content, cas, unsafe) => content
   .map((line) => line.replace(/\s*# __(?:CAS|NO_CAS|SAFE)_ONLY__$/, ''))
   .join('\n');
 
+// The securelock session's ESR environment entry. A CAS-provisioned enclave
+// takes its environment from the session, not from the image's ENV, so the
+// registry address the build baked must also be set here; without ESR (or
+// without an address) the entry is a YAML comment.
+const esrSessionEnvironment = (env) => {
+  const enabled = /^(1|true|yes)$/i.test(String(env.ESR_ENABLED || '').trim());
+  const address = String(env.ESR_CONTRACT_ADDRESS || '').trim();
+  if (!enabled || !/^0x[0-9a-fA-F]{40}$/.test(address)) return '# ESR not enabled';
+  return `ESR_CONTRACT_ADDRESS: "${address}"`;
+};
+
 module.exports = {
   VALIDATOR_REGISTRY, SESSION_REGISTRY, CHAIN, casProvisioned, isMainnetNetwork,
   UNSAFE_NETWORKS, isUnsafeNetwork, TESTNETS, isTestnetNetwork, sessionAttestation,
-  nameOnNetwork, sessionTag, renderCompose,
+  nameOnNetwork, sessionTag, renderCompose, esrSessionEnvironment,
 };
