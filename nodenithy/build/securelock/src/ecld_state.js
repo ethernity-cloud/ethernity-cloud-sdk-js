@@ -117,6 +117,13 @@ class StateNonceError extends Error {}
 // task code 38 (ESR_COMMIT_LIMIT_EXCEEDED).
 const MAX_COMMITS_PER_TASK = 256;
 
+// How long a read waits for the node to stage a state object the chain names
+// before the task fails, and how often it looks for it: the node writes the
+// objects pinned on it within seconds of the order's start and the ones it has
+// to fetch from the network as they arrive.
+const STATE_STAGE_WAIT_MS = 120000;
+const STATE_STAGE_POLL_MS = 2000;
+
 class StateLimitError extends Error {}
 
 function unwrapStored(stored) {
@@ -707,29 +714,39 @@ class StateRegistry {
    * delivery path but not a trusted one: content is checked against the CID the
    * chain records, so a substituted blob is rejected rather than decrypted.
    *
-   * The node stages it as state.<cid>.enc. state.<key>.enc is the last blob a
-   * commit of this key published, which matches only while no later commit
-   * was published; one that does not match is passed over.
+   * The node stages it as state.<cid>.enc, within seconds of the order's start
+   * when the object is pinned on it and as it arrives when it has to fetch it
+   * from the network, so the object is looked for every STATE_STAGE_POLL_MS
+   * for up to STATE_STAGE_WAIT_MS. state.<key>.enc is the last blob a commit
+   * of this key published, which matches only while no later commit was
+   * published; one that does not match is passed over.
    */
   async _fetch(key, cid) {
-    const mismatched = [];
-    for (const name of [`state.${cid}.enc`, `state.${key}.enc`]) {
-      // eslint-disable-next-line no-await-in-loop
-      const data = await _swift.getFileContentBytes(_bucket, name).catch(() => null);
-      if (data && data.length) {
-        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-        if (unixfsCid(buf) === cid) {
-          return buf;
+    const deadline = Date.now() + STATE_STAGE_WAIT_MS;
+    let mismatched = [];
+    for (;;) {
+      mismatched = [];
+      for (const name of [`state.${cid}.enc`, `state.${key}.enc`]) {
+        // eslint-disable-next-line no-await-in-loop
+        const data = await _swift.getFileContentBytes(_bucket, name).catch(() => null);
+        if (data && data.length) {
+          const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+          if (unixfsCid(buf) === cid) {
+            return buf;
+          }
+          mismatched.push(name);
         }
-        mismatched.push(name);
       }
+      if (Date.now() >= deadline) break;
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => { setTimeout(resolve, STATE_STAGE_POLL_MS); });
     }
     if (mismatched.length) {
       throw new Error(
         `State object ${mismatched.join(' and ')} does not match the committed CID ${cid} — refusing to use it`
       );
     }
-    throw new Error(`Could not read state object for '${key}' (${cid})`);
+    throw new Error(`Could not read state object for '${key}' (${cid}): not staged within ${STATE_STAGE_WAIT_MS / 1000} s`);
   }
 
   async _sendCommit(keyHashHex, cid, expectedVersion, ownerAddr = null, nonce = 0) {
