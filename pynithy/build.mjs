@@ -156,7 +156,7 @@ const casProvisioned = casConfig.casProvisioned(templateName, isMainnet);
 
 // Enclave heap (SCONE_HEAP). Part of the measurement: publish runs the
 // securelock with the value recorded here.
-const MEMORY_TO_ALLOCATE = (process.env.ECLD_MEMORY_TO_ALLOCATE || process.env.MEMORY_TO_ALLOCATE || '1024M').trim();
+const MEMORY_TO_ALLOCATE = (process.env.ECLD_MEMORY_TO_ALLOCATE || process.env.MEMORY_TO_ALLOCATE || '256M').trim();
 writeEnv('MEMORY_TO_ALLOCATE', MEMORY_TO_ALLOCATE);
 
 runCommand('docker pull registry:2');

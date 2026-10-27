@@ -63,8 +63,9 @@ RUN openssl genrsa -3 -out /enclave-key.pem 3072
 # scone-signer below (SCONE embeds defaults for anything not signed explicitly;
 # any drift makes SCONE recompute + debug re-sign the enclave at load, which CAS
 # rejects on mainnet). Values mirror the publish/run docker-compose securelock
-# service (SCONE_HEAP=1024M, SCONE_STACK=4M, dlopen=1, extensions=libbinary-fs).
-ENV SCONE_HEAP=1024M
+# service (SCONE_HEAP as build.mjs's MEMORY_TO_ALLOCATE, SCONE_STACK=4M,
+# dlopen=1, extensions=libbinary-fs).
+ENV SCONE_HEAP=__MEMORY_TO_ALLOCATE__
 ENV SCONE_STACK=4M
 ENV SCONE_ALLOW_DLOPEN=1
 ENV SCONE_EXTENSIONS_PATH=/lib/libbinary-fs.so

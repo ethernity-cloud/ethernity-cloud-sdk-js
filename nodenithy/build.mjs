@@ -265,7 +265,13 @@ let dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_S
 
 // Amount of enclave heap to allocate (SCONE_HEAP). Kept in sync with the
 // run/docker-compose securelock service; overridable via ECLD_MEMORY_TO_ALLOCATE.
-const MEMORY_TO_ALLOCATE = (process.env.ECLD_MEMORY_TO_ALLOCATE || '1024M').trim();
+// 256M: with 1024M the securelock enclave is 1.3 GB, and beside the
+// trustedzone's it exceeds a 1 GiB EPC, which paged both enclaves for the
+// first 100 s of every task on the bloxberg testnet (2026-10-27).
+const MEMORY_TO_ALLOCATE = (process.env.ECLD_MEMORY_TO_ALLOCATE || '256M').trim();
+// Read back by ecld-publish (run.js), which renders it into the composes'
+// securelock service.
+writeEnv('MEMORY_TO_ALLOCATE', MEMORY_TO_ALLOCATE);
 
 // CRITICAL (mainnet DCAP): sign /usr/local/bin/node -- the binary the enclave
 // actually EXECUTES (ENTRYPOINT + the run/publish compose command both run
@@ -297,6 +303,7 @@ const signedMrenclaveStep =
 // securelock is signed debug with the same explicit params.
 const cas = casConfig.casProvisioned(templateName, isMainnet);
 dockerfileSecureContent = dockerfileSecureContent
+  .replace(/__MEMORY_TO_ALLOCATE__/g, MEMORY_TO_ALLOCATE)
   .replace('__SCONE_SIGN__', `RUN scone-signer sign ${signFlags}${cas ? ' --production' : ''} /usr/local/bin/node`)
   .replace('__SIGNED_MRENCLAVE__', signedMrenclaveStep);
 

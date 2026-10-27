@@ -113,12 +113,28 @@ const extractSignedMrenclave = (service) => {
     }
 };
 
+// The heap the trustedzone was signed with: the SCONE_HEAP of the image the
+// build bundled (etny-nodenithy's Dockerfile sets it to the --heap it signs
+// with). The compose must name the same value, or SCONE recomputes the
+// measurement at load and the CAS refuses the enclave.
+const trustedZoneHeapOfImage = (image) => {
+    const env = execSync(`docker image inspect ${image} --format "{{range .Config.Env}}{{println .}}{{end}}"`,
+        { stdio: ['pipe', 'pipe', 'pipe'] }).toString();
+    const m = env.match(/^SCONE_HEAP=(\S+)$/m);
+    if (!m) throw new Error(`${image} carries no SCONE_HEAP in its environment`);
+    return m[1];
+};
+
 const main = async () => {
     process.env.NODE_NO_WARNINGS = 1
-    // Every testnet trustedzone was measured and registered with a 1024M heap
-    // (etny-nodenithy v3/run/docker-compose.yml). The mainnet session named
-    // below comes from the features/v3 branches, which ran it with 256M.
-    const trustedZoneHeap = isMainnet ? '256M' : '1024M';
+    const trustedZoneHeap = trustedZoneHeapOfImage('localhost:5000/etny-trustedzone');
+    console.log(`Trustedzone heap: ${trustedZoneHeap}`);
+    // The securelock heap ecld-build signed it with (part of MRENCLAVE).
+    const memory = (process.env.MEMORY_TO_ALLOCATE || '').trim();
+    if (!memory) {
+        console.error("Error: MEMORY_TO_ALLOCATE is not set in .env; run ecld-build first.");
+        process.exit(1);
+    }
 
     // Where the image goes. An IPFS API of the application's own
     // (IPFS_ENDPOINT, with IPFS_TOKEN as its Authorization header when set)
@@ -208,7 +224,8 @@ const main = async () => {
             return;
         }
         const content = casConfig.renderCompose(fs.readFileSync(template, 'utf8'), cas, unsafe)
-            .replace(/__TRUSTEDZONE_HEAP__/g, trustedZoneHeap);
+            .replace(/__TRUSTEDZONE_HEAP__/g, trustedZoneHeap)
+            .replace(/__MEMORY_TO_ALLOCATE__/g, memory);
         fs.writeFileSync(file, content, 'utf8');
     });
 

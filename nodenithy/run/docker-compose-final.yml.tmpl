@@ -36,9 +36,10 @@ services:
       - SCONE_CAS_ADDR=scone-cas.cf  # __CAS_ONLY__
       - SCONE_LAS_ADDR=las  # __CAS_ONLY__
       - SCONE_CONFIG_ID=__ENCLAVE_NAME_SECURELOCK__/application  # __CAS_ONLY__
-      - SCONE_HEAP=1024M
-      # Must match the --stack the securelock binary was signed with (build.mjs),
-      # otherwise SCONE recomputes MRENCLAVE at load and re-signs as debug.
+      # Must match the --heap and --stack the securelock binary was signed with
+      # (build.mjs), otherwise SCONE recomputes MRENCLAVE at load and re-signs
+      # as debug. The heap is the build's MEMORY_TO_ALLOCATE (.env).
+      - SCONE_HEAP=__MEMORY_TO_ALLOCATE__
       - SCONE_STACK=4M
       - SCONE_LOG=DEBUG
       - SCONE_ALLOW_DLOPEN=1
