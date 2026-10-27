@@ -265,11 +265,9 @@ let dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_S
 
 // Amount of enclave heap to allocate (SCONE_HEAP). Kept in sync with the
 // run/docker-compose securelock service; overridable via ECLD_MEMORY_TO_ALLOCATE.
-// 512M: with 1024M the securelock enclave is 1.3 GB, and beside the
-// trustedzone's it exceeds a 1 GiB EPC, which paged both enclaves for the
-// first 100 s of every task on the bloxberg testnet (2026-10-27); with 256M
-// the node runtime cannot reserve its V8 code range and heap at start.
-const MEMORY_TO_ALLOCATE = (process.env.ECLD_MEMORY_TO_ALLOCATE || '512M').trim();
+// 1024M: with 256M or 512M the node runtime exhausts the protected heap
+// reserving its V8 code range at start, before the securelock runs.
+const MEMORY_TO_ALLOCATE = (process.env.ECLD_MEMORY_TO_ALLOCATE || '1024M').trim();
 // Read back by ecld-publish (run.js), which renders it into the composes'
 // securelock service.
 writeEnv('MEMORY_TO_ALLOCATE', MEMORY_TO_ALLOCATE);
