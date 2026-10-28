@@ -29,6 +29,8 @@ function networkFor({ ECAddress, ECNetworkByChainId }, raw) {
     POLYGON_MAINNET: { address: ECAddress.POLYGON.MAINNET_ADDRESS },
     POLYGON_AMOY: amoy,
     POLYGON_AMOY_TESTNET: amoy,
+    POLYGON_AMOY_UNSAFE: { ...amoy, unsafe: ['POLYGON', 'TESTNET_UNSAFE'] },
+    POLYGON_AMOY_TESTNET_UNSAFE: { ...amoy, unsafe: ['POLYGON', 'TESTNET_UNSAFE'] },
     IOTEX_TESTNET: { address: ECAddress.IOTEX.TESTNET_ADDRESS, chainId: ECNetworkByChainId.IOTEX.TESTNET, rpcUrl: 'https://babel-api.testnet.iotex.io' },
     ETHEREUM_SEPOLIA: sepolia,
     SEPOLIA: sepolia,

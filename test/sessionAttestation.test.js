@@ -12,7 +12,7 @@ const { TESTNETS, isTestnetNetwork, isMainnetNetwork, sessionAttestation } = req
 const MAINNETS = ['Bloxberg_Mainnet', 'Polygon_Mainnet'];
 const OFFERED_TESTNETS = [
   'Bloxberg_Testnet', 'Polygon_Amoy_Testnet', 'IoTeX_Testnet', 'Ethereum_Sepolia', 'LitVM_LiteForge',
-  'Bloxberg_Testnet_Unsafe', 'LitVM_LiteForge_Unsafe', 'Ethereum_Sepolia_Unsafe',
+  'Bloxberg_Testnet_Unsafe', 'LitVM_LiteForge_Unsafe', 'Ethereum_Sepolia_Unsafe', 'Polygon_Amoy_Testnet_Unsafe',
 ];
 const PRODUCTION = '[hyperthreading, outdated-tcb, software-hardening-needed]';
 

@@ -67,6 +67,7 @@ const UNSAFE_NETWORKS = {
   Bloxberg_Testnet_Unsafe: 'Bloxberg_Testnet',
   LitVM_LiteForge_Unsafe: 'LitVM_LiteForge',
   Ethereum_Sepolia_Unsafe: 'Ethereum_Sepolia',
+  Polygon_Amoy_Testnet_Unsafe: 'Polygon_Amoy_Testnet',
 };
 
 // Case-insensitive: ecld-init writes Bloxberg_Testnet_Unsafe, a --network

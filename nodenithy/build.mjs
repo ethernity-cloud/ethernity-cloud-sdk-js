@@ -216,6 +216,8 @@ const trustedZoneNetByBlockchain = {
   LitVM_LiteForge: 'litvm_liteforge',
   Bloxberg_Testnet_Unsafe: 'bloxberg_testnet_unsafe',
   LitVM_LiteForge_Unsafe: 'litvm_liteforge_unsafe',
+  Ethereum_Sepolia_Unsafe: 'ethereum_sepolia_unsafe',
+  Polygon_Amoy_Testnet_Unsafe: 'amoy_unsafe',
 };
 const trustedZoneNet = trustedZoneNetByBlockchain[process.env.BLOCKCHAIN_NETWORK];
 if (!trustedZoneNet) {
