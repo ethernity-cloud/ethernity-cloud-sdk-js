@@ -1,13 +1,19 @@
 const Minio = require('minio');
+const http = require('http');
 const fs = require("fs");
 class SwiftStreamService {
     constructor(endpoint, port, accessKey, secretKey) {
+        // One connection per request: the minio client otherwise uses node's
+        // global agent, which keeps connections alive, and a connection the
+        // server has closed while this process computed between two requests
+        // fails the next request with ECONNRESET ("socket hang up").
         this.client = new Minio.Client({
             endPoint: endpoint,
             port: port,
             accessKey: accessKey,
             secretKey: secretKey,
             useSSL: false,
+            transportAgent: new http.Agent({ keepAlive: false }),
         });
     }
 

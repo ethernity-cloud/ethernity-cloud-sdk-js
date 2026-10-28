@@ -21,6 +21,18 @@ const {executeTask} = require("./etny_exec");
 const {TaskStatus} = require("./task_status");
 const SwiftStreamService = require("./swift_stream_service");
 
+// An error a network socket emits after its request's caller has moved on
+// (a connection the server closed, ECONNRESET) reaches no handler of the
+// request; without these the node runtime exits on it, and the task is lost.
+// Logged and the run goes on: every step awaits its own result and treats a
+// failed one.
+process.on('uncaughtException', (e) => {
+    console.log('uncaught exception:', e && (e.stack || e.message) ? (e.stack || e.message) : e);
+});
+process.on('unhandledRejection', (e) => {
+    console.log('unhandled rejection:', e && (e.stack || e.message) ? (e.stack || e.message) : e);
+});
+
 const contract_abi = require('./pox_abi');
 const image_registry_abi = require('./image_registry_abi');
 const {sha256} = require("./etny_crypto");
