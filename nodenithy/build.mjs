@@ -266,9 +266,10 @@ let dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_S
 
 // The securelock's protected heap (SCONE_HEAP), signed into the enclave and
 // set on the run/docker-compose securelock service; ECLD_MEMORY_TO_ALLOCATE
-// overrides the default. A heap under 1024M runs node --jitless (nodeFlags.js):
-// V8's JIT reserves a 512 MB code range at start that fits no smaller heap.
-const MEMORY_TO_ALLOCATE = (process.env.ECLD_MEMORY_TO_ALLOCATE || '256M').trim();
+// overrides the default. The default 1024M keeps V8's JIT, whose code range
+// (512 MB, reserved at start) fits no smaller heap; a heap under 1024M runs
+// node --jitless (nodeFlags.js), the backend's JavaScript interpreted.
+const MEMORY_TO_ALLOCATE = (process.env.ECLD_MEMORY_TO_ALLOCATE || '1024M').trim();
 const NODE_FLAGS = nodeFlags.securelockNodeFlags(MEMORY_TO_ALLOCATE);
 // Read back by ecld-publish (run.js), which renders them into the composes'
 // securelock service and the CAS session's command.

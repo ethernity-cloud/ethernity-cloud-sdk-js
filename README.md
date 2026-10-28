@@ -98,12 +98,12 @@ The Pynithy securelock is built exactly as `ethernity-cloud-sdk-py` builds it
 your backend is frozen into. `src/serverless/requirements.txt` lists the
 Python packages your backend imports, and `src/serverless/Dockerfile.serverless`
 adds system packages to the securelock base image. `ECLD_MEMORY_TO_ALLOCATE`
-sets the enclave heap (default `1024M`). For a Nodenithy securelock the
-default is `256M`, and a heap under `1024M` runs node with `--jitless`
-(V8's JIT reserves a 512 MB code range that fits no smaller heap), so the
-backend's JavaScript runs interpreted; `ECLD_MEMORY_TO_ALLOCATE=1024M` keeps
-the JIT for a compute-heavy backend, and `ECLD_NODE_JITLESS=0` or `1`
-overrides the choice.
+sets the enclave heap (default `1024M`). A Nodenithy securelock built with a
+heap under `1024M` (`ECLD_MEMORY_TO_ALLOCATE=256M`, for nodes with little
+memory) runs node with `--jitless`, since V8's JIT reserves a 512 MB code
+range that fits no smaller heap; the backend's JavaScript then runs
+interpreted, about ten times slower in its crypto. The default `1024M` keeps
+the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
 
 ### Scripts
 
