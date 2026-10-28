@@ -31,11 +31,13 @@ function setVars(network = "") {
             GAS = 20000000;
             GAS_PRICE = 40500500010;
         } else {
+            // Amoy's ECImageRegistryV3 of 2026-10-28; the chain's base fee is
+            // about 30 gwei.
             NETWORK_RPC = "https://polygon-amoy-bor-rpc.publicnode.com";
-            IMAGE_REGISTRY_ADDRESS = "0xF7F4eEb3d9a64387F4AcEb6d521b948E6E2fB049";
+            IMAGE_REGISTRY_ADDRESS = "0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706";
             CHAIN_ID = 80002;
             GAS = 20000000;
-            GAS_PRICE = 1300000010;
+            GAS_PRICE = 40000000010;
         }
     } else if (BLOCKCHAIN_NETWORK.includes("LitVM")) {
         NETWORK_RPC = "https://liteforge.rpc.caldera.xyz/infra-partner-http";

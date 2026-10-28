@@ -21,6 +21,9 @@ const VALIDATOR_REGISTRY = {
   'ecld-nodenithy-litvm-testnet': '0xbE3759f327e8643fC5A1717fb2072A0dAcBAD29E',
   'ecld-pynithy-ethereum-sepolia': '0x8ad24b3F406A41a0F8D3440021792EB203957F43',
   'ecld-nodenithy-ethereum-sepolia': '0x8ad24b3F406A41a0F8D3440021792EB203957F43',
+  // Amoy's ValidatorRegistry of 2026-10-28 (ethernity-cas CAS-SETUP.md).
+  'ecld-pynithy-amoy': '0x70bfdf41D4061592DF509b9b46F91a8457F88483',
+  'ecld-nodenithy-amoy': '0x70bfdf41D4061592DF509b9b46F91a8457F88483',
 };
 
 const SESSION_REGISTRY = {
@@ -33,6 +36,9 @@ const SESSION_REGISTRY = {
   // Bound to Sepolia's ECImageRegistryV3 of 2026-10-14.
   'ecld-pynithy-ethereum-sepolia': '0xDbB249E108d19fC1691483Bf897bA8BA0dA99c06',
   'ecld-nodenithy-ethereum-sepolia': '0xDbB249E108d19fC1691483Bf897bA8BA0dA99c06',
+  // Bound to Amoy's ECImageRegistryV3 of 2026-10-28.
+  'ecld-pynithy-amoy': '0x059662030fEeB4Ea8Fc7b05951A578d527a827e5',
+  'ecld-nodenithy-amoy': '0x059662030fEeB4Ea8Fc7b05951A578d527a827e5',
 };
 
 // The chain the registries above live on. Sepolia's RPC is Tenderly's gateway:
@@ -44,6 +50,8 @@ const CHAIN = {
   'ecld-nodenithy-litvm-testnet': { rpcUrl: 'https://liteforge.rpc.caldera.xyz/infra-partner-http', chainId: 4441 },
   'ecld-pynithy-ethereum-sepolia': { rpcUrl: 'https://sepolia.gateway.tenderly.co', chainId: 11155111 },
   'ecld-nodenithy-ethereum-sepolia': { rpcUrl: 'https://sepolia.gateway.tenderly.co', chainId: 11155111 },
+  'ecld-pynithy-amoy': { rpcUrl: 'https://polygon-amoy-bor-rpc.publicnode.com', chainId: 80002 },
+  'ecld-nodenithy-amoy': { rpcUrl: 'https://polygon-amoy-bor-rpc.publicnode.com', chainId: 80002 },
 };
 
 // Whether the securelock takes its certificate from a CAS session: mainnet
