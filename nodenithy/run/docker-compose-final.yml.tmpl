@@ -30,8 +30,8 @@ services:
     container_name: etny-securelock
     privileged: true
     image: localhost:5000/etny-securelock
-    entrypoint: ""
-    command: [ "/usr/local/bin/node", "/etny-securelock/securelock.js" ]
+    # No command: the image's ENTRYPOINT runs node with the flags the
+    # securelock was built and measured with (build.mjs NODE_FLAGS).
     environment:
       - SCONE_CAS_ADDR=scone-cas.cf  # __CAS_ONLY__
       - SCONE_LAS_ADDR=las  # __CAS_ONLY__

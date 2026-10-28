@@ -68,6 +68,7 @@ export const ECRunner = {
 // matching SessionRegistry.
 const require = createRequire(import.meta.url);
 const casConfig = require('../cas/config.js');
+const nodeFlags = require('./nodeFlags.js');
 export const VALIDATOR_REGISTRY = casConfig.VALIDATOR_REGISTRY;
 
 // An -unsafe network runs an -unsafe trustedzone and nothing else, and an
@@ -263,14 +264,16 @@ const esrEnvBlock = ESR_ENABLED ? `ENV ESR_CONTRACT_ADDRESS=${ESR_CONTRACT_ADDRE
 const dockerfileSecureTemplate = fs.readFileSync('Dockerfile.tmpl', 'utf8');
 let dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__NETWORK_TYPE__/g, isMainnet ? 'mainnet' : 'testnet').replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]).replace(/__ETNY_VALIDATOR_REGISTRY_ADDRESS__/g, VALIDATOR_REGISTRY[templateName] || '').replace(/^__ESR_ENV__\r?\n/m, esrEnvBlock ? `${esrEnvBlock}\n` : '');
 
-// Amount of enclave heap to allocate (SCONE_HEAP). Kept in sync with the
-// run/docker-compose securelock service; overridable via ECLD_MEMORY_TO_ALLOCATE.
-// 1024M: with 256M or 512M the node runtime exhausts the protected heap
-// reserving its V8 code range at start, before the securelock runs.
-const MEMORY_TO_ALLOCATE = (process.env.ECLD_MEMORY_TO_ALLOCATE || '1024M').trim();
-// Read back by ecld-publish (run.js), which renders it into the composes'
-// securelock service.
+// The securelock's protected heap (SCONE_HEAP), signed into the enclave and
+// set on the run/docker-compose securelock service; ECLD_MEMORY_TO_ALLOCATE
+// overrides the default. A heap under 1024M runs node --jitless (nodeFlags.js):
+// V8's JIT reserves a 512 MB code range at start that fits no smaller heap.
+const MEMORY_TO_ALLOCATE = (process.env.ECLD_MEMORY_TO_ALLOCATE || '256M').trim();
+const NODE_FLAGS = nodeFlags.securelockNodeFlags(MEMORY_TO_ALLOCATE);
+// Read back by ecld-publish (run.js), which renders them into the composes'
+// securelock service and the CAS session's command.
 writeEnv('MEMORY_TO_ALLOCATE', MEMORY_TO_ALLOCATE);
+writeEnv('SECURELOCK_NODE_FLAGS', NODE_FLAGS.join(' '));
 
 // CRITICAL (mainnet DCAP): sign /usr/local/bin/node -- the binary the enclave
 // actually EXECUTES (ENTRYPOINT + the run/publish compose command both run
@@ -303,6 +306,7 @@ const signedMrenclaveStep =
 const cas = casConfig.casProvisioned(templateName, isMainnet);
 dockerfileSecureContent = dockerfileSecureContent
   .replace(/__MEMORY_TO_ALLOCATE__/g, MEMORY_TO_ALLOCATE)
+  .replace(/__NODE_FLAGS__/g, NODE_FLAGS.map((flag) => `, "${flag}"`).join(''))
   .replace('__SCONE_SIGN__', `RUN scone-signer sign ${signFlags}${cas ? ' --production' : ''} /usr/local/bin/node`)
   .replace('__SIGNED_MRENCLAVE__', signedMrenclaveStep);
 

@@ -87,4 +87,6 @@ __SIGNED_MRENCLAVE__
 
 RUN rm -rf /enclave-key.pem
 
-ENTRYPOINT ["/usr/local/bin/node", "/etny-securelock/securelock.js"]
+# The node flags (build.mjs NODE_FLAGS) are also the CAS session's command and
+# the published .env's SECURELOCK_NODE_FLAGS; the composes run this ENTRYPOINT.
+ENTRYPOINT ["/usr/local/bin/node"__NODE_FLAGS__, "/etny-securelock/securelock.js"]

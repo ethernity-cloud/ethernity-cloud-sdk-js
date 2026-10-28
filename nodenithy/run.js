@@ -325,10 +325,15 @@ const main = async () => {
         PREDECESSOR_HASH_SECURELOCK = 'EMPTY';
     }
 
+    // The node flags the build gave the securelock (.env SECURELOCK_NODE_FLAGS,
+    // build.mjs): the session's command runs node with the same flags as the
+    // image ENTRYPOINT. A .env without the key is a build without flags.
+    const nodeFlags = (process.env.SECURELOCK_NODE_FLAGS || '').trim();
     const replacementsSecurelock = {
         PREDECESSOR: PREDECESSOR_HASH_SECURELOCK === 'EMPTY' ? `# predecessor: ${PREDECESSOR_HASH_SECURELOCK}` : `predecessor: ${PREDECESSOR_HASH_SECURELOCK}`,
         MRENCLAVE: process.env.MRENCLAVE_SECURELOCK,
         ENCLAVE_NAME: ENCLAVE_NAME_SECURELOCK,
+        NODE_FLAGS: nodeFlags ? `${nodeFlags} ` : '',
         ESR_ENVIRONMENT: casConfig.esrSessionEnvironment(process.env)
     };
     if (cas) {

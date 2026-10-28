@@ -16,7 +16,9 @@ services:
    - name: application
      image_name: application_image
      mrenclaves: [ "__MRENCLAVE__" ]
-     command: /usr/local/bin/node /etny-securelock/securelock.js
+     # The command the enclave runs, applied from the session at attestation:
+     # the image ENTRYPOINT's, with the build's node flags (run.js NODE_FLAGS).
+     command: /usr/local/bin/node __NODE_FLAGS__/etny-securelock/securelock.js
      pwd: /
      environment:
         GREETING: hello from ETNY SECURELOCK!!!!
