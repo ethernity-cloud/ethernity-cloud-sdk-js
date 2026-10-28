@@ -24,7 +24,7 @@ const args = { submitArgs: ['canary', 'v3', 'sepolia', '1', 'QmCompose'], log: (
 test('a chain row that appears within the grace period is never posted', async () => {
   const s = service([null, null, { status: 'running', percent: 40, publicKey: 0 }]);
   const first = await queueImage({ hash: 'QmHash', chainRegistered: true, ...s, ...args });
-  assert.deepEqual(first, { status: 'running', percent: 40, publicKey: 0 });
+  assert.deepEqual(first, { answer: { status: 'running', percent: 40, publicKey: 0 }, submitted: false });
   assert.deepEqual(s.posts, []);
   assert.equal(s.clock.t - 1000, 2 * POLL_SECONDS);
 });
@@ -32,15 +32,23 @@ test('a chain row that appears within the grace period is never posted', async (
 test('the hash is posted once the grace period passes with no row', async () => {
   const s = service([null]);
   const first = await queueImage({ hash: 'QmHash', chainRegistered: true, ...s, ...args });
-  assert.equal(first, null);
+  assert.deepEqual(first, { answer: null, submitted: true });
   assert.deepEqual(s.posts, [['QmHash', 'canary', 'v3', 'sepolia', '1', 'QmCompose']]);
   assert.ok(s.clock.t - 1000 >= CHAIN_ROW_GRACE_SECONDS);
+});
+
+test('a failed record of a chain-registered image is posted again at once', async () => {
+  const s = service([{ status: 'failed', percent: 100, publicKey: -1, reason: 'the securelock printed no certificate in 10 runs' }]);
+  const first = await queueImage({ hash: 'QmHash', chainRegistered: true, ...s, ...args });
+  assert.deepEqual(first, { answer: null, submitted: true });
+  assert.deepEqual(s.posts, [['QmHash', 'canary', 'v3', 'sepolia', '1', 'QmCompose']]);
+  assert.equal(s.clock.t, 1000);
 });
 
 test('an image not registered on chain is posted at once', async () => {
   const s = service([{ status: 'queued', publicKey: 0 }]);
   const first = await queueImage({ hash: 'QmHash', chainRegistered: false, ...s, ...args });
-  assert.equal(first, null);
+  assert.deepEqual(first, { answer: null, submitted: true });
   assert.equal(s.posts.length, 1);
   assert.equal(s.clock.t, 1000);
 });

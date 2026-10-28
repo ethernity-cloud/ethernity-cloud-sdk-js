@@ -5,7 +5,8 @@
 // registries) is queued by the service's registry watcher from the
 // ImageRegistered event, with this publish's IPFS peer; the hash is posted to
 // /api/addHash only when that row has not appeared within
-// CHAIN_ROW_GRACE_SECONDS. Other images are posted at once.
+// CHAIN_ROW_GRACE_SECONDS, or when the service holds a failed extraction of
+// the image. Other images are posted at once.
 const axios = require('axios');
 const fs = require('fs');
 const { Command } = require('commander');
@@ -14,6 +15,14 @@ const BASE_URL = "https://publickey.ethernity.cloud";
 // The watcher polls the registries every 30 s.
 const CHAIN_ROW_GRACE_SECONDS = 180;
 const POLL_SECONDS = 10;
+// A failed extraction is recorded against the hash with publicKey -1 and a
+// reason, and a new submission of the hash runs it again. The service answers
+// the old record for a moment after a submission, so a failed answer is taken
+// as the outcome only once this long has passed since this publish submitted.
+const RESUBMIT_GRACE_SECONDS = 60;
+
+// The service's record of an extraction that failed.
+const failed = (answer) => answer !== null && answer.publicKey === -1;
 
 async function submitIpfsHash(hash, enclaveName, protocolVersion, network, templateVersion, dockerComposerHash) {
     const url = `${BASE_URL}/api/addHash`;
@@ -48,9 +57,10 @@ async function checkIpfsHashStatus(hash) {
     }
 }
 
-// Queues the image as described above and returns the service's first
-// answer for it. `submit`, `check`, `sleep` and `now` are the functions
-// above and the clock, replaceable for tests.
+// Queues the image as described above and returns the service's first answer
+// for it (`answer`, null right after a submission) and whether this publish
+// posted the hash (`submitted`). `submit`, `check`, `sleep` and `now` are the
+// functions above and the clock, replaceable for tests.
 async function queueImage({ hash, chainRegistered, submitArgs, submit = submitIpfsHash, check = checkIpfsHashStatus,
     sleep = (s) => new Promise((resolve) => setTimeout(resolve, s * 1000)), now = () => Date.now() / 1000,
     log = console.log, graceSeconds = CHAIN_ROW_GRACE_SECONDS, pollSeconds = POLL_SECONDS }) {
@@ -58,7 +68,11 @@ async function queueImage({ hash, chainRegistered, submitArgs, submit = submitIp
         const deadline = now() + graceSeconds;
         while (true) {
             const answer = await check(hash);
-            if (answer !== null) return answer;
+            if (failed(answer)) {
+                log(`The service's previous extraction of this image failed (${answer.reason || "no reason reported"}); submitting the hash again`);
+                break;
+            }
+            if (answer !== null) return { answer, submitted: false };
             if (now() >= deadline) {
                 log(`The certificate service has not picked the registration up from the chain in ${graceSeconds} s; submitting the hash`);
                 break;
@@ -69,7 +83,7 @@ async function queueImage({ hash, chainRegistered, submitArgs, submit = submitIp
     }
     const submitResponse = await submit(hash, ...submitArgs);
     log("Submit IPFS Hash Response:", submitResponse);
-    return null;
+    return { answer: null, submitted: true };
 }
 
 async function main() {
@@ -98,10 +112,12 @@ async function main() {
     console.log("Template Version:", templateVersion);
     console.log("Docker Composer Hash:", dockerComposerHash);
 
-    let checkResponse = await queueImage({
+    const queued = await queueImage({
         hash: hhash, chainRegistered: Boolean(options.chainRegistered),
         submitArgs: [enclaveName, protocolVersion, network, templateVersion, dockerComposerHash],
     });
+    let checkResponse = queued.answer;
+    const submittedAt = queued.submitted ? Date.now() / 1000 : null;
 
     // The service answers publicKey 0 while the image is queued or running
     // (with status, percent and queuePosition), -1 when the extraction failed
@@ -119,10 +135,15 @@ async function main() {
                 } else {
                     console.log(`Public key not available yet. Queue position: ${checkResponse.queuePosition ?? 'Unknown'}`);
                 }
-            } else if (checkResponse.publicKey === -1) {
-                console.log(`Public key extraction failed: ${checkResponse.reason || "reason not reported by the service"}`);
-                console.log("Fix the cause (keep the image pinned, build with the current SDK) and publish again: a new submission of the same hash runs the extraction again.");
-                process.exit(1);
+            } else if (failed(checkResponse)) {
+                if (submittedAt !== null && Date.now() / 1000 - submittedAt < RESUBMIT_GRACE_SECONDS) {
+                    // The record of the run before this publish's submission.
+                    console.log("The service still answers its previous record; waiting for the new run");
+                } else {
+                    console.log(`Public key extraction failed: ${checkResponse.reason || "reason not reported by the service"}`);
+                    console.log("Fix the cause (keep the image pinned, build with the current SDK) and publish again: a new submission of the same hash runs the extraction again.");
+                    process.exit(1);
+                }
             } else {
                 console.log("Public Key:", checkResponse.publicKey);
                 // Save public key to file
@@ -152,4 +173,4 @@ async function main() {
 
 if (require.main === module) main();
 
-module.exports = { queueImage, CHAIN_ROW_GRACE_SECONDS, POLL_SECONDS };
+module.exports = { queueImage, CHAIN_ROW_GRACE_SECONDS, POLL_SECONDS, RESUBMIT_GRACE_SECONDS };
