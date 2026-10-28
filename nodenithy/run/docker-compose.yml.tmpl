@@ -55,8 +55,8 @@ services:
     container_name: etny-trustedzone
     privileged: true
     image: localhost:5000/etny-trustedzone
-    entrypoint: ""
-    command: [ "/usr/local/bin/node", "/etny-trustedzone/trustedzone.js" ]
+    # No command: the image's ENTRYPOINT runs node with the flags the
+    # trustedzone was built and measured with (etny-nodenithy Dockerfile.tmpl).
     environment:
       - SCONE_CAS_ADDR=scone-cas.cf  # __CAS_ONLY__
       - SCONE_LAS_ADDR=las  # __CAS_ONLY__
