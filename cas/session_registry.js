@@ -98,12 +98,23 @@ async function latestRecord(reg, name) {
   return { id, hash: rec.sessionHash.toLowerCase(), creator: rec.creator };
 }
 
+// The legacy gas price a registry write is sent with: the chain's eth_gasPrice
+// plus 10 %, and 1 mwei at the least. The bloxberg testnet reports 1 mwei;
+// Amoy's Bor reports about 30 gwei and refuses a price under its 25 gwei
+// minimum tip; LitVM refuses a price under its base fee.
+const MIN_GAS_PRICE = ethers.utils.parseUnits('1', 'mwei');
+async function gasPrice(provider) {
+  const price = (await provider.getGasPrice()).mul(110).div(100);
+  return price.gt(MIN_GAS_PRICE) ? price : MIN_GAS_PRICE;
+}
+
 // Send `method(...args)` to the registry. It is simulated first, so a call
 // the registry refuses stops with the registry's reason (`refused` names the
-// call), then sent with its gas estimate plus 30%: a registration's cost
-// grows with the length of the name. The wallet signs for the chain its RPC
-// serves (ethers takes no chainId override on a contract call), so an RPC
-// serving another chain than `chainId` is refused before anything is sent.
+// call), then sent with its gas estimate plus 30% (a registration's cost
+// grows with the length of the name) at the chain's gas price. The wallet
+// signs for the chain its RPC serves (ethers takes no chainId override on a
+// contract call), so an RPC serving another chain than `chainId` is refused
+// before anything is sent.
 async function send(reg, chainId, refused, method, ...args) {
   const { chainId: served } = await reg.provider.getNetwork();
   if (served !== chainId) {
@@ -116,7 +127,7 @@ async function send(reg, chainId, refused, method, ...args) {
   }
   const gas = await reg.estimateGas[method](...args);
   const tx = await reg[method](...args, {
-    gasLimit: gas.mul(13).div(10), gasPrice: ethers.utils.parseUnits('1', 'mwei'),
+    gasLimit: gas.mul(13).div(10), gasPrice: await gasPrice(reg.provider),
   });
   const rcpt = await tx.wait();
   if (rcpt.status !== 1) throw new Error(`SessionRegistry.${method} reverted for ${refused} (tx ${tx.hash})`);
