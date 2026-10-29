@@ -39,9 +39,11 @@ export const ECRunner = {
   // --- polygon mainnet ---
   'ecld-pynithy': ['0x439945BE73fD86fcC172179021991E96Beff3Cc4', '0x689f3806874d3c8A973f419a4eB24e6fBA7E830F', 'https://polygon-bor-rpc.publicnode.com', 137],
   'ecld-nodenithy': ['0x439945BE73fD86fcC172179021991E96Beff3Cc4', '0x689f3806874d3c8A973f419a4eB24e6fBA7E830F', 'https://polygon-bor-rpc.publicnode.com', 137],
-  // --- polygon amoy testnet (replaces deprecated mumbai) ---
-  'ecld-pynithy-amoy': ['0x1579b37C5a69ae02dDd23263A2b1318DE66a27C3', '0xeFA33c3976f31961285Ae4f5D10188616C912728', 'https://rpc-amoy.polygon.technology', 80002],
-  'ecld-nodenithy-amoy': ['0x1579b37C5a69ae02dDd23263A2b1318DE66a27C3', '0xeFA33c3976f31961285Ae4f5D10188616C912728', 'https://rpc-amoy.polygon.technology', 80002],
+  // --- polygon amoy testnet: the separate-ERC20 PoX EthernityImplementationV2 1.1 and the ECImageRegistryV3 of 2026-10-28 ---
+  'ecld-pynithy-amoy': ['0xB8f46D2B943fFbe2A061Ae8be087ef5055AD96A3', '0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706', 'https://polygon-amoy-bor-rpc.publicnode.com', 80002],
+  'ecld-nodenithy-amoy': ['0xB8f46D2B943fFbe2A061Ae8be087ef5055AD96A3', '0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706', 'https://polygon-amoy-bor-rpc.publicnode.com', 80002],
+  'ecld-pynithy-amoy-unsafe': ['0xB8f46D2B943fFbe2A061Ae8be087ef5055AD96A3', '0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706', 'https://polygon-amoy-bor-rpc.publicnode.com', 80002],
+  'ecld-nodenithy-amoy-unsafe': ['0xB8f46D2B943fFbe2A061Ae8be087ef5055AD96A3', '0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706', 'https://polygon-amoy-bor-rpc.publicnode.com', 80002],
   // --- iotex testnet ---
   'ecld-pynithy-iotex-testnet': ['0xD56385A97413Ed80E28B1b54A193b98F2C49c975', '0xa7467A6391816be9367a1cC52E0ef0c15FfE3cCC', 'https://babel-api.testnet.iotex.io', 4690],
   'ecld-nodenithy-iotex-testnet': ['0xD56385A97413Ed80E28B1b54A193b98F2C49c975', '0xa7467A6391816be9367a1cC52E0ef0c15FfE3cCC', 'https://babel-api.testnet.iotex.io', 4690],
