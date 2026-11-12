@@ -36,6 +36,7 @@
 const crypto = require('crypto');
 const { ethers } = require('ethers');
 const esr_wallet = require('./esr_wallet');
+const ESR_ABI = require('./esr_abi');
 
 const DOMAIN_SEP_STATE = 'ethernity-cloud/esr-encryption/v1';
 
@@ -75,6 +76,9 @@ function configure({ identityPriv, swiftStreamService, bucket, contractAddress, 
   _taskWrites = {};
   _taskRelayNonces = {};
   _taskLedger = {};
+  _stepHeld = null;
+  _stepSnapshot = null;
+  _commitsClosed = false;
   _taskCaller = normAddr(caller);
 }
 
@@ -162,25 +166,126 @@ function wrapStored(acl, data, committedBy = null, nonce = null) {
  * layers; this runs in the same process the payload subverted.
  */
 async function restampLedgerCaller(trustedCaller) {
-  const trusted = normAddr(trustedCaller);
   if (!_esrLedger.length) return false;
+  const tampered = await restampRecords(_esrLedger, trustedCaller);
+  try {
+    await writeAuthorizations();
+  } catch (e) { /* best-effort restage; trustedzone still adjudicates */ }
+  return tampered;
+}
+
+// Overwrites callerUsed with the trusted caller (and enclave with the real
+// signer) in every owned record of `records`; returns whether any differed.
+async function restampRecords(records, trustedCaller) {
+  const trusted = normAddr(trustedCaller);
   let tampered = false;
   let signerAddr = null;
   try {
-    signerAddr = await new StateRegistry()._signer().getAddress();
+    signerAddr = (await new StateRegistry()._signer().getAddress()).toLowerCase();
   } catch (e) { signerAddr = null; }
-  for (const entry of _esrLedger) {
+  for (const entry of records) {
     if (!entry.owned) continue;
     if (normAddr(entry.callerUsed) !== trusted) tampered = true;
     entry.callerUsed = trusted || '';
     if (signerAddr) entry.enclave = signerAddr;
   }
-  try {
-    await _swift.putFileContent(
-      _bucket, 'esr.authorizations.json', '',
-      Buffer.from(JSON.stringify(_esrLedger), 'utf8'));
-  } catch (e) { /* best-effort restage; trustedzone still adjudicates */ }
   return tampered;
+}
+
+// esr.authorizations.json: the compact JSON array of every staged record in
+// staging order, the bytes the agent pins as the attested ledger.
+async function writeAuthorizations() {
+  await _swift.putFileContent(
+    _bucket, 'esr.authorizations.json', '',
+    Buffer.from(JSON.stringify(_esrLedger), 'utf8'));
+}
+
+// A session step's commit hold (RESERVATION-DESIGN.md section 2). While a
+// step is open, _sendCommit signs each commit and appends the record to
+// _stepHeld instead of staging it; the session executor takes the held
+// records with the step's output and stages them as
+// session.commit.<n>.<key16>.<relayNonce>.json, or discards them when the
+// step is cut by the transfer control. The memos of nonces, writes and relay
+// nonces are snapshotted at the step's start so a discard rolls them back.
+let _stepHeld = null;
+let _stepSnapshot = null;
+// Set by closeCommits once the session ended: a commit a handler issues
+// after its step was cut, or after the session closed, is refused.
+let _commitsClosed = false;
+
+function beginStep() {
+  if (_stepHeld !== null) return;
+  _stepHeld = [];
+  _stepSnapshot = {
+    nonces: { ..._taskNonces },
+    writes: { ..._taskWrites },
+    relayNonces: { ..._taskRelayNonces },
+  };
+}
+
+// Closes the registry to commits for the rest of the process: the session
+// executor calls it when the transfer control cut a step and when the
+// session ended, so a handler still running writes nothing more.
+function closeCommits() {
+  _commitsClosed = true;
+}
+
+function assertCommitsOpen() {
+  if (_commitsClosed) {
+    throw new StatePermissionError(
+      'the session ended; the state registry accepts no further commits'
+    );
+  }
+}
+
+// Closes the step: its records, restamped with the trusted caller, join the
+// staged ledger in commit order and are returned for the step's envelope,
+// with whether any record carried another caller. The next step opens with
+// beginStep.
+async function takeStepCommits(trustedCaller) {
+  if (_stepHeld === null) return { records: [], tampered: false };
+  const records = _stepHeld;
+  _stepHeld = null;
+  _stepSnapshot = null;
+  const tampered = await restampRecords(records, trustedCaller);
+  _esrLedger.push(...records);
+  return { records, tampered };
+}
+
+// Drops the step's records and restores the memos the step advanced, so a
+// later commit to a discarded key signs the relay nonce the chain expects.
+function discardStepCommits() {
+  if (_stepHeld === null) return [];
+  const records = _stepHeld;
+  _stepHeld = null;
+  _taskNonces = _stepSnapshot.nonces;
+  _taskWrites = _stepSnapshot.writes;
+  _taskRelayNonces = _stepSnapshot.relayNonces;
+  _stepSnapshot = null;
+  return records;
+}
+
+// A session that ends before any output stages its held records as a plain
+// task stages its commits: esr.commit.<key16>.<relayNonce>.json each, the
+// ledger and esr.authorizations.json rewritten. Returns what takeStepCommits
+// returns.
+async function flushStepCommits(trustedCaller) {
+  const taken = await takeStepCommits(trustedCaller);
+  for (const auth of taken.records) {
+    // eslint-disable-next-line no-await-in-loop
+    await _swift.putFileContent(
+      _bucket, commitFileName('esr.commit', auth), '',
+      Buffer.from(JSON.stringify(auth), 'utf8'));
+  }
+  if (taken.records.length) await writeAuthorizations();
+  return taken;
+}
+
+// <prefix>.<key16>.<relayNonce>.json: the key prefix keeps commits to
+// different keys apart, and the per-key relay order is explicit.
+function commitFileName(prefix, auth) {
+  const kh16 = String(auth.keyHash).toLowerCase().replace(/^0x/, '').slice(0, 16);
+  return `${prefix}.${kh16}.${Number(auth.relayNonce)}.json`;
 }
 
 function aclMembers(acl, field) {
@@ -198,6 +303,15 @@ function canWrite(acl) {
   if (!acl) return true;                 // unowned: writable; claimed when a caller exists
   const c = _taskCaller;
   if (!c) return false;
+  return c === normAddr(acl.owner) || aclMembers(acl, 'write').has(c);
+}
+
+// The fence's scope (RESERVATION-DESIGN.md section 2): a container whose ACL
+// names the task caller as owner or write member. An unowned container is
+// outside it.
+function fenceWritable(acl) {
+  const c = _taskCaller;
+  if (!acl || !c) return false;
   return c === normAddr(acl.owner) || aclMembers(acl, 'write').has(c);
 }
 
@@ -413,38 +527,42 @@ function keyHash(key) {
   return ethers.utils.id(key);
 }
 
-const ESR_ABI = [
-  'function commit(bytes32 key, string newCID, uint256 expectedVersion, uint256 nonce)',
-  'function commitFor(address enclave, bytes32 key, string newCID, uint256 expectedVersion, uint256 relayNonce, uint256 nonce, bytes signature)',
-  'function commitDigest(address enclave, bytes32 key, string newCID, uint256 expectedVersion, uint256 relayNonce, uint256 nonce) view returns (bytes32)',
-  'function relayNonce(address enclave, bytes32 key) view returns (uint256)',
-  'function getState(address enclave, bytes32 key) view returns (string cid, uint256 version, uint64 updatedAt)',
-  'function getVersion(address enclave, bytes32 key) view returns (uint256)',
-  'function getNonce(address enclave, bytes32 key) view returns (uint256)',
-  'function exists(address enclave, bytes32 key) view returns (bool)'
-];
-
 // Order-wide ledger of signed authorizations. ESR commits do NOT pay their own
 // gas (see contracts/esr/RELAY-DESIGN.md): the enclave only SIGNS each commit
 // (commitFor); the NODE relays it and pays, and does all gas accounting. The
 // securelock does no gas math -- nothing it could claim about cost is trusted.
 let _esrLedger = [];
 
-// Per-task memo of the last idempotency nonce ACCEPTED per key, so a
-// getNonce() right after a commit in the SAME task returns the fresh value
-// even before the node's relay lands on-chain.
+// Per-task memo, by key hash, of the last idempotency nonce ACCEPTED per key,
+// so a getNonce() right after a commit in the SAME task returns the fresh
+// value even before the node's relay lands on-chain.
 let _taskNonces = {};
 
-// Per-task memo of this task's last commit per key, [acl, data, version, cid]
-// as the chain shows them once the node's relay lands. A read prefers it while
-// the chain still shows an older version, so get() after commit() returns the
-// committed state and a second commit to the key builds on the first.
+// Per-task memo, by key hash, of this task's last commit per key, [acl, data,
+// version, cid] as the chain shows them once the node's relay lands. A read
+// prefers it while the chain still shows an older version, so get() after
+// commit() returns the committed state and a second commit to the key builds
+// on the first. The fence sets it to each fenced key's landed state.
 let _taskWrites = {};
 
 // Per-task memo of the NEXT relay nonce per key hash, so multiple commits to
 // the same key within one task sign sequential relay nonces even while the
 // node is still relaying the earlier ones.
 let _taskRelayNonces = {};
+
+// The fence's chain reads, the values of the Python securelock's ecld_state:
+// getEntriesFrom is paged by ENTRIES_PAGE entries and StateCommitted logs
+// are read in spans of at most LOG_RANGE_BLOCKS blocks (public RPCs cap a
+// log read's range).
+const ENTRIES_PAGE = 500;
+const LOG_RANGE_BLOCKS = 40000;
+// The blocks a replica behind the chain's head may lack (PHASE-D-PLAN.md
+// section 12): the state as of the bound is read once the head is this far
+// past it, every read of it pinned to head minus this.
+const RPC_REPLICA_LAG_BLOCKS = 8;
+// How long the fence waits for one key's re-commit to land, polling every
+// STATE_STAGE_POLL_MS, before the fence fails.
+const FENCE_LANDING_WAIT_MS = 120000;
 
 class StateRegistry {
   constructor() {
@@ -513,9 +631,14 @@ class StateRegistry {
 
   /** [acl, data, version, cid] for `key`; NO permission check here. */
   async _readContainer(key, fallback = {}) {
-    const [cid, version] = await this._contract().getState(this.walletAddress, keyHash(key));
-    const own = _taskWrites[key];
-    if (own && own[2] > Number(version || 0)) {
+    const kh = keyHash(key);
+    const [cid, version] = await this._contract().getState(this.walletAddress, kh);
+    // This task's last commit of the key serves the read while the chain
+    // still shows an older version, and once the chain shows that very
+    // commit (its version and CID): the bytes are the ones this enclave
+    // encrypted, so the bucket is not consulted for them.
+    const own = _taskWrites[kh];
+    if (own && (own[2] > Number(version || 0) || (own[2] === Number(version || 0) && own[3] === cid))) {
       return own;
     }
     if (!version || !cid) {
@@ -567,8 +690,9 @@ class StateRegistry {
    * even before the node's relay lands.
    */
   async getNonce(key) {
-    const chain = Number(await this._contract().getNonce(this.walletAddress, keyHash(key)));
-    return Math.max(chain || 0, Number(_taskNonces[key] || 0));
+    const kh = keyHash(key);
+    const chain = Number(await this._contract().getNonce(this.walletAddress, kh));
+    return Math.max(chain || 0, Number(_taskNonces[kh] || 0));
   }
 
   /**
@@ -613,9 +737,11 @@ class StateRegistry {
    * concurrent tasks cannot silently lose updates.
    */
   async _commitTransform(key, transform, attempts = 3, nonce = null) {
-    if (_esrLedger.length >= MAX_COMMITS_PER_TASK) {
+    assertCommitsOpen();
+    const made = _esrLedger.length + (_stepHeld ? _stepHeld.length : 0);
+    if (made >= MAX_COMMITS_PER_TASK) {
       throw new StateLimitError(
-        `this task already made ${_esrLedger.length} state commits -- the ` +
+        `this task already made ${made} state commits -- the ` +
           `per-run limit is ${MAX_COMMITS_PER_TASK}. Batch your writes (one ` +
           'commit can update a whole object) or split the work across tasks.'
       );
@@ -685,8 +811,9 @@ class StateRegistry {
         // Record the POST-commit values (the DATA -- the ACL never leaves in
         // results): this is what the chain shows once the relay lands.
         ledgerRecord(key, currentVersion + 1, cid, newData);
-        _taskNonces[key] = finalNonce;
-        _taskWrites[key] = [nextAcl, newData, currentVersion + 1, cid];
+        const kh = keyHash(key);
+        _taskNonces[kh] = finalNonce;
+        _taskWrites[kh] = [nextAcl, newData, currentVersion + 1, cid];
         return [nextAcl, newData];
       } catch (e) {
         const msg = String(e && e.message ? e.message : e);
@@ -749,14 +876,22 @@ class StateRegistry {
     throw new Error(`Could not read state object for '${key}' (${cid}): not staged within ${STATE_STAGE_WAIT_MS / 1000} s`);
   }
 
-  async _sendCommit(keyHashHex, cid, expectedVersion, ownerAddr = null, nonce = 0) {
+  // Signs the commit and stages it, or holds it while a session step is open
+  // (beginStep). A fence re-commit (`fence`) is staged at once as
+  // esr.commit.<key16>.<relayNonce>.json whatever the step and outside the
+  // ledger: esr.authorizations.json holds the steps' records alone
+  // (spec/session-commits.json). Returns the signed authorization record.
+  async _sendCommit(keyHashHex, cid, expectedVersion, ownerAddr = null, nonce = 0, fence = false) {
+    assertCommitsOpen();
     // The enclave never pays gas and does NO gas math: it SIGNS the commit
     // (commitFor) and stages the signed authorization for the node, which
     // relays it and pays. The trustedzone independently re-prices the whole
     // ledger and adjudicates. Nothing the securelock could claim about cost is
     // trusted, so it claims nothing.
     const signer = this._signer();
-    const enclave = await signer.getAddress();
+    // Lower-case in the record, as the Python securelock writes it; the
+    // trustedzone and the node normalise it before use.
+    const enclave = (await signer.getAddress()).toLowerCase();
     const contract = this._contract();
 
     // Relay nonce is PER (enclave, key): same-key commits are strictly
@@ -795,17 +930,20 @@ class StateRegistry {
       owned: Boolean(ownerAddr)
     };
 
-    _esrLedger.push(auth);
-    await _swift.putFileContent(
-      _bucket, 'esr.authorizations.json', '',
-      Buffer.from(JSON.stringify(_esrLedger), 'utf8'));
-    // The staged filename carries the key prefix so commits to different keys
-    // within one task never collide, and the per-key relay order is explicit.
-    const kh16 = khHex.replace(/^0x/, '').slice(0, 16);
-    await _swift.putFileContent(
-      _bucket, `esr.commit.${kh16}.${Number(relayNonce)}.json`, '',
-      Buffer.from(JSON.stringify(auth), 'utf8'));
     _taskRelayNonces[khHex] = Number(relayNonce) + 1;
+    if (fence) {
+      await _swift.putFileContent(
+        _bucket, commitFileName('esr.commit', auth), '',
+        Buffer.from(JSON.stringify(auth), 'utf8'));
+    } else if (_stepHeld !== null) {
+      _stepHeld.push(auth);
+    } else {
+      _esrLedger.push(auth);
+      await writeAuthorizations();
+      await _swift.putFileContent(
+        _bucket, commitFileName('esr.commit', auth), '',
+        Buffer.from(JSON.stringify(auth), 'utf8'));
+    }
 
     // LOCAL TESTING: with no node to relay commitFor, apply the commit to the
     // in-memory registry now so getState/getVersion reflect it. No-op in the
@@ -815,8 +953,172 @@ class StateRegistry {
         Math.trunc(nonce || 0));
     }
 
-    return { relayed: true, relayNonce: Number(relayNonce) };
+    return auth;
   }
+
+  // Re-commits one key at the state of the bound: the container re-wrapped
+  // with the fence's own nonce (getNonce + 1) as a new CID the node pins,
+  // published as state.fence.<key16>.enc / .cid as the Python securelock
+  // publishes it, signed on the key's current version and relay nonce and
+  // staged at once. Re-signs on fresh values whenever another commit lands
+  // first (the staged signature then cannot land) until a StateCommitted
+  // after the bound names the fence's CID. Returns the landing record.
+  async _fenceKey(kh, acl, data, bound) {
+    const contract = this._contract();
+    const enclave = this.walletAddress;
+    const deadline = Date.now() + FENCE_LANDING_WAIT_MS;
+    let auth = null;
+    let cid = null;
+    for (;;) {
+      if (auth === null) {
+        // eslint-disable-next-line no-await-in-loop
+        const version = Number(await contract.getVersion(enclave, kh));
+        // eslint-disable-next-line no-await-in-loop
+        const nonce = Number(await contract.getNonce(enclave, kh)) + 1;
+        const stored = wrapStored(acl, data, _taskCaller, nonce);
+        const blob = encrypt(Buffer.from(JSON.stringify(stored), 'utf8'));
+        cid = unixfsCid(blob);
+        // eslint-disable-next-line no-await-in-loop
+        await this._publish(`fence.${kh.slice(2, 18)}`, blob, cid);
+        // The relay nonce the chain holds is the one the fence signs: nothing
+        // of this task has landed for the key.
+        delete _taskRelayNonces[kh];
+        // eslint-disable-next-line no-await-in-loop
+        auth = await this._sendCommit(kh, cid, version, normAddr(acl.owner), nonce, true);
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const logs = await contract.queryFilter(contract.filters.StateCommitted(enclave, kh), bound + 1, 'latest');
+      const landed = logs.find((log) => String(log.args.cid) === cid);
+      if (landed) {
+        _taskNonces[kh] = auth.nonce;
+        _taskWrites[kh] = [acl, data, Number(landed.args.version), cid];
+        _taskRelayNonces[kh] = Number(auth.relayNonce) + 1;
+        return auth;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const version = Number(await contract.getVersion(enclave, kh));
+      // eslint-disable-next-line no-await-in-loop
+      const relayNonce = Number(await contract.relayNonce(enclave, kh));
+      if (version !== auth.expectedVersion || relayNonce !== auth.relayNonce) {
+        auth = null;
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`fence: the re-commit of key ${kh} did not land within ${FENCE_LANDING_WAIT_MS / 1000} s`);
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => { setTimeout(resolve, STATE_STAGE_POLL_MS); });
+    }
+  }
+}
+
+/**
+ * The fence (RESERVATION-DESIGN.md section 2), on the trustedzone's signal
+ * carrying `bound`: every key of this identity whose container as of the
+ * bound names the task caller as owner or write member (the ACL read
+ * without a permission check; an unowned container is outside the fence) is
+ * re-committed at its state as of the bound, the data and ACL of the key's
+ * last StateCommitted at or before the bound, its blob fetched as the node
+ * staged it (state.<cid>.enc). A key whose every commit landed after the
+ * bound had no state as of it and is left as it is. The state as of the
+ * bound is read once the head is RPC_REPLICA_LAG_BLOCKS past it, at that
+ * block. Returns the landing record of each key re-committed, in the
+ * registry's entry order; nothing without a task caller.
+ */
+async function fence(bound) {
+  const b = Number(bound);
+  if (!Number.isInteger(b) || b < 0) throw new Error(`fence: bound ${bound} is not a block number`);
+  if (!_taskCaller) return [];
+  const reg = new StateRegistry();
+  const contract = reg._contract();
+  const enclave = reg.walletAddress;
+  const readAt = await settledBlock(contract, b);
+  const atBound = await commitsAtOrBefore(contract, enclave, b, readAt);
+  const fenced = [];
+  for (const [kh, last] of atBound) {
+    // eslint-disable-next-line no-await-in-loop
+    const blob = await reg._fetch(kh.slice(2), last.cid);
+    const stored = JSON.parse(decrypt(blob).toString('utf8'));
+    const [acl, data] = unwrapStored(stored);
+    if (!fenceWritable(acl)) continue;
+    // eslint-disable-next-line no-await-in-loop
+    fenced.push(await reg._fenceKey(kh, acl, data, b));
+  }
+  return fenced;
+}
+
+// The first block at or after `bound` that is RPC_REPLICA_LAG_BLOCKS behind
+// the head, polled every STATE_STAGE_POLL_MS until the head is that far past
+// the bound: the block every read of the state as of the bound is pinned to,
+// so a replica behind the head answers the logs and the versions alike.
+async function settledBlock(contract, bound) {
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const head = Number(await contract.provider.getBlockNumber());
+    if (head - RPC_REPLICA_LAG_BLOCKS >= bound) return head - RPC_REPLICA_LAG_BLOCKS;
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((resolve) => { setTimeout(resolve, STATE_STAGE_POLL_MS); });
+  }
+}
+
+// The identity's keys, by hash, with their version as of `readAt` (the
+// number of commits landed to each by then), from the registry's entry
+// enumeration.
+async function identityKeys(contract, enclave, readAt) {
+  const wanted = String(enclave).toLowerCase();
+  const keys = new Map();
+  for (let start = 0; ; start += ENTRIES_PAGE) {
+    // eslint-disable-next-line no-await-in-loop
+    const page = await contract.getEntriesFrom(start, ENTRIES_PAGE, { blockTag: readAt });
+    for (let i = 0; i < page.enclaves.length; i += 1) {
+      if (String(page.enclaves[i]).toLowerCase() === wanted) {
+        keys.set(String(page.keys[i]).toLowerCase(), Number(page.versions[i]));
+      }
+    }
+    if (page.enclaves.length === 0 || start + page.enclaves.length >= Number(page.total)) break;
+  }
+  return keys;
+}
+
+// The last StateCommitted at or before `bound` of every key of the identity
+// that has one, as Map(keyHash -> { cid, version, block }) in the registry's
+// entry order (first commit first), every read at block `readAt`. The
+// commits in (bound, readAt] are counted first, so a key whose version at
+// readAt equals that count has no state as of the bound and is not looked
+// for; the others are read from the bound backwards in LOG_RANGE_BLOCKS
+// spans until each is found.
+async function commitsAtOrBefore(contract, enclave, bound, readAt) {
+  const after = new Map();
+  for (const log of await contract.queryFilter(contract.filters.StateCommitted(enclave), bound + 1, readAt)) {
+    const kh = String(log.args.key).toLowerCase();
+    after.set(kh, (after.get(kh) || 0) + 1);
+  }
+  const keys = await identityKeys(contract, enclave, readAt);
+  const need = new Set();
+  for (const [kh, version] of keys) {
+    if (version - (after.get(kh) || 0) > 0) need.add(kh);
+  }
+  const found = new Map();
+  let to = bound;
+  while (need.size > 0) {
+    const from = Math.max(0, to - LOG_RANGE_BLOCKS + 1);
+    // eslint-disable-next-line no-await-in-loop
+    const logs = await contract.queryFilter(contract.filters.StateCommitted(enclave), from, to);
+    for (let i = logs.length - 1; i >= 0; i -= 1) {
+      const kh = String(logs[i].args.key).toLowerCase();
+      if (!need.has(kh)) continue;
+      found.set(kh, { cid: String(logs[i].args.cid), version: Number(logs[i].args.version), block: logs[i].blockNumber });
+      need.delete(kh);
+    }
+    if (from === 0) break;
+    to = from - 1;
+  }
+  const ordered = new Map();
+  for (const kh of keys.keys()) {
+    if (found.has(kh)) ordered.set(kh, found.get(kh));
+  }
+  return ordered;
 }
 
 /** Owner-only ACL mutation; an unowned key is claimed first (owner = caller). */
@@ -920,6 +1222,14 @@ module.exports = {
   setTaskCaller,
   restampLedgerCaller,
   ledgerAttestation,
+  writeAuthorizations,
+  beginStep,
+  takeStepCommits,
+  discardStepCommits,
+  flushStepCommits,
+  closeCommits,
+  commitFileName,
+  fence,
   StatePermissionError,
   StateNonceError,
   StateLimitError,

@@ -12,8 +12,9 @@
  *                  (getState / getVersion / relayNonce / commitDigest), the
  *                  enumeration (getEntriesFrom / entryCount / commitSeq), the
  *                  StateCommitted logs (filters.StateCommitted + queryFilter,
- *                  as ethers.Contract serves them) plus the commit APPLY the
- *                  node would do on-chain, keyed by (enclave, keyHash) ->
+ *                  as ethers.Contract serves them), the chain head
+ *                  (provider.getBlockNumber) plus the commit APPLY the node
+ *                  would do on-chain, keyed by (enclave, keyHash) ->
  *                  { cid, version }. A commit lands at the emulator's current
  *                  block; landAt(block) moves the landings that follow.
  *
@@ -71,6 +72,11 @@ class MemSwift {
     return v === null ? null : v.toString('utf8');
   }
 
+  /** [stat, present], as SwiftStreamService answers it. */
+  async isObjectInBucket(bucket, name) {
+    return [null, this._store.has(`${bucket}/${name}`)];
+  }
+
   async createBucket() { return true; }
 }
 
@@ -97,6 +103,8 @@ class MemContract {
     this.filters = {
       StateCommitted: (enclave = null, keyHash = null) => ({ event: 'StateCommitted', enclave, keyHash }),
     };
+    // The chain head, as ethers.Contract.provider.getBlockNumber answers it.
+    this.provider = { getBlockNumber: async () => this._block };
   }
 
   _persist() {

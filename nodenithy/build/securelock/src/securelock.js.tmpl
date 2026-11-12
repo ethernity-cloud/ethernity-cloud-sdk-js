@@ -20,6 +20,8 @@ const {getWalletAddress} = require("./wallet");
 const {executeTask} = require("./etny_exec");
 const {TaskStatus} = require("./task_status");
 const SwiftStreamService = require("./swift_stream_service");
+const {SecurelockProbe} = require("./securelock_probe");
+const {runSession, pushSignedForTrustedzone, TRANSFERRED} = require("./etny_session_exec");
 
 // An error a network socket emits after its request's caller has moved on
 // (a connection the server closed, ECONNRESET) reaches no handler of the
@@ -78,6 +80,10 @@ class EtnySecureLock {
         this.web3_provider = "__ETNY_WEB3_PROVIDER__";
         this.signed_tx_as_bytes = null;
         this.client_challenge = "";
+        // The heartbeat probe (startProbe) and whether the transfer control
+        // ended the session (execute).
+        this.probe = null;
+        this.transferred = false;
 
         if (this.etny_mode === "TEST") {
             this.key_file = "/private/key.pem";
@@ -693,22 +699,18 @@ class EtnySecureLock {
         }
     }
 
+    // Encrypts fileData for the trustedzone and puts it as <fileName>.securelock.
+    // Resolves once the put is done; a failed put rejects, so a caller that
+    // can still sign a failure result does.
     async encryptFileAndPushToSwiftStream(fileData, fileName) {
-        try {
-            console.log(`Started saving file ${fileName}.securelock...`);
-            const encryptedInput = etny_crypto.encrypt(this.trustedZonePublicKey, fileData);
-            const encryptedInputBase64 = etny_crypto.encryptedDataToBase64Json(encryptedInput);
+        console.log(`Started saving file ${fileName}.securelock...`);
+        const encryptedInput = etny_crypto.encrypt(this.trustedZonePublicKey, fileData);
+        const encryptedInputBase64 = etny_crypto.encryptedDataToBase64Json(encryptedInput);
 
-            // File name should end with the '.securelock' extension
-            fileName += '.securelock';
-            // const data = Buffer.from(encryptedInputBase64, 'utf8');
-            const status = this.swiftStreamService.putFileContent(this.etny_bucket, fileName, '', encryptedInputBase64);
-            if (status) {
-                console.log(`File ${fileName} encrypted and saved to swift stream successfully`);
-            }
-        } catch (e) {
-            console.log('encryptFileAndPushToSwiftStream', e);
-        }
+        // File name should end with the '.securelock' extension
+        fileName += '.securelock';
+        await this.swiftStreamService.putFileContent(this.etny_bucket, fileName, '', encryptedInputBase64);
+        console.log(`File ${fileName} encrypted and saved to swift stream successfully`);
     }
 
     async getDORequestMetadata() {
@@ -913,12 +915,16 @@ class EtnySecureLock {
         }
     }
 
-    async execute() {
-        // The order metadata names the trustedzone whose certificate checks
-        // the handover and encrypts the result, and the task binding is signed
-        // into the result; both are read before any check that can end the
-        // task, so every outcome below reaches the trustedzone as a result it
-        // can verify.
+    // How long the task binding is waited for: the trustedzone stages
+    // task.securelock before the payload, so it is there well within this.
+    static TASK_BINDING_WAIT_SECONDS = 60;
+
+    // The order metadata names the trustedzone whose certificate checks the
+    // handover and encrypts the result, and the task binding is signed into
+    // the result; both are read before the payload wait, so every outcome
+    // reaches the trustedzone as a result it can verify and the heartbeat's
+    // AAD exists before any beat. Returns whether the metadata was loaded.
+    async loadTaskBinding() {
         if (!(await this.loadOrderMetadata())) {
             return false;
         }
@@ -933,6 +939,13 @@ class EtnySecureLock {
         // the bare result as before.
         this.task_binding = null;
         try {
+            // The trustedzone stores the signature first and the data object
+            // last, so the data object's presence means both are there.
+            for (let i = 0; i < EtnySecureLock.TASK_BINDING_WAIT_SECONDS; i++) {
+                const [, present] = await this.swiftStreamService.isObjectInBucket(this.etny_bucket, 'task.securelock');
+                if (present) break;
+                await this.wait(1000);
+            }
             const taskValue = await this.getFileContentAndDecrypt(this.etny_bucket, 'task.securelock');
             const taskSig = await this.getFileContentAndDecrypt(this.etny_bucket, 'task.securelock.sig');
             if (etny_crypto.verifySignature(this.trustedZonePublicKey, taskValue, taskSig)) {
@@ -947,7 +960,33 @@ class EtnySecureLock {
         } catch (e) {
             console.log('No task binding supplied; result will not be bound');
         }
+        return true;
+    }
 
+    // The heartbeat (securelock_probe): with a verified task binding, the
+    // ready object carrying the key is staged and the beats start, before the
+    // payload wait. Without a binding (an older trustedzone) no probe runs.
+    async startProbe() {
+        this.probe = null;
+        if (!this.task_binding) return;
+        const probe = new SecurelockProbe({
+            swiftStreamService: this.swiftStreamService,
+            bucket: this.etny_bucket,
+            challenge: this.task_binding.challenge,
+            orderId: this.task_binding.order_id,
+        });
+        await probe.publishReady((data, baseName) => pushSignedForTrustedzone(this, data, baseName));
+        probe.start();
+        this.probe = probe;
+        console.log('Heartbeat started');
+    }
+
+    // The idle tail of the heartbeat, on every exit path.
+    async stopProbe() {
+        if (this.probe) await this.probe.stop();
+    }
+
+    async execute() {
         // ADJUDICATE the CAS attestation verdict recorded at startup. An
         // INVALID CAS quote terminates the task before the payload is
         // handled; the failure result (CAS_ATTESTATION_FAULT, 40) reaches
@@ -1032,11 +1071,21 @@ class EtnySecureLock {
             sessionMode = Boolean(r[1]);
         } catch (e) { sessionMode = false; }
         if (sessionMode) {
-            const { runSession } = require('./etny_session_exec');
             console.log('Interactive session mode');
             task_result = await runSession(this, payload_data, input_data);
+            if (task_result === TRANSFERRED) {
+                // The transfer control stopped the session: nothing more is
+                // written, the securelock exits without a result.
+                this.transferred = true;
+                return true;
+            }
         } else {
-            task_result = await executeTask(payload_data, input_data);
+            if (this.probe) this.probe.busyStart('T');
+            try {
+                task_result = await executeTask(payload_data, input_data);
+            } finally {
+                if (this.probe) this.probe.busyEnd();
+            }
         }
         console.log('TASK RESULT (code, data):', task_result);
         this.task_code = task_result[0];
@@ -1190,6 +1239,16 @@ async function execute() {
             return;
         }
 
+        // The order metadata and the task binding come before the payload
+        // wait: the ready object and the heartbeat need the binding's
+        // challenge, and a task that cannot load its metadata reports that.
+        if (!(await app.loadTaskBinding())) {
+            console.log('Failed loading the order metadata.');
+            await app.saveResult();
+            return;
+        }
+        await app.startProbe();
+
         console.log('Waiting for payload and input to be downloaded...');
         await app.waitForPayloadAndInput();
 
@@ -1204,6 +1263,10 @@ async function execute() {
                 await app.saveResult();
                 return;
             }
+            if (app.transferred) {
+                console.log('Service transferred: exiting without a result.');
+                return;
+            }
         } else {
             console.log(`Failed client payload and input validation, ${app.task_result}, exiting.`);
             return;
@@ -1215,11 +1278,19 @@ async function execute() {
 }
 
 (async () => {
+    let failed = false;
     try {
         await execute();
     } catch (e) {
         console.log(e);
         await reportFailure(currentApp, e);
-        process.exitCode = 1;
+        failed = true;
     }
+    // The heartbeat's idle tail follows the result (or the failure report) on
+    // every exit path.
+    if (currentApp) await currentApp.stopProbe();
+    if (failed) process.exitCode = 1;
+    // After a transfer the abandoned handler may still hold the event loop:
+    // the process ends here, nothing more being written.
+    if (currentApp && currentApp.transferred) process.exit(0);
 })();
