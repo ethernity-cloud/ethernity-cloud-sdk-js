@@ -6,7 +6,9 @@
 // runner's own enums through the SDK's network table; IPFS_ENDPOINT is the
 // IPFS API of the dApp's own, or '' (no setting, or the public API, which
 // takes no writes without a token), on which the dApp delivers its task
-// artefacts through the bootnode's payload intake.
+// artefacts through the bootnode's payload intake; EXECUTION is the order's
+// execution object from the EXEC_* keys (the SDK's execution.js: the
+// defaults where .env has none, an invalid key refused with its message).
 import fs from 'fs';
 import { createRequire } from 'module';
 import dotenv from 'dotenv';
@@ -17,6 +19,7 @@ const require = createRequire(import.meta.url);
 const casConfig = require('@ethernity-cloud/sdk-js/cas/config.js');
 const { networkFor } = require('@ethernity-cloud/sdk-js/network.js');
 const { dappEndpoint } = require('@ethernity-cloud/sdk-js/localKubo.js');
+const execution = require('@ethernity-cloud/sdk-js/execution.js');
 
 const { PROJECT_NAME, TRUSTED_ZONE_IMAGE, BLOCKCHAIN_NETWORK, IPFS_ENDPOINT } = process.env;
 if (!PROJECT_NAME || !BLOCKCHAIN_NETWORK) {
@@ -29,6 +32,14 @@ if (!network) {
   process.exit(1);
 }
 
+let EXECUTION;
+try {
+  EXECUTION = execution.validate(execution.fromEnv(process.env));
+} catch (e) {
+  console.error(`preStart: ${e.message} (the EXEC_* keys of .env; run \`npm run ecld-init\` to rewrite them).`);
+  process.exit(1);
+}
+
 const constants = {
   PROJECT_NAME: casConfig.nameOnNetwork(PROJECT_NAME, BLOCKCHAIN_NETWORK),
   TRUSTED_ZONE_IMAGE: casConfig.nameOnNetwork(TRUSTED_ZONE_IMAGE, BLOCKCHAIN_NETWORK) || '',
@@ -36,6 +47,7 @@ const constants = {
   CHAIN_ID: network.chainId || null,
   UNSAFE_NETWORK: network.unsafe || null,
   IPFS_ENDPOINT: dappEndpoint(IPFS_ENDPOINT),
+  EXECUTION,
 };
 
 const filePath = 'src/ec_helloworld_example.js';

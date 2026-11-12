@@ -28,23 +28,29 @@
  *   npx ecld-run 'hello("World")'
  *   npx ecld-run --file payload.js
  *   npx ecld-run --input data.json 'processData(___etny_data_set___)'
- *   npx ecld-run --network BLOXBERG_TESTNET --task-price 3 'esrIncrement()'
+ *   npx ecld-run --network BLOXBERG_TESTNET --task-price 2.5 'esrIncrement()'
+ *   npx ecld-run --mode session --expected-inputs 5 'hello("World")'
  *   npx ecld-run --unsafe 'hello("World")'    # the network's -unsafe variant
  *   npx ecld-run --json 'hello("World")'      # machine-readable result
  *
+ * The order's execution object (execution.js) is read from the EXEC_* keys
+ * of .env, as ecld-init writes them, and each flag overrides its key; it is
+ * validated before the runner is constructed and passed nested in the
+ * resources beside the flat duration a 1.1 runner reads.
+ *
  * The runner is ESM; this CJS entry loads it with dynamic import().
  *
- * Exit code 0 on a SUCCESS task result, 1 otherwise.
+ * Exit code 0 on a SUCCESS task result, 1 otherwise, 2 on a usage error.
  */
 
 'use strict';
 
 const fs = require('fs');
-try { require('dotenv').config(); } catch (e) { /* dotenv optional */ }
 const casConfig = require('./cas/config.js');
 const { networkFor, unsafeVariant } = require('./network.js');
 const { PUBLIC_IPFS_HOST } = require('./localKubo.js');
 const { reportRun } = require('./runReport.js');
+const execution = require('./execution.js');
 
 // `--ipfs intake` (the default): the artefacts' CIDs are computed locally and
 // the bytes delivered to the bootnode's payload intake once the DO request is
@@ -54,8 +60,58 @@ const { reportRun } = require('./runReport.js');
 // so a URL naming it is refused without one.
 const DEFAULT_IPFS = 'intake';
 
+// A flag value the CLI refuses: main prints the message with HELP and exits 2.
+class UsageError extends Error {}
+
+// A count flag: a non-negative integer.
+function integerFlag(name, raw) {
+  const s = String(raw === undefined ? '' : raw).trim();
+  if (!/^\d+$/.test(s)) throw new UsageError(`${name} takes a non-negative integer, got ${JSON.stringify(raw)}`);
+  return Number(s);
+}
+
+// A flag that takes a word: the next argument, which is neither missing,
+// blank nor another flag.
+function wordFlag(name, raw) {
+  const s = String(raw === undefined ? '' : raw).trim();
+  if (s === '' || s.startsWith('-')) throw new UsageError(`${name} takes a value, got ${JSON.stringify(raw)}`);
+  return s;
+}
+
+// --task-price: an ECLD amount, fractional or not, kept as given for the runner.
+function priceFlag(name, raw) {
+  const s = String(raw === undefined ? '' : raw).trim();
+  const n = Number(s);
+  if (s === '' || !Number.isFinite(n) || n < 0) throw new UsageError(`${name} takes a non-negative number, got ${JSON.stringify(raw)}`);
+  return n;
+}
+
+// Each integer execution flag names the execution.js key it sets.
+const EXECUTION_FLAGS = {
+  '--duration-hours': 'durationHours',
+  '--duration': 'durationHours',
+  '--parallelism': 'parallelism',
+  '--max-cu': 'maxCu',
+  '--headroom': 'headroomPercent',
+  '--expected-inputs': 'session.expectedInputs',
+  '--max-renewals': 'session.maxRenewals',
+  '--expected-commits': 'esr.expectedCommits',
+};
+const EXECUTION_SWITCHES = {
+  '--keep-open': ['session.keepOpen', true],
+  '--no-keep-open': ['session.keepOpen', false],
+  '--renew': ['session.renew', true],
+  '--no-renew': ['session.renew', false],
+};
+
+function setKey(obj, dotted, value) {
+  const [head, tail] = dotted.split('.');
+  if (tail === undefined) obj[head] = value;
+  else (obj[head] = obj[head] || {})[tail] = value;
+}
+
 function parseArgs(argv) {
-  const opts = { ipfs: DEFAULT_IPFS, timeout: 600, taskPrice: 3, cpu: 1, memory: 1, storage: 10, bandwidth: 1, duration: 1, validators: 1, node: '' };
+  const opts = { ipfs: DEFAULT_IPFS, timeout: 600, taskPrice: 3, cpu: 1, memory: 1, storage: 10, bandwidth: 1, validators: 1, node: '', execution: {} };
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -68,19 +124,39 @@ function parseArgs(argv) {
     else if (a === '--trustedzone') opts.trustedzone = argv[++i];
     else if (a === '--node') opts.node = argv[++i];
     else if (a === '--ipfs') opts.ipfs = argv[++i];
-    else if (a === '--timeout') opts.timeout = parseInt(argv[++i], 10);
-    else if (a === '--task-price') opts.taskPrice = parseInt(argv[++i], 10);
-    else if (a === '--cpu') opts.cpu = parseInt(argv[++i], 10);
-    else if (a === '--memory') opts.memory = parseInt(argv[++i], 10);
-    else if (a === '--storage') opts.storage = parseInt(argv[++i], 10);
-    else if (a === '--bandwidth') opts.bandwidth = parseInt(argv[++i], 10);
-    else if (a === '--duration') opts.duration = parseInt(argv[++i], 10);
-    else if (a === '--validators') opts.validators = parseInt(argv[++i], 10);
+    else if (a === '--timeout') opts.timeout = integerFlag(a, argv[++i]);
+    else if (a === '--task-price') opts.taskPrice = priceFlag(a, argv[++i]);
+    else if (a === '--cpu') opts.cpu = integerFlag(a, argv[++i]);
+    else if (a === '--memory') opts.memory = integerFlag(a, argv[++i]);
+    else if (a === '--storage') opts.storage = integerFlag(a, argv[++i]);
+    else if (a === '--bandwidth') opts.bandwidth = integerFlag(a, argv[++i]);
+    else if (a === '--validators') opts.validators = integerFlag(a, argv[++i]);
+    else if (a === '--relays-per-hour') opts.relaysPerHour = integerFlag(a, argv[++i]);
+    else if (a === '--mode') setKey(opts.execution, 'mode', wordFlag(a, argv[++i]));
+    else if (a in EXECUTION_FLAGS) setKey(opts.execution, EXECUTION_FLAGS[a], integerFlag(a, argv[++i]));
+    else if (a in EXECUTION_SWITCHES) setKey(opts.execution, ...EXECUTION_SWITCHES[a]);
     else if (a === '--json') opts.json = true;
     else if (a === '--help' || a === '-h') opts.help = true;
     else positional.push(a);
   }
   return { opts, positional };
+}
+
+/* The order's execution object: the EXEC_* keys of env (the project's .env)
+ * under the flags, validated; throws the execution.js message. */
+function executionFor(opts, env) {
+  const fromEnv = execution.fromEnv(env);
+  const flags = opts.execution;
+  return execution.validate({
+    ...fromEnv, ...flags,
+    session: { ...fromEnv.session, ...flags.session },
+    esr: { ...fromEnv.esr, ...flags.esr },
+  });
+}
+
+/* --relays-per-hour, else execution.js's default for the order and ESR_ENABLED. */
+function relaysPerHourFor(opts, env, exec) {
+  return opts.relaysPerHour === undefined ? execution.relaysPerHour(exec, execution.esrEnabled(env)) : opts.relaysPerHour;
 }
 
 const HELP = `ecld-run — submit a payload to the Ethernity Cloud network (costs gas; needs a funded key).
@@ -95,14 +171,33 @@ network:   --network BLOXBERG_TESTNET (default: BLOCKCHAIN_NETWORK from .env)
 enclaves:  --securelock <name> (default PROJECT_NAME), --trustedzone <name> (default TRUSTED_ZONE_IMAGE);
            on an -unsafe network the default is each one's -unsafe variant
 key:       PRIVATE_KEY (a funded 0x key) from .env / env, or ECLD_PRIVATE_KEY
-resources: --task-price 3 --cpu 1 --memory 1 --storage 10 --bandwidth 1 --duration 1 --validators 1
+resources: --task-price 3 (ECLD, fractional allowed: 2.5) --cpu 1 --memory 1 --storage 10 --bandwidth 1 --validators 1
+execution: each flag overrides its EXEC_* key in .env (ecld-init writes them; the defaults otherwise)
+           --mode task|session  --duration-hours 1 (alias --duration)  --parallelism 1  --max-cu 0  --headroom 25
+           --expected-inputs 1  --keep-open / --no-keep-open  --renew / --no-renew  --max-renewals 0
+           --expected-commits 0  --relays-per-hour <n> (default 1 + expected inputs, plus 10 with ESR_ENABLED)
 other:     --node <addr>  --ipfs intake|<ipfs api url> (default intake: the bootnode's payload intake;
            a URL takes ECLD_IPFS_TOKEN or IPFS_TOKEN as its Authorization header)
            --timeout <sec>  --json`;
 
 async function main() {
-  const { opts, positional } = parseArgs(process.argv.slice(2));
+  try { require('dotenv').config(); } catch (e) { /* dotenv optional */ }
+  let opts, positional;
+  try {
+    ({ opts, positional } = parseArgs(process.argv.slice(2)));
+  } catch (e) {
+    if (!(e instanceof UsageError)) throw e;
+    console.error(`ecld-run: ${e.message}\n\n${HELP}`); process.exit(2);
+  }
   if (opts.help) { console.log(HELP); process.exit(0); }
+
+  let exec;
+  try {
+    exec = executionFor(opts, process.env);
+  } catch (e) {
+    console.error(`ecld-run: ${e.message}\n\n${HELP}`); process.exit(2);
+  }
+  const relaysPerHour = relaysPerHourFor(opts, process.env, exec);
 
   // ---- payload ----
   let code;
@@ -206,11 +301,17 @@ async function main() {
   };
   runner.addEventListener(ECStatus.DEFAULT, onProgress);
 
-  const resources = {
+  // The flat duration is what a 1.1 runner reads; the nested execution is the
+  // order's execution object for the runner that takes it.
+  const flat = {
     taskPrice: opts.taskPrice, cpu: opts.cpu, memory: opts.memory,
-    storage: opts.storage, bandwidth: opts.bandwidth, duration: opts.duration, validators: opts.validators,
+    storage: opts.storage, bandwidth: opts.bandwidth, validators: opts.validators,
+    duration: exec.durationHours,
   };
-  console.log(`resources  : ${JSON.stringify(resources)}`);
+  const resources = { ...flat, execution: exec };
+  console.log(`resources  : ${JSON.stringify(flat)}`);
+  console.log(`execution  : ${JSON.stringify(exec)}`);
+  console.log(`relays/hour: ${relaysPerHour}`);
   console.log('submitting order... (this places an on-chain request and costs gas)');
 
   const done = new Promise((resolve) => {
@@ -246,4 +347,8 @@ async function main() {
   }
 }
 
-main().catch((e) => { console.error(e && e.stack ? e.stack : String(e)); process.exit(1); });
+if (require.main === module) {
+  main().catch((e) => { console.error(e && e.stack ? e.stack : String(e)); process.exit(1); });
+}
+
+module.exports = { parseArgs, executionFor, relaysPerHourFor, UsageError, HELP };

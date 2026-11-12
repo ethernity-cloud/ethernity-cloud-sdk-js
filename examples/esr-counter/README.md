@@ -57,7 +57,30 @@ npx ecld-run 'esrIncrement()'
 **Nothing to fund**: the node that runs your task relays each commit and pays
 the gas, so a published dApp is autonomous. `ECLD_ESR_ENABLE=true` is all the
 configuration ESR needs — `ecld-build` resolves the canonical per-network
-registry address itself.
+registry address itself (on Polygon Amoy the securelocks commit to
+`0x1DC58496ed1cA66FD1E0b51fA28A9E7451970843`; `npx ecld-info network` prints
+each network's).
+
+The order's execution object (the SDK README, "The order's execution object")
+carries `esr.expectedCommits`, the commits the dApp expects to relay per order
+(`EXEC_ESR_EXPECTED_COMMITS` in `.env`, written by `ecld-init`; `ecld-run
+--expected-commits <n>` overrides it): `esrIncrement` makes one commit per
+run. With `ESR_ENABLED=true` the relays-per-hour default is `1 + expected
+inputs` rows plus 10 commits per hour (`npx ecld-info execution` prints it);
+the task price may be fractional:
+
+```sh
+npx ecld-run --task-price 2.5 --expected-commits 1 'esrIncrement()'
+```
+
+With a securelock built by sdk-js 1.8.0 or later (the Phase D release; an
+earlier build relays every commit as `esr.commit.<key16>.<relayNonce>.json` as
+it appears), a session step's commits are staged with the step's output as
+`session.commit.<n>.<key16>.<relayNonce>.json` and named in the output's
+signed envelope; a plain task's are `esr.commit.<key16>.<relayNonce>.json`. A
+step cut by the trustedzone's `transfer` control stages no commit and is
+replayed by the successor order, so `esrIncrement` may run twice for one input;
+a commit is applied once, by its per-key nonce (`esrIncrementOnce`).
 
 Confirm a commit landed (free, read-only):
 

@@ -12,16 +12,24 @@ so they can never be committed.
 
 The source of truth is the runtime repo, not this package:
 
-- `etny-nodenithy` → `v3/build/{securelock,trustedzone,validator}/src/`
-  (`get_sgx_report.c` + `sgx_report_napi.c`)
+- `etny-nodenithy` → `v3/build/trustedzone/src/`
+  (`get_sgx_report.c` + `sgx_report_napi.c`); the securelock itself lives in
+  this package (`nodenithy/build/securelock`), not in etny-nodenithy.
 
 ## How the `.node` is produced
 
 `sgx_report.node` is a **build artifact of the etny-nodenithy pipeline** — its
-Dockerfile compiles `sgx_report_napi.c` (which `#include`s `get_sgx_report.c`)
-into the addon with a single gcc command against node's `node_api.h`. To refresh
-the copy the SDK ships, take the `sgx_report.node` that pipeline produces and
-commit it here as `securelock/src/sgx_report.node`.
+trustedzone Dockerfile compiles `sgx_report_napi.c` (which `#include`s
+`get_sgx_report.c`) into the addon with a single gcc command against node's
+`node_api.h`, and `.gitlab/build.sh` copies it out of the `release` build
+stage into the job's `keygen-artifacts/sgx_report.node`. To refresh the copy
+the SDK ships, take that artifact and commit it here as
+`securelock/src/sgx_report.node`.
+
+The Pynithy securelock's key-gen module (`get_sgx_report.so`) is documented in
+`pynithy/build/securelock/scripts/README-keygen.md`, which, like the whole
+`pynithy/build/securelock` tree, is the Python SDK's copy synced by
+`scripts/sync-pynithy.mjs` and never edited in this package.
 
 The JS wrappers `sgx_report.js` (loader) and `self_sign.js` (calls
 `deriveIdentityScalar`) ship as source — they contain no algorithm, only calls

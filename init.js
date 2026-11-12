@@ -3,6 +3,7 @@ const readline = require("readline");
 const { spawn, execSync } = require("child_process");
 const path = require("path");
 const casConfig = require("./cas/config.js");
+const execution = require("./execution.js");
 
 // The prompt, opened by main.
 let rl = null;
@@ -127,7 +128,7 @@ const configureEsr = async () => {
     // Only write an explicit disable when the env var asked for it; re-running
     // init must not silently switch off a previously configured ESR.
     if (enableEnv !== undefined) writeEnv("ESR_ENABLED", "false");
-    return;
+    return false;
   }
 
   let address = process.env.ECLD_ESR_CONTRACT;
@@ -146,6 +147,90 @@ const configureEsr = async () => {
   writeEnv("ESR_ENABLED", "true");
   writeEnv("ESR_CONTRACT_ADDRESS", address);
   console.log(`ESR enabled: contract ${address}`);
+  return true;
+};
+
+// The prompt of each EXEC_* key, in execution.js ENV_KEYS order. The session
+// keys are asked in mode session, the ESR key with ESR enabled; a key not
+// asked keeps its default.
+const EXECUTION_PROMPTS = {
+  EXEC_MODE: "Execution mode: task (one payload run per order) or session (the order stays open for inputs)",
+  EXEC_DURATION_HOURS: "Order duration in hours (1-65535)",
+  EXEC_PARALLELISM: "Orders opened at once, each a request with its own enclave (1 or more)",
+  EXEC_MAX_CU: "Largest node paid for, in thousandths of a CU (0 = any node)",
+  EXEC_HEADROOM_PERCENT: "Margin over the quoted price when the runner sizes the price per CU-hour, in percent (0-100)",
+  EXEC_SESSION_EXPECTED_INPUTS: "Inputs the dApp expects to send in a session (1-256)",
+  EXEC_SESSION_KEEP_OPEN: "Keep the session open until the dApp closes it instead of after the expected inputs? (true/false)",
+  EXEC_SESSION_RENEW: "Open a new order on another node when the session expires with inputs pending? (true/false)",
+  EXEC_SESSION_MAX_RENEWALS: "Renewals allowed (1 or more when renewing)",
+  EXEC_ESR_EXPECTED_COMMITS: "State commits the dApp expects to relay per order (0-100)",
+};
+
+// Asks the EXEC_* keys one by one through ask(prompt) -> Promise<string>; an
+// empty answer keeps the default and an answer execution.js refuses is asked
+// again with its message. An answer of true to EXEC_SESSION_RENEW sets
+// EXEC_SESSION_MAX_RENEWALS to 1 (execution.js refuses a renewing session
+// with none), which the next prompt shows as its default.
+const promptExecution = async (withEsr, ask) => {
+  let answers = {};
+  let current = execution.validate({});
+  for (const [name] of execution.ENV_KEYS) {
+    if (name.startsWith("EXEC_SESSION_") && current.mode !== "session") continue;
+    if (name === "EXEC_ESR_EXPECTED_COMMITS" && !withEsr) continue;
+    const shown = execution.toEnv(current)[name];
+    for (;;) {
+      const reply = (await ask(`${EXECUTION_PROMPTS[name]} [${shown}]: `)).trim();
+      if (reply === "") break;
+      const candidate = { ...answers, [name]: reply };
+      if (name === "EXEC_SESSION_RENEW" && execution.fromEnv(candidate).session.renew === true) {
+        candidate.EXEC_SESSION_MAX_RENEWALS = "1";
+      }
+      try {
+        current = execution.validate(execution.fromEnv(candidate));
+        answers = candidate;
+        break;
+      } catch (e) {
+        console.log(e.message);
+      }
+    }
+  }
+  return current;
+};
+
+// Writes every EXEC_* key of the execution object to .env.
+const writeExecution = (exec) => {
+  for (const [name, value] of Object.entries(execution.toEnv(exec))) writeEnv(name, value);
+};
+
+// The execution step: the order's execution object (execution.js), written
+// to .env as the EXEC_* keys ecld-run, ecld-info and the template read. Env
+// equivalents for unattended runs: the same keys with the ECLD_ prefix
+// (ECLD_EXEC_MODE, ECLD_EXEC_DURATION_HOURS, ...); when any is set the
+// prompts are skipped, the set keys are taken and the rest default.
+const configureExecution = async (withEsr) => {
+  const fromEnvVars = execution.fromEnv(process.env, "ECLD_");
+  let exec;
+  if (Object.keys(fromEnvVars).length) {
+    try {
+      exec = execution.validate(fromEnvVars);
+    } catch (e) {
+      console.error(`ERROR: ${e.message}`);
+      console.error("       Set valid ECLD_EXEC_* values and re-run ecld-init.");
+      process.exit(1);
+    }
+    console.log(`Execution [ECLD_EXEC_* -> ${JSON.stringify(exec)}]`);
+  } else {
+    const answer = await promptOptions(
+      "Configure the order's execution (mode, duration, parallelism, price headroom)? (default is no: the defaults): ",
+      ["yes", "no"],
+      "no",
+    );
+    exec = answer === "yes"
+      ? await promptExecution(withEsr, (prompt) => new Promise((resolve) => rl.question(prompt, resolve)))
+      : execution.validate({});
+  }
+  writeExecution(exec);
+  console.log(`Execution: ${JSON.stringify(exec)}`);
 };
 
 const printIntro = () => {
@@ -403,7 +488,9 @@ const main = async () => {
   writeEnv("IPFS_ENDPOINT", ipfs.IPFS_ENDPOINT);
   writeEnv("IPFS_TOKEN", ipfs.IPFS_TOKEN);
   console.log();
-  await configureEsr();
+  const withEsr = await configureEsr();
+  console.log();
+  await configureExecution(withEsr);
   writeEnv("VERSION", "v1");
   console.log();
   console.log(
@@ -414,4 +501,4 @@ const main = async () => {
 
 if (require.main === module) main();
 
-module.exports = { IPFS_OPTIONS, ipfsSettings, writeEnv };
+module.exports = { IPFS_OPTIONS, ipfsSettings, writeEnv, writeExecution, promptExecution };

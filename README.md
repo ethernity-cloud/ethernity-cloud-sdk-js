@@ -112,6 +112,12 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   npm run ecld-init
   ```
   at this step, all the initial configurations will be set up and the project will be ready to be built, published and run.
+  Its last step is the order's execution object (see "The order's execution
+  object" below): a yes/no question, "no" writing the defaults, "yes" asking
+  each key; every key is written to `.env` as `EXEC_*`. For an unattended run
+  set the same keys with the `ECLD_` prefix (`ECLD_EXEC_MODE`,
+  `ECLD_EXEC_DURATION_HOURS`, ...): any one set skips the questions, the set
+  keys are taken and the rest default.
 
 - **Build**: To build the project, run:
   ```sh
@@ -186,7 +192,16 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   `TRUSTED_ZONE_IMAGE`), overridable with
   `--network`/`--securelock`/`--trustedzone`; the signing key is `PRIVATE_KEY`
   (or `ECLD_PRIVATE_KEY`) — a funded `0x` key that pays for the order. Resources
-  are tunable with `--task-price`/`--cpu`/`--memory`/`--storage`/`--bandwidth`/`--duration`/`--validators`.
+  are tunable with `--task-price`/`--cpu`/`--memory`/`--storage`/`--bandwidth`/`--validators`;
+  `--task-price` is in ECLD and may be fractional (`--task-price 2.5`), and a
+  value that is not a non-negative number is a usage error (exit 2). The
+  order's execution object comes from the `EXEC_*` keys of `.env` and each
+  execution flag overrides its key: `--mode task|session`, `--duration-hours`
+  (alias `--duration`), `--parallelism`, `--max-cu`, `--headroom`,
+  `--expected-inputs`, `--keep-open`/`--no-keep-open`, `--renew`/`--no-renew`,
+  `--max-renewals`, `--expected-commits`; it is validated before the runner is
+  constructed and printed with the relays-per-hour default (`--relays-per-hour`
+  names another value). See "The order's execution object" below.
   `--input <file>` / `--input-text <string>` send the task's input dataset, read
   as `___etny_data_set___`; it travels encrypted, and the trustedzone checks it
   against the sha256 the request carries. Exit code 0 on a `SUCCESS` task result,
@@ -212,7 +227,108 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   ```sh
   npx ecld-info
   npx ecld-info esr state <key>
+  npx ecld-info execution
   ```
+  The EXECUTION section is the order's execution object read from the `EXEC_*`
+  keys of `.env` (the defaults where `.env` has none, an invalid key reported
+  with its message) and the relays-per-hour default it gives with
+  `ESR_ENABLED`.
+
+### The order's execution object
+`execution.js` (`require('@ethernity-cloud/sdk-js/execution.js')`, CJS, also
+loaded with `createRequire` from the template's `src/preStart.mjs`) is the
+runner-side execution object of `test/fixtures/execution-spec.json`, the copy
+of `pox-smart-contract-litvm/spec/execution-spec.json` both SDKs and both
+runners follow:
+
+| key | type | default | `.env` key | meaning |
+|---|---|---|---|---|
+| `mode` | `task` or `session` | `task` | `EXEC_MODE` | one payload run per order, or the order stays open for inputs |
+| `durationHours` | integer 1-65535 | 1 | `EXEC_DURATION_HOURS` | the order duration (the DO request's `_duration`) and the escrow hours |
+| `parallelism` | integer >= 1 | 1 | `EXEC_PARALLELISM` | orders opened at once, each a DO request with its own enclave |
+| `maxCu` | integer >= 0 | 0 | `EXEC_MAX_CU` | the largest node paid for, in thousandths of a CU; 0 = any node |
+| `headroomPercent` | integer 0-100 | 25 | `EXEC_HEADROOM_PERCENT` | margin over the quoted price when the runner sizes the price per CU-hour |
+| `session.expectedInputs` | integer 1-256 | 1 | `EXEC_SESSION_EXPECTED_INPUTS` | inputs the dApp expects to send; sizes the relay cap as 1 + expectedInputs rows |
+| `session.keepOpen` | boolean | false | `EXEC_SESSION_KEEP_OPEN` | keep the session open until the dApp closes it |
+| `session.renew` | boolean | false | `EXEC_SESSION_RENEW` | open a new order on another node when the session expires with inputs pending |
+| `session.maxRenewals` | integer >= 0 | 0 | `EXEC_SESSION_MAX_RENEWALS` | renewals allowed; >= 1 when `renew` is true |
+| `esr.expectedCommits` | integer 0-100 | 0 | `EXEC_ESR_EXPECTED_COMMITS` | state commits the dApp expects to relay per order |
+
+The module exports `DEFAULTS`, `SCHEMA`, `ENV_KEYS` (the ten `.env` keys in
+schema order), `validate(execution)` (the complete object, every missing key
+at its default; the first failing check in schema order throws the fixture's
+message; an unknown key at any level is an error; the session block is
+accepted in both modes and applied in mode `session`; `null` is not a value),
+`normalize(resources)` (a flat `resources` with the legacy `duration` becomes
+`{ resources, execution }` with `duration` as `execution.durationHours`, and
+`execution.durationHours` wins when both are given), `fromEnv(env, prefix)`
+(the `EXEC_*` strings parsed to numbers and booleans, not validated),
+`toEnv(execution)` (the ten strings `ecld-init` writes), `esrEnabled(env)` and
+`relaysPerHour(execution, withEsr)`.
+
+`relaysPerHour` is the relays an order needs per hour of `durationHours`:
+`1 + session.expectedInputs` rows (the `etny-sw` row plus one `etny-so` row
+per input) plus `ESR_COMMITS_PER_HOUR` = 10 commits when the Enclave State
+Registry is enabled; `ecld-run --relays-per-hour <n>` wins over it.
+
+`ecld-run` passes the object nested in `resources` (`resources.execution`)
+beside the flat `duration` (= `durationHours`) that the runner this SDK
+depends on reads, and the task price as given. That runner (`@ethernity-cloud/runner`
+0.6.x) reads `duration` and `taskPrice` only and places the DO request with
+an integer price, so the execution object, the relays per hour and a
+fractional price take effect with the runner that accepts them.
+
+### The securelock at run time
+This section describes the securelock of the Phase D release, sdk-js 1.8.0:
+what a securelock built by `ecld-build` from that version or later writes to
+the order's bucket beside the result, and what it does on the trustedzone's
+controls (the fixtures under `test/fixtures/`: `heartbeat.json`,
+`session-commits.json`, `session-fence.json`; every object the JS securelock
+writes carries the `.securelock` suffix). A securelock built by an earlier
+version writes none of these objects: the trustedzone serves it as before, and
+the validators probe its node after the result only. A dApp takes them up by
+rebuilding and republishing on 1.8.0.
+
+- **Ready and heartbeat.** At boot the securelock writes
+  `securelock.ready.securelock` (and its signature) with the per-order key the
+  heartbeat is encrypted under, then overwrites `securelock.heartbeat.securelock`
+  every second: a fixed-width AES-256-GCM record whose nonce is derived from the
+  sequence number and whose AAD binds the beat to the order, with a `busy` flag
+  set while the payload or a session step runs. The tick runs on the event
+  loop, so a payload that blocks the event loop reads as busy until it returns.
+  On every exit path, including a reported failure, the securelock writes an
+  idle tail of beats with `busy=0` before it stops.
+- **Step commits and the output envelope.** In a session, the `commit` calls of
+  a step are held until the step's output: they are then staged as
+  `session.commit.<n>.<key16>.<relayNonce>.json` (never `esr.commit.*.json`) and
+  the step's signed output envelope names them (`commits`) and carries the
+  signed authorization records with the securelock's ESR wallet (`esr`); the
+  trustedzone stages the names beside the row's proof as
+  `session.output.<seq>.commits`, and the node relays a named commit once that
+  `etny-so` row's receipt is in. A plain task's commits and the fence's are
+  `esr.commit.<key16>.<relayNonce>.json`, relayed as they appear.
+- **The `transfer` stop.** In the last two minutes of a reserved order's
+  window the trustedzone may write the signed `transfer` control on
+  `session.control` (beside `close`): the securelock stops the step in hand and
+  exits without a result, discarding the step's held commits. The step is
+  replayed by the successor order as one of its first inputs, so a step may
+  run twice; a commit is applied once, by its per-key nonce.
+- **The fence.** On a reserved order (the task caller resolved to a
+  reservation holder) the trustedzone writes `session.fence.securelock` before
+  `session.input.0`, carrying the bound (the window's `toBlock`, the
+  predecessor's result block, or kind `none`): the state module re-commits every
+  key the holder may write at its state as of the bound before the first input
+  is read. An unreserved order has no fence object and no wait.
+- **ESR instances.** `ecld-info network` prints the Enclave State Registry of
+  each network (`info.js`); on Polygon Amoy the securelocks commit to
+  `0x1DC58496ed1cA66FD1E0b51fA28A9E7451970843`. The registry with
+  `commitForBatch` enters the tables when the networks switch to it.
+- **The pynithy mirror.** `pynithy/build/securelock` is a byte-for-byte copy
+  of the Python SDK's securelock tree (`ethernity-cloud-sdk-py`,
+  `ethernity_cloud_sdk_py/commands/pynithy/build/securelock`), never edited
+  here: `node scripts/sync-pynithy.mjs [--check] [<path>]` copies it
+  (`ETHERNITY_CLOUD_SDK_PY` names the checkout) and `test/pynithyMirror.test.js`
+  fails when the mirror differs.
 
 ## Project Structure
 
@@ -250,7 +366,7 @@ function hello(msg='World') {
 
 module.exports = { hello };
 ```
-From your frontend application, using the ethernity cloud runner library (`@ethernity-cloud/runner`, installed by `ecld-init` at the version this SDK depends on), you will be calling the function as seen in the below example, where we pass `hello("World");` to be executed on the backend which will run in the Blockchain. `npm start` runs `src/preStart.mjs` first, which fills the constants at the top from the project's `.env`: the securelock name the dApp is published as, the trustedzone it was built against, the network's token address and chain id, the `-unsafe` network when the dApp runs without a CAS, and the IPFS API of the dApp's own (empty when the task's artefacts go through the bootnode's payload intake).
+From your frontend application, using the ethernity cloud runner library (`@ethernity-cloud/runner`, installed by `ecld-init` at the version this SDK depends on), you will be calling the function as seen in the below example, where we pass `hello("World");` to be executed on the backend which will run in the Blockchain. `npm start` runs `src/preStart.mjs` first, which fills the constants at the top from the project's `.env`: the securelock name the dApp is published as, the trustedzone it was built against, the network's token address and chain id, the `-unsafe` network when the dApp runs without a CAS, the IPFS API of the dApp's own (empty when the task's artefacts go through the bootnode's payload intake), and the order's execution object from the `EXEC_*` keys.
 ```js
 import './App.css';
 import EthernityCloudRunner from "@ethernity-cloud/runner";
@@ -259,14 +375,17 @@ import { ECStatus } from "@ethernity-cloud/runner/enums";
 // Filled in from the project's .env by src/preStart.mjs on `npm start`: the
 // securelock this dApp is published as, the trustedzone it was built against,
 // the network's token address and chain id, the -unsafe network when the dApp
-// runs without a CAS (null otherwise), and the IPFS API of the dApp's own ('' when
-// the task's artefacts go through the bootnode's payload intake).
+// runs without a CAS (null otherwise), the IPFS API of the dApp's own ('' when
+// the task's artefacts go through the bootnode's payload intake), and the
+// order's execution object from the EXEC_* keys ecld-init wrote (the defaults
+// below where .env has none).
 const PROJECT_NAME = "";
 const TRUSTED_ZONE_IMAGE = "";
 const NETWORK_ADDRESS = "";
 const CHAIN_ID = null;
 const UNSAFE_NETWORK = null;
 const IPFS_ENDPOINT = "";
+const EXECUTION = {"mode":"task","durationHours":1,"parallelism":1,"maxCu":0,"headroomPercent":25,"session":{"expectedInputs":1,"keepOpen":false,"renew":false,"maxRenewals":0},"esr":{"expectedCommits":0}};
 
 // A call into src/serverless/backend.js; its return value is the task result.
 const code = `hello("World");`;
@@ -299,7 +418,13 @@ function App() {
             document.body.appendChild(line);
         });
 
-        const resources = { taskPrice: 10, cpu: 1, memory: 1, storage: 10, bandwidth: 1, duration: 1, validators: 1 };
+        // taskPrice is in ECLD and may be fractional (2.5); the flat duration is
+        // what a 1.1 runner reads, the nested execution is the order's execution
+        // object for the runner that takes it.
+        const resources = {
+            taskPrice: 10, cpu: 1, memory: 1, storage: 10, bandwidth: 1, validators: 1,
+            duration: EXECUTION.durationHours, execution: EXECUTION,
+        };
         await runner.run(resources, PROJECT_NAME, code, '', TRUSTED_ZONE_IMAGE);
     };
 

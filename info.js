@@ -11,12 +11,16 @@
  *   SECURELOCK    the executor enclave's Image Registry record
  *   ESR           registry address, total keys, and -- with --enclave <wallet>
  *                 -- this enclave's recent StateCommitted events
+ *   EXECUTION     the order's execution object from the EXEC_* keys of .env
+ *                 (execution.js; the defaults where .env has none) and the
+ *                 relays-per-hour default it gives with ESR_ENABLED
  *
  * Subcommands (default: the full summary):
  *   ecld-info                       full summary
  *   ecld-info network               just the network section
  *   ecld-info trustedzone           just the trustedzone registration
  *   ecld-info securelock            just the securelock registration
+ *   ecld-info execution             just the execution section
  *   ecld-info esr address|count|state|version|nonce|list   ESR inspection
  *
  * Registration is keyed by the image's IPFS hash: pass --ipfs <hash> for an
@@ -34,6 +38,7 @@ const path = require('path');
 const { ethers } = require('ethers');
 try { require('dotenv').config(); } catch (e) { /* dotenv optional */ }
 const casConfig = require('./cas/config.js');
+const execution = require('./execution.js');
 
 // Authoritative per-network values (mirror of the Python SDK's network table).
 const NETWORKS = {
@@ -211,6 +216,38 @@ async function sectionEsr(prov, net, enclaveWallet, eventsN) {
   return out;
 }
 
+// The execution object of the EXEC_* keys in env (.env is loaded into
+// process.env above) and the relays-per-hour default for it; an invalid key
+// is reported with execution.js's message.
+function sectionExecution(env) {
+  const given = execution.fromEnv(env);
+  const out = { source: Object.keys(given).length ? '.env EXEC_*' : 'defaults (no EXEC_* in .env)' };
+  try {
+    out.execution = execution.validate(given);
+  } catch (e) {
+    out.error = e.message;
+    return out;
+  }
+  out.esr_enabled = execution.esrEnabled(env);
+  out.relays_per_hour = execution.relaysPerHour(out.execution, out.esr_enabled);
+  return out;
+}
+
+function printExecution(x) {
+  console.log('EXECUTION');
+  console.log(`  source:       ${x.source}`);
+  if (x.error) { console.log(`  invalid:      ${x.error}`); return; }
+  const e = x.execution;
+  console.log(`  mode:         ${e.mode}`);
+  console.log(`  duration:     ${e.durationHours} h`);
+  console.log(`  parallelism:  ${e.parallelism}`);
+  console.log(`  max cu:       ${e.maxCu === 0 ? '0 (any node)' : `${e.maxCu} thousandths of a CU`}`);
+  console.log(`  headroom:     ${e.headroomPercent} %`);
+  console.log(`  session:      expected inputs ${e.session.expectedInputs}, keep open ${e.session.keepOpen}, renew ${e.session.renew}, max renewals ${e.session.maxRenewals}${e.mode === 'session' ? '' : ' (applied in mode session)'}`);
+  console.log(`  esr commits:  ${e.esr.expectedCommits} expected per order`);
+  console.log(`  relays/hour:  ${x.relays_per_hour} (1 + expected inputs rows, plus ${execution.ESR_COMMITS_PER_HOUR} commits with ESR enabled; ESR_ENABLED=${x.esr_enabled})`);
+}
+
 async function esrQuery(prov, name, net, args) {
   const esrAddr = args.contract || net.esr;
   const sub = args.esrCmd || 'address';
@@ -304,14 +341,18 @@ function printFull(info) {
   }
   const e = info.esr || {};
   console.log('ESR');
-  if (e.note) { console.log(`  ${e.note}`); return; }
-  console.log(`  registry:     ${e.esr_contract}`);
-  if ('total_registry_entries' in e) console.log(`  total keys:   ${e.total_registry_entries} (all enclaves)`);
-  if (e.recent_commits) {
-    console.log(`  recent state commits for this enclave: ${e.recent_commits.length}`);
-    e.recent_commits.forEach((c) => console.log(`    v${c.version}  seq ${c.seq}  nonce ${c.nonce}  ${c.key_hash}  ${c.cid}  (block ${c.block})`));
-  } else if (e.recent_commits_note) console.log(`  ${e.recent_commits_note}`);
-  else if (e.recent_commits_error) console.log(`  (could not read commits: ${e.recent_commits_error})`);
+  if (e.note) {
+    console.log(`  ${e.note}`);
+  } else {
+    console.log(`  registry:     ${e.esr_contract}`);
+    if ('total_registry_entries' in e) console.log(`  total keys:   ${e.total_registry_entries} (all enclaves)`);
+    if (e.recent_commits) {
+      console.log(`  recent state commits for this enclave: ${e.recent_commits.length}`);
+      e.recent_commits.forEach((c) => console.log(`    v${c.version}  seq ${c.seq}  nonce ${c.nonce}  ${c.key_hash}  ${c.cid}  (block ${c.block})`));
+    } else if (e.recent_commits_note) console.log(`  ${e.recent_commits_note}`);
+    else if (e.recent_commits_error) console.log(`  (could not read commits: ${e.recent_commits_error})`);
+  }
+  printExecution(info.execution);
 }
 
 async function main() {
@@ -333,6 +374,11 @@ async function main() {
   if (section === 'network') { emit(await sectionNetwork(prov, netName, net), args.json); return; }
   if (section === 'trustedzone') { emit(await sectionRegistration(prov, net, 'trustedzone', ipfs, projName), args.json); return; }
   if (section === 'securelock') { emit(await sectionRegistration(prov, net, 'securelock', ipfs, projName), args.json); return; }
+  if (section === 'execution') {
+    const x = sectionExecution(process.env);
+    if (args.json) console.log(JSON.stringify(x, null, 2)); else printExecution(x);
+    return;
+  }
 
   const info = {
     project: { name: projName || '(unknown)', dapp_type: process.env.SERVICE_TYPE || process.env.DAPP_TYPE, version: process.env.VERSION },
@@ -340,6 +386,7 @@ async function main() {
     trustedzone: await sectionRegistration(prov, net, 'trustedzone', ipfs, projName),
     securelock: await sectionRegistration(prov, net, 'securelock', ipfs, projName),
     esr: await sectionEsr(prov, net, args.enclave || null, parseInt(args.events || 10, 10)),
+    execution: sectionExecution(process.env),
   };
   if (args.json) { console.log(JSON.stringify(info, null, 2)); return; }
   const pr = info.project;

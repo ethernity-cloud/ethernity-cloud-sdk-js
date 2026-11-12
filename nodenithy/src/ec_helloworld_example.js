@@ -5,14 +5,17 @@ import { ECStatus } from "@ethernity-cloud/runner/enums";
 // Filled in from the project's .env by src/preStart.mjs on `npm start`: the
 // securelock this dApp is published as, the trustedzone it was built against,
 // the network's token address and chain id, the -unsafe network when the dApp
-// runs without a CAS (null otherwise), and the IPFS API of the dApp's own ('' when
-// the task's artefacts go through the bootnode's payload intake).
+// runs without a CAS (null otherwise), the IPFS API of the dApp's own ('' when
+// the task's artefacts go through the bootnode's payload intake), and the
+// order's execution object from the EXEC_* keys ecld-init wrote (the defaults
+// below where .env has none).
 const PROJECT_NAME = "";
 const TRUSTED_ZONE_IMAGE = "";
 const NETWORK_ADDRESS = "";
 const CHAIN_ID = null;
 const UNSAFE_NETWORK = null;
 const IPFS_ENDPOINT = "";
+const EXECUTION = {"mode":"task","durationHours":1,"parallelism":1,"maxCu":0,"headroomPercent":25,"session":{"expectedInputs":1,"keepOpen":false,"renew":false,"maxRenewals":0},"esr":{"expectedCommits":0}};
 
 // A call into src/serverless/backend.js; its return value is the task result.
 const code = `hello("World");`;
@@ -45,7 +48,13 @@ function App() {
             document.body.appendChild(line);
         });
 
-        const resources = { taskPrice: 10, cpu: 1, memory: 1, storage: 10, bandwidth: 1, duration: 1, validators: 1 };
+        // taskPrice is in ECLD and may be fractional (2.5); the flat duration is
+        // what a 1.1 runner reads, the nested execution is the order's execution
+        // object for the runner that takes it.
+        const resources = {
+            taskPrice: 10, cpu: 1, memory: 1, storage: 10, bandwidth: 1, validators: 1,
+            duration: EXECUTION.durationHours, execution: EXECUTION,
+        };
         await runner.run(resources, PROJECT_NAME, code, '', TRUSTED_ZONE_IMAGE);
     };
 
