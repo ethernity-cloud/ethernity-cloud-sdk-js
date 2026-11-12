@@ -23,8 +23,9 @@ class TaskStatus {
     // The enclave signed state commits but they did not land on the registry
     // within 5 blocks -- the node did not relay them. The validator REFUNDS.
     static ESR_RELAY_TIMEOUT = 37;
-    // More than 100 state commits in one run -- the per-run cap that bounds
-    // relayed transactions and the result size. dApp-side fault: NO refund.
+    // More than MAX_COMMITS_PER_TASK (256, ecld_state.js) state commits in one
+    // run -- the per-run cap that bounds relayed transactions and the result
+    // size. dApp-side fault: NO refund.
     static ESR_COMMIT_LIMIT_EXCEEDED = 38;
                                         // suppressed, state unchanged (StateNonceError).
                                         // the task's submitter (the in-enclave ownership check was
