@@ -60,12 +60,13 @@ const NETWORKS = {
     imageRegistry: '0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D',
     esr: '0x709052Fe77Af543d3d9FE2Ac06a15c635c8D4Be5',
   },
-  // The separate-ERC20 implementation 1.1 of 2026-10-28 on the storage and
-  // token of the previous implementation 0x1579b37C...; the V3 registry and
-  // the ESR of the same day.
+  // The implementation 1.2 of 2026-11-12 on the storage and token of the
+  // implementations 1.1 0xB8f46D2B... and 0x1579b37C... (a DO request is
+  // escrowed by the implementation it was posted through, so only 1.2 is
+  // served); the V3 registry and the ESR of 2026-10-28.
   POLYGON_AMOY_TESTNET: {
     type: 'testnet', chainId: 80002, rpc: 'https://polygon-amoy-bor-rpc.publicnode.com',
-    protocol: '0xB8f46D2B943fFbe2A061Ae8be087ef5055AD96A3',
+    protocol: '0x3Aa1A0d7A8A9DaE9e13345D3261afe86D67326A4',
     imageRegistry: '0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706',
     esr: '0x1DC58496ed1cA66FD1E0b51fA28A9E7451970843',
   },
