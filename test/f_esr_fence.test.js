@@ -260,3 +260,34 @@ test('a re-commit the node never relays fails the fence after its landing wait',
   assert.ok(outcome && outcome.error, 'the fence failed');
   assert.match(outcome.error.message, /did not land within 120 s/);
 });
+
+test('the chain is read in spans of at most 3000 blocks and never to "latest", as the LitVM LiteForge RPC serves it', async (t) => {
+  const env = setup(t);
+  const { ecldState, contract, land, task } = env;
+  contract.landAt(10);
+  await land(HOLDER, 'ledger', set(1));
+  await land(HOLDER, 'spot', set(7));
+  contract.landAt(5000);
+  await land(HOLDER, 'ledger', set(2));
+  contract.landAt(20000);
+  task(HOLDER);
+  // The Zeeve RPC's answer to a range wider than 3000 blocks.
+  const ranges = [];
+  const queryFilter = contract.queryFilter.bind(contract);
+  contract.queryFilter = async (filter, from, to) => {
+    ranges.push([from, to]);
+    if (!Number.isInteger(to) || to - from + 1 > 3000) throw new Error('eth_getLogs range exceeds 3000 blocks; split the range');
+    return queryFilter(filter, from, to);
+  };
+  const fenced = await drive(t, env, ecldState.fence(7000));
+  assert.deepEqual(fenced.map((f) => [f.keyHash, f.expectedVersion]), [[KH('ledger'), 2], [KH('spot'), 1]]);
+  const registry = new ecldState.StateRegistry();
+  assert.deepEqual(await registry.get('ledger'), { n: 2 });
+  assert.deepEqual(await registry.get('spot'), { n: 7 });
+  // The commits after the bound are read forward from it to the pinned head
+  // (19992) in 3000-block spans, the state as of the bound backwards from the
+  // bound to block 0, and the landing forward from the bound to the head.
+  for (const span of [[7001, 10000], [19001, 19992], [4001, 7000], [1001, 4000], [0, 1000], [19001, 20000]]) {
+    assert.ok(ranges.some(([from, to]) => from === span[0] && to === span[1]), `a read of [${span}]`);
+  }
+});

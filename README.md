@@ -212,7 +212,7 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   that IPFS RPC API instead, with `ECLD_IPFS_TOKEN` (or `IPFS_TOKEN`) as its
   Authorization header, and a URL naming the public API is refused without one.
   The chain calls of a run go through the network's own RPC (publicnode's Sepolia
-  endpoint, LitVM's Caldera endpoint, IoTeX's babel API); the runner's defaults
+  endpoint, LitVM's Zeeve endpoint, IoTeX's babel API); the runner's defaults
   cover the other networks.
   The intake serves the networks the bootnode's agent runs, today the bloxberg
   testnet, LitVM LiteForge and Ethereum Sepolia, each with its unsafe twin: a dApp on any other

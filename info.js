@@ -55,7 +55,7 @@ const NETWORKS = {
     esr: '0x0Ea1728EAE108FD3B9340ae91451348E2Cc6b4E4',
   },
   LITVM_LITEFORGE: {
-    type: 'testnet', chainId: 4441, rpc: 'https://liteforge.rpc.caldera.xyz/infra-partner-http',
+    type: 'testnet', chainId: 4441, rpc: 'https://rpc.testnet.liteforge.zeeve.net/',
     protocol: '0xE35991de1f2A435e29E70406FA2781b1AffCb168',
     imageRegistry: '0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D',
     esr: '0x709052Fe77Af543d3d9FE2Ac06a15c635c8D4Be5',
@@ -103,6 +103,24 @@ const ESR_ABI = [
   'function getEntriesFrom(uint256 start, uint256 limit) view returns (address[] enclaves, bytes32[] keys, string[] cids, uint256[] versions, uint64[] updatedAts, uint256 total)',
   'event StateCommitted(address indexed enclave, bytes32 indexed key, string cid, uint256 version, uint256 seq, uint256 nonce)',
 ];
+
+// The widest eth_getLogs range LitVM LiteForge's RPC serves: a wider one is
+// refused ("eth_getLogs range exceeds 3000 blocks; split the range").
+const LOG_CHUNK_BLOCKS = 3000;
+// The blocks behind the head the commit listing looks back over.
+const COMMIT_LOOKBACK_BLOCKS = 500000;
+
+// The last `want` logs of `filter` in [from, to], oldest first: the range is
+// read from `to` backwards in spans of LOG_CHUNK_BLOCKS blocks, and the read
+// stops once `want` logs are held.
+async function lastLogs(contract, filter, from, to, want) {
+  const found = [];
+  for (let hi = to; hi >= from && found.length < want; hi -= LOG_CHUNK_BLOCKS) {
+    const lo = Math.max(from, hi - LOG_CHUNK_BLOCKS + 1);
+    found.unshift(...await contract.queryFilter(filter, lo, hi));
+  }
+  return found.slice(-want);
+}
 
 function resolveNetwork(name) {
   name = (name || process.env.ESR_NETWORK || process.env.BLOCKCHAIN_NETWORK || 'BLOXBERG_TESTNET')
@@ -195,10 +213,9 @@ async function sectionEsr(prov, net, enclaveWallet, eventsN) {
   if (enclaveWallet) {
     try {
       const latest = await prov.getBlockNumber();
-      const from = Math.max(0, latest - 500000);
+      const from = Math.max(0, latest - COMMIT_LOOKBACK_BLOCKS);
       const flt = esr.filters.StateCommitted(ethers.utils.getAddress(enclaveWallet));
-      let logs = await esr.queryFilter(flt, from, 'latest');
-      logs = logs.slice(-eventsN);
+      const logs = await lastLogs(esr, flt, from, latest, eventsN);
       out.recent_commits = logs.map((l) => ({
         key_hash: l.args.key,
         version: l.args.version.toNumber(),
@@ -395,4 +412,8 @@ async function main() {
   printFull(info);
 }
 
-main().catch((e) => { console.error(`ecld-info: ${e.message}`); process.exit(1); });
+module.exports = { lastLogs, LOG_CHUNK_BLOCKS };
+
+if (require.main === module) {
+  main().catch((e) => { console.error(`ecld-info: ${e.message}`); process.exit(1); });
+}

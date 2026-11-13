@@ -552,10 +552,11 @@ let _taskRelayNonces = {};
 
 // The fence's chain reads, the values of the Python securelock's ecld_state:
 // getEntriesFrom is paged by ENTRIES_PAGE entries and StateCommitted logs
-// are read in spans of at most LOG_RANGE_BLOCKS blocks (public RPCs cap a
-// log read's range).
+// are read in spans of at most LOG_RANGE_BLOCKS blocks, inclusive (the LitVM
+// LiteForge RPC hosted by Zeeve refuses a wider eth_getLogs range:
+// "eth_getLogs range exceeds 3000 blocks; split the range").
 const ENTRIES_PAGE = 500;
-const LOG_RANGE_BLOCKS = 40000;
+const LOG_RANGE_BLOCKS = 3000;
 // The blocks a replica behind the chain's head may lack (PHASE-D-PLAN.md
 // section 12): the state as of the bound is read once the head is this far
 // past it, every read of it pinned to head minus this.
@@ -987,7 +988,9 @@ class StateRegistry {
         auth = await this._sendCommit(kh, cid, version, normAddr(acl.owner), nonce, true);
       }
       // eslint-disable-next-line no-await-in-loop
-      const logs = await contract.queryFilter(contract.filters.StateCommitted(enclave, kh), bound + 1, 'latest');
+      const head = Number(await contract.provider.getBlockNumber());
+      // eslint-disable-next-line no-await-in-loop
+      const logs = await logsInRange(contract, contract.filters.StateCommitted(enclave, kh), bound + 1, head);
       const landed = logs.find((log) => String(log.args.cid) === cid);
       if (landed) {
         _taskNonces[kh] = auth.nonce;
@@ -1048,6 +1051,18 @@ async function fence(bound) {
   return fenced;
 }
 
+// The StateCommitted logs of `filter` in [from, to], as queryFilter answers
+// them, read forward in spans of at most LOG_RANGE_BLOCKS blocks.
+async function logsInRange(contract, filter, from, to) {
+  const logs = [];
+  for (let lo = from; lo <= to; lo += LOG_RANGE_BLOCKS) {
+    const hi = Math.min(lo + LOG_RANGE_BLOCKS - 1, to);
+    // eslint-disable-next-line no-await-in-loop
+    logs.push(...await contract.queryFilter(filter, lo, hi));
+  }
+  return logs;
+}
+
 // The first block at or after `bound` that is RPC_REPLICA_LAG_BLOCKS behind
 // the head, polled every STATE_STAGE_POLL_MS until the head is that far past
 // the bound: the block every read of the state as of the bound is pinned to,
@@ -1090,7 +1105,7 @@ async function identityKeys(contract, enclave, readAt) {
 // spans until each is found.
 async function commitsAtOrBefore(contract, enclave, bound, readAt) {
   const after = new Map();
-  for (const log of await contract.queryFilter(contract.filters.StateCommitted(enclave), bound + 1, readAt)) {
+  for (const log of await logsInRange(contract, contract.filters.StateCommitted(enclave), bound + 1, readAt)) {
     const kh = String(log.args.key).toLowerCase();
     after.set(kh, (after.get(kh) || 0) + 1);
   }
@@ -1104,7 +1119,7 @@ async function commitsAtOrBefore(contract, enclave, bound, readAt) {
   while (need.size > 0) {
     const from = Math.max(0, to - LOG_RANGE_BLOCKS + 1);
     // eslint-disable-next-line no-await-in-loop
-    const logs = await contract.queryFilter(contract.filters.StateCommitted(enclave), from, to);
+    const logs = await logsInRange(contract, contract.filters.StateCommitted(enclave), from, to);
     for (let i = logs.length - 1; i >= 0; i -= 1) {
       const kh = String(logs[i].args.key).toLowerCase();
       if (!need.has(kh)) continue;

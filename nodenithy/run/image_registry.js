@@ -40,7 +40,9 @@ function setVars(network = "") {
             GAS_PRICE = 40000000010;
         }
     } else if (BLOCKCHAIN_NETWORK.includes("LitVM")) {
-        NETWORK_RPC = "https://liteforge.rpc.caldera.xyz/infra-partner-http";
+        // LiteForge's RPC is Zeeve's (docs.litvm.com); the registry is the
+        // ECImageRegistryV3 of 2026-10-12.
+        NETWORK_RPC = "https://rpc.testnet.liteforge.zeeve.net/";
         IMAGE_REGISTRY_ADDRESS = "0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D";
         CHAIN_ID = 4441;
     } else if (BLOCKCHAIN_NETWORK.includes("Sepolia")) {

@@ -43,12 +43,14 @@ const SESSION_REGISTRY = {
 };
 
 // The chain the registries above live on. Sepolia's RPC is Tenderly's gateway:
-// publicnode caps eth_getLogs at 50,000 blocks and prunes older ranges.
+// publicnode caps eth_getLogs at 50,000 blocks and prunes older ranges. LitVM
+// LiteForge's RPC is Zeeve's (docs.litvm.com), which caps eth_getLogs at 3,000
+// blocks.
 const CHAIN = {
   'etny-pynithy-testnet': { rpcUrl: 'https://bloxberg.ethernity.cloud', chainId: 8995 },
   'etny-nodenithy-testnet': { rpcUrl: 'https://bloxberg.ethernity.cloud', chainId: 8995 },
-  'ecld-pynithy-litvm-testnet': { rpcUrl: 'https://liteforge.rpc.caldera.xyz/infra-partner-http', chainId: 4441 },
-  'ecld-nodenithy-litvm-testnet': { rpcUrl: 'https://liteforge.rpc.caldera.xyz/infra-partner-http', chainId: 4441 },
+  'ecld-pynithy-litvm-testnet': { rpcUrl: 'https://rpc.testnet.liteforge.zeeve.net/', chainId: 4441 },
+  'ecld-nodenithy-litvm-testnet': { rpcUrl: 'https://rpc.testnet.liteforge.zeeve.net/', chainId: 4441 },
   'ecld-pynithy-ethereum-sepolia': { rpcUrl: 'https://sepolia.gateway.tenderly.co', chainId: 11155111 },
   'ecld-nodenithy-ethereum-sepolia': { rpcUrl: 'https://sepolia.gateway.tenderly.co', chainId: 11155111 },
   'ecld-pynithy-amoy': { rpcUrl: 'https://polygon-amoy-bor-rpc.publicnode.com', chainId: 80002 },

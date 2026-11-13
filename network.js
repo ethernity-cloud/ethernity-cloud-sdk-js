@@ -21,7 +21,7 @@ function networkFor({ ECAddress, ECNetworkByChainId }, raw) {
   const bloxbergTestnet = { address: ECAddress.BLOXBERG.TESTNET_ADDRESS };
   const amoy = { address: ECAddress.POLYGON.TESTNET_ADDRESS };
   const sepolia = { address: ECAddress.SEPOLIA.TESTNET_ADDRESS, chainId: ECNetworkByChainId.SEPOLIA.TESTNET, rpcUrl: 'https://ethereum-sepolia-rpc.publicnode.com' };
-  const litvm = { address: ECAddress.LITVM.TESTNET_ADDRESS, chainId: ECNetworkByChainId.LITVM.TESTNET, rpcUrl: 'https://liteforge.rpc.caldera.xyz/infra-partner-http' };
+  const litvm = { address: ECAddress.LITVM.TESTNET_ADDRESS, chainId: ECNetworkByChainId.LITVM.TESTNET, rpcUrl: 'https://rpc.testnet.liteforge.zeeve.net/' };
   const table = {
     BLOXBERG_TESTNET: bloxbergTestnet,
     BLOXBERG_TESTNET_UNSAFE: { ...bloxbergTestnet, unsafe: ['BLOXBERG', 'TESTNET_UNSAFE'] },
