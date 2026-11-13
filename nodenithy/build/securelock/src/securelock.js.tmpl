@@ -319,9 +319,11 @@ class EtnySecureLock {
             // TERMINAL. A network that carries a ValidatorRegistry EXPECTS an
             // attested CAS, so a MISSING quote is as damning as a wrong one --
             // the operator provisioned this task outside the validator set.
-            // Recorded here and adjudicated before the payload
-            // is handled -- the task then terminates with
-            // CAS_ATTESTATION_FAULT (40) and the order is refunded.
+            // Recorded here and adjudicated before the payload is handled --
+            // the task then ends with CAS_ATTESTATION_FAULT (40). The
+            // trustedzone adopts no refund code from the securelock
+            // (its SECURELOCK_CODES exclude 40), so the order ends as a dApp
+            // fault, SECURITY_VIOLATION (35), without a refund.
             console.error(`CAS ATTESTATION INVALID: ${reason}`);
             this.cas_attestation_fault = reason;
         };
@@ -989,13 +991,15 @@ class EtnySecureLock {
     async execute() {
         // ADJUDICATE the CAS attestation verdict recorded at startup. An
         // INVALID CAS quote terminates the task before the payload is
-        // handled; the failure result (CAS_ATTESTATION_FAULT, 40) reaches
-        // the chain -- the refundable operator-fault path.
+        // handled; the failure result (CAS_ATTESTATION_FAULT, 40) is handed
+        // to the trustedzone, which ends the order as a dApp fault
+        // (SECURITY_VIOLATION 35): a securelock code is never a refund code.
         if (this.cas_attestation_fault) {
             this.task_code = String(TaskStatus.CAS_ATTESTATION_FAULT);
             this.task_result = `CAS_ATTESTATION_FAULT: ${this.cas_attestation_fault} -- ` +
-                `the operator provisioned this task through a CAS that failed ` +
-                `self-attestation; order terminated for refund.`;
+                `the CAS this task was provisioned through failed the securelock's ` +
+                `attestation check against ValidatorRegistry ${this.validator_registry_address}; ` +
+                `the trustedzone ends the order as a dApp fault.`;
             return;
         }
         const payload_data = await this.getFileContentAndDecrypt(this.etny_bucket, this.payload);
