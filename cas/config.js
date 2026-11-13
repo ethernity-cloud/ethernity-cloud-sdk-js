@@ -21,9 +21,10 @@ const VALIDATOR_REGISTRY = {
   'ecld-nodenithy-litvm-testnet': '0xbE3759f327e8643fC5A1717fb2072A0dAcBAD29E',
   'ecld-pynithy-ethereum-sepolia': '0x8ad24b3F406A41a0F8D3440021792EB203957F43',
   'ecld-nodenithy-ethereum-sepolia': '0x8ad24b3F406A41a0F8D3440021792EB203957F43',
-  // Amoy's ValidatorRegistry of 2026-10-28 (ethernity-cas CAS-SETUP.md).
-  'ecld-pynithy-amoy': '0x70bfdf41D4061592DF509b9b46F91a8457F88483',
-  'ecld-nodenithy-amoy': '0x70bfdf41D4061592DF509b9b46F91a8457F88483',
+  // Amoy's ValidatorRegistry R2 of 2026-11-12 (ethernity-cas CAS-SETUP.md "The
+  // cut of 2026-11-12"); R1 0x70bfdf41... holds no serving member.
+  'ecld-pynithy-amoy': '0x48079D66B39cD3213587d3b5300BCEc401df6676',
+  'ecld-nodenithy-amoy': '0x48079D66B39cD3213587d3b5300BCEc401df6676',
 };
 
 const SESSION_REGISTRY = {
