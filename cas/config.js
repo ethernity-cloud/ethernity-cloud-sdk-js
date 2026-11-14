@@ -14,9 +14,11 @@
 // Kept in sync with etny-{pynithy,nodenithy}/v3/networks.yaml
 // (cas_session_registry_address, validator_registry_address).
 const VALIDATOR_REGISTRY = {
-  // The Phase 2 ValidatorRegistry of 2026-10-21 (ethernity-cas CAS-SETUP.md).
-  'etny-pynithy-testnet': '0x8CC8B1dc22f0E06193161CeC79d75987b0640e02',
-  'etny-nodenithy-testnet': '0x8CC8B1dc22f0E06193161CeC79d75987b0640e02',
+  // Bloxberg testnet's ValidatorRegistry R3 of 2026-11-14 (ethernity-cas
+  // CAS-SETUP.md "The cut of 2026-11-14 on bloxberg testnet"), seeded from the
+  // Phase 2 registry 0x8CC8B1dc... of 2026-10-21; its set judges the PoX 1.2.
+  'etny-pynithy-testnet': '0xc346BfFC83f318FbbC34987cEF85716a3f7dCcB0',
+  'etny-nodenithy-testnet': '0xc346BfFC83f318FbbC34987cEF85716a3f7dCcB0',
   'ecld-pynithy-litvm-testnet': '0xbE3759f327e8643fC5A1717fb2072A0dAcBAD29E',
   'ecld-nodenithy-litvm-testnet': '0xbE3759f327e8643fC5A1717fb2072A0dAcBAD29E',
   'ecld-pynithy-ethereum-sepolia': '0x8ad24b3F406A41a0F8D3440021792EB203957F43',

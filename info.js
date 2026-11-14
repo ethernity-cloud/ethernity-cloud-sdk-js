@@ -48,9 +48,13 @@ const NETWORKS = {
     imageRegistry: '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31',
     esr: '0x4Bf5cDE3BFD73dd10B707f8B123Ba631D2EBEAD2',
   },
+  // The PoX 1.2 implementation of 2026-11-14 (pox-smart-contract-litvm) on its
+  // own EthernityCloudStorage; the tETNY token is the legacy proxy
+  // 0x02882F03..., whose orders stay on the legacy path. The V3 registry of
+  // 2026-10-06 and the ESR.
   BLOXBERG_TESTNET: {
     type: 'testnet', chainId: 8995, rpc: 'https://bloxberg.ethernity.cloud',
-    protocol: '0x02882F03097fE8cD31afbdFbB5D72a498B41112c',
+    protocol: '0x7E7C6eB435E3687CfDfe18C09C0340eb70567d7b',
     imageRegistry: '0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1',
     esr: '0x0Ea1728EAE108FD3B9340ae91451348E2Cc6b4E4',
   },

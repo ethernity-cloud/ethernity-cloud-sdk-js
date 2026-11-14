@@ -46,7 +46,7 @@ The sdk has been tested on the following operating systems:
       name, which makes the name the publishing wallet's; then registers the
       securelock session on-chain in the SessionRegistry (`0x78f0c5E9...`, see
       `cas/config.js`), which takes it only from that wallet, resolves a CAS
-      from the ValidatorRegistry (`0x8CC8B1dc...`, or `ECLD_CAS_ADDR=host:port`)
+      from the ValidatorRegistry (`0xc346BfFC...`, or `ECLD_CAS_ADDR=host:port`)
       for the compose and the certificate harvest, takes the trustedzone
       session name from the ImageRegistry, and links the session to the
       published image. `ecld-build` signs the securelock `--production`.
