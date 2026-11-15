@@ -44,6 +44,9 @@ services:
           # SCONE_HEAP and SCONE_STACK are part of MRENCLAVE: the values the
           # securelock was signed with (build.mjs, MEMORY_TO_ALLOCATE).
           - SCONE_HEAP=__MEMORY_TO_ALLOCATE__
+          # Enclave threads: twice the node's CPUs, at most the 64 TCS the
+          # image is signed with; the node agent exports ETNY_SCONE_QUEUES.
+          - SCONE_QUEUES=${ETNY_SCONE_QUEUES:-4}
           - SCONE_STACK=4M
           - SCONE_LOG=FATAL
           - SCONE_ALLOW_DLOPEN=1
@@ -67,6 +70,7 @@ services:
           # The heap the trustedzone was measured and registered with
           # (etny-pynithy v3/run/docker-compose.yml).
           - SCONE_HEAP=256M
+          - SCONE_QUEUES=${ETNY_SCONE_QUEUES:-4}
           - SCONE_LOG=FATAL
           - SCONE_ALLOW_DLOPEN=1
           - SCONE_EXTENSIONS_PATH=/lib/libbinary-fs.so

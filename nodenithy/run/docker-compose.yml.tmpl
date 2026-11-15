@@ -43,6 +43,9 @@ services:
       # (build.mjs), otherwise SCONE recomputes MRENCLAVE at load and re-signs
       # as debug. The heap is the build's MEMORY_TO_ALLOCATE (.env).
       - SCONE_HEAP=__MEMORY_TO_ALLOCATE__
+      # Enclave threads: twice the node's CPUs, at most the 64 TCS the image
+      # is signed with; the node agent exports ETNY_SCONE_QUEUES to compose.
+      - SCONE_QUEUES=${ETNY_SCONE_QUEUES:-4}
       - SCONE_STACK=4M
       - SCONE_LOG=DEBUG
       - SCONE_ALLOW_DLOPEN=1
@@ -64,6 +67,7 @@ services:
       # The heap the trustedzone was signed with: the SCONE_HEAP of the
       # bundled trustedzone image (run.js reads it from the image).
       - SCONE_HEAP=__TRUSTEDZONE_HEAP__
+      - SCONE_QUEUES=${ETNY_SCONE_QUEUES:-4}
       - SCONE_LOG=DEBUG
       - SCONE_ALLOW_DLOPEN=1
       - SCONE_EXTENSIONS_PATH=/lib/libbinary-fs.so

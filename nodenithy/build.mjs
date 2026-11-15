@@ -292,7 +292,7 @@ writeEnv('SECURELOCK_NODE_FLAGS', NODE_FLAGS.join(' '));
 // debug re-sign. Values mirror the run/docker-compose securelock service.
 const signFlags =
   `--key=/enclave-key.pem --env --heap=${MEMORY_TO_ALLOCATE} ` +
-  `--stack=4M --dlopen=1 --extensions=/lib/libbinary-fs.so`;
+  `--stack=4M --tcs=64 --dlopen=1 --extensions=/lib/libbinary-fs.so`;
 
 // scone-signer prints two tab-indented "MRENCLAVE:" lines (non-EDMM first;
 // runtime has EDMM disabled, so the first is what SCONE_HASH produces). Capture

@@ -214,7 +214,7 @@ if (ESR_ENABLED) {
 // self-signing testnet securelock is signed debug.
 const signFlags =
   `--key=/enclave-key.pem --env --heap=${MEMORY_TO_ALLOCATE} ` +
-  `--stack=4M --dlopen=1 --extensions=/lib/libbinary-fs.so`;
+  `--stack=4M --tcs=64 --dlopen=1 --extensions=/lib/libbinary-fs.so`;
 
 console.log('Building etny-securelock');
 fs.writeFileSync('Dockerfile', fs.readFileSync('Dockerfile.tpl', 'utf8')
