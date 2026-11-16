@@ -15,6 +15,10 @@ const BASE_URL = "https://publickey.ethernity.cloud";
 // The watcher polls the registries every 30 s.
 const CHAIN_ROW_GRACE_SECONDS = 180;
 const POLL_SECONDS = 10;
+// How long one request to the service may take to connect and answer; a
+// request that stalls is given up and the loop polls again, instead of the
+// publish hanging on it.
+const REQUEST_TIMEOUT_MS = 30000;
 // A failed extraction is recorded against the hash with publicKey -1 and a
 // reason, and a new submission of the hash runs it again. The service answers
 // the old record for a moment after a submission, so a failed answer is taken
@@ -35,7 +39,7 @@ async function submitIpfsHash(hash, enclaveName, protocolVersion, network, templ
         docker_composer_hash: dockerComposerHash,
     };
     try {
-        const response = await axios.post(url, payload);
+        const response = await axios.post(url, payload, { timeout: REQUEST_TIMEOUT_MS });
         return response.data;
     } catch (error) {
         console.error("Error:", error.response ? error.response.data : error.message);
@@ -44,15 +48,17 @@ async function submitIpfsHash(hash, enclaveName, protocolVersion, network, templ
 }
 
 // The service's answer for the hash, or null while the service does not
-// know the hash yet (404).
+// know the hash yet (404) or while the request does not reach it or stalls
+// (REQUEST_TIMEOUT_MS): the poll loop asks again after POLL_SECONDS.
 async function checkIpfsHashStatus(hash) {
     const url = `${BASE_URL}/api/checkHash/${hash}`;
     try {
-        const response = await axios.get(url);
+        const response = await axios.get(url, { timeout: REQUEST_TIMEOUT_MS });
         return response.data;
     } catch (error) {
-        if (error.response && error.response.status === 404) return null;
-        console.error("Error:", error.response ? error.response.data : error.message);
+        if (!error.response) return null;
+        if (error.response.status === 404) return null;
+        console.error("Error:", error.response.data);
         process.exit(1);
     }
 }
@@ -173,4 +179,4 @@ async function main() {
 
 if (require.main === module) main();
 
-module.exports = { queueImage, CHAIN_ROW_GRACE_SECONDS, POLL_SECONDS, RESUBMIT_GRACE_SECONDS };
+module.exports = { queueImage, checkIpfsHashStatus, CHAIN_ROW_GRACE_SECONDS, POLL_SECONDS, RESUBMIT_GRACE_SECONDS, REQUEST_TIMEOUT_MS };
