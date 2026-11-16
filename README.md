@@ -124,12 +124,26 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   npm run ecld-build
   ```
     the project will be built and the docker repository output will be stored in the `registry/` directory. This is the stage where the backend functions are added to the secure images.
+  The build also records in `.env` the securelock it pushed:
+  `SECURELOCK_IMAGE_DIGEST`, the digest of the pushed image manifest, and
+  `MRENCLAVE_SECURELOCK_SIGNED`, the enclave measurement it was signed with.
+  `ecld-publish` checks the `registry/` tree against both.
 
 - **Publish**: To publish the project, run:
   ```sh
   npm run ecld-publish
   ```
   Required after build, to build and integrate the secure certificates that will be used during executions and to register the project to the Ethernity Cloud Image Register.
+  The publish measures the securelock out of the project's own `registry/`
+  tree, served by a registry container of its own (`ecld-registry-<project>`,
+  on a loopback port chosen free) and not out of the machine's
+  `localhost:5000` registry, which holds whatever was built last on the
+  machine. It refuses to publish when the tree's securelock is not the one
+  the build recorded, and when `.env` carries no record (a build by an older
+  SDK): run `ecld-build` again. The published compose keeps `localhost:5000`.
+  This registry container is removed when the publish ends, however it ends;
+  so is the IPFS node below, unless the publish ends with the image registered
+  and its certificate not yet on chain, when the node is kept running.
   `DEVELOPER_FEE` in `.env` is your fee as the image's publisher, in percent of
   each task's base price (the node's price): the network adds it to what the
   dApp user pays and pays it to the image's reward address when the task is
@@ -152,8 +166,20 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   publickey.ethernity.cloud, which fetches the image from your node or the
   bootnode and reports its progress) and writes it from the same wallet
   (`setImageCert`). Keep the publish running until it prints the registration:
-  your node is the image's first source. `ECLD_KUBO_SWARM_PORT` (default
-  4001) is the port your node listens on when it is free. `ECLD_ASSUME_YES=1`
+  your node is the image's first source, and the registration names its peer
+  id. A publish that ends between the registration and the certificate (an
+  extraction that failed, a bootnode pin that timed out, Ctrl+C) leaves its
+  IPFS node running, the docker container `ecld-kubo-<project>`, so the
+  registered image stays fetchable from the peer id on chain; the next publish
+  of the project takes that node over (starting it again when a restart of
+  docker stopped it), finds the image registered and goes on to the
+  certificate, and keeps the node in turn should it end before the
+  certificate. `docker rm -f ecld-kubo-<project>` stops it; a new node has a
+  new peer id, which matches nothing on chain, so the image then needs a new
+  build. `ECLD_KUBO_SWARM_PORT` (default 4001) is the port your node
+  listens on when it is free; when another container holds it published, the
+  node runs without it and is reached over the connection it opens to the
+  bootnode. `ECLD_ASSUME_YES=1`
   accepts the extraction-service prompt without asking, for a publish run
   from a script. On a two-step registry the publish waits up to three
   minutes for the service to queue the image from the chain event before

@@ -8,7 +8,8 @@ const https = require('https');
 const casConfig = require('../cas/config.js');
 const casResolver = require('../cas/resolver.js');
 const sessionRegistry = require('../cas/session_registry.js');
-const { LocalKubo, ownEndpoint, PUBLIC_IPFS_HOST } = require('../localKubo.js');
+const { LocalKubo, ownEndpoint, exitOnInterrupt, PUBLIC_IPFS_HOST } = require('../localKubo.js');
+const { LocalRegistry, recordedSecurelockBuild, servedDigest, composeAgainst, buildGateRefusal } = require('../localRegistry.js');
 
 if (!fs.existsSync('.env')) {
     console.error("Error: .env file not found");
@@ -19,6 +20,10 @@ const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
 });
+// A signal, and the Ctrl+C the readline receives in place of one, end the
+// publish through process.exit, so that the 'exit' listeners registered
+// below remove its registry and release its Kubo.
+exitOnInterrupt(rl);
 
 const promptOptions = (message, options, defaultOption) => {
     return new Promise((resolve) => {
@@ -120,6 +125,17 @@ const main = async () => {
         console.error("Error: MEMORY_TO_ALLOCATE is not set in .env; run ecld-build first.");
         process.exit(1);
     }
+    // The securelock ecld-build recorded in .env, which the image the
+    // project's tree serves is checked against below (localRegistry.js). A
+    // build by an SDK older than these records ends the publish here, before
+    // anything is started.
+    let recordedBuild;
+    try {
+        recordedBuild = recordedSecurelockBuild(process.env);
+    } catch (e) {
+        console.error(`Error: ${e.message}`);
+        process.exit(1);
+    }
 
     // Where the image goes. An IPFS API of the application's own
     // (IPFS_ENDPOINT, with IPFS_TOKEN as its Authorization header when set)
@@ -134,6 +150,13 @@ const main = async () => {
         ipfsToken = process.env.IPFS_TOKEN || '';
     } else {
         localKubo = new LocalKubo(process.env.PROJECT_NAME);
+        // The Kubo is released when the publish ends, on success and on every
+        // failure path alike: removed, unless it serves a registered image
+        // whose certificate is not on chain (localKubo.serving: set by the
+        // takeover of a kept Kubo in start and after the registration below,
+        // cleared once the certificate is on chain). Registered before the
+        // start, so an exit while the Kubo starts releases it too.
+        process.on('exit', () => localKubo.release());
         try {
             await localKubo.start();
         } catch (e) {
@@ -142,7 +165,6 @@ const main = async () => {
         }
         ipfsApi = localKubo.apiUrl;
         console.log(`\t✔  IPFS node for this publish: ${ipfsApi}`);
-        process.on('exit', () => localKubo.release());
     }
     // node ../ipfs.mjs against ipfsApi, with the token as IPFS_TOKEN in its
     // environment: the command line is in a failure's message and in the
@@ -202,17 +224,43 @@ const main = async () => {
         }
     };
 
-    ['docker-compose.yml', 'docker-compose-final.yml'].forEach(file => {
+    // The registry serving this build's image tree (<project>/registry), which
+    // the local compose names and the measurement and the harvest pull from:
+    // the registry every build on this machine pushes to, localhost:5000,
+    // serves whatever was built last. Removed when the publish ends, on
+    // success and on every failure path alike; registered before the start,
+    // so an exit while the registry starts removes it too.
+    const localRegistry = new LocalRegistry(process.env.PROJECT_NAME, registryPath);
+    process.on('exit', () => localRegistry.stop());
+    try {
+        await localRegistry.start();
+    } catch (e) {
+        console.error(`Error: ${e.message}`);
+        process.exit(1);
+    }
+    console.log(`\t✔  This build's image tree is served at ${localRegistry.host}`);
+    const dockerOutput = (command) => execSync(command, { stdio: ['pipe', 'pipe', 'pipe'] }).toString();
+
+    // docker-compose.yml, which the publish measures and harvests with, names
+    // its images at the registry serving the tree; docker-compose-final.yml,
+    // the shipped one, names them at localhost:5000, where a node's registry
+    // answers.
+    for (const file of ['docker-compose.yml', 'docker-compose-final.yml']) {
         const template = `${file}.tmpl`;
         if (!fs.existsSync(template)) {
             console.error(`Error: ${template} not found!`);
-            return;
+            process.exit(1);
         }
-        const content = casConfig.renderCompose(fs.readFileSync(template, 'utf8'), cas, unsafe)
+        let content = casConfig.renderCompose(fs.readFileSync(template, 'utf8'), cas, unsafe)
             .replace(/__MEMORY_TO_ALLOCATE__/g, memory);
+        if (file === 'docker-compose.yml') content = composeAgainst(content, localRegistry.host);
         fs.writeFileSync(file, content, 'utf8');
-    });
+    }
 
+    // The local compose's images, pulled from the registry serving this
+    // build's tree, so that the measurement and the harvest run the tree's
+    // images and not a tag of the same name left in the docker image store.
+    execSync('docker-compose -f docker-compose.yml pull', { stdio: 'inherit' });
 
     process.env.MRENCLAVE_SECURELOCK = extractSconeHash('etny-securelock');
     console.log(`MRENCLAVE_SECURELOCK: ${process.env.MRENCLAVE_SECURELOCK}`);
@@ -220,6 +268,20 @@ const main = async () => {
     // console.log(`MRENCLAVE_TRUSTEDZONE: ${process.env.MRENCLAVE_TRUSTEDZONE}`);
     // process.env.MRENCLAVE_VALIDATOR = runDockerCommand('etny-validator');
     // console.log(`MRENCLAVE_VALIDATOR: ${process.env.MRENCLAVE_VALIDATOR}`);
+
+    // ----- The measured image is this build's -----
+    // The local compose names the registry serving this project's own tree,
+    // so the measurement is of the image the publish uploads and registers,
+    // whatever the machine's localhost:5000 registry holds; the digest and
+    // the signed MRENCLAVE ecld-build recorded are checked against the tree's
+    // on every network.
+    const served = servedDigest(localRegistry.image('etny-securelock'), dockerOutput);
+    const refusal = buildGateRefusal(recordedBuild, served, process.env.MRENCLAVE_SECURELOCK);
+    if (refusal) {
+        refusal.forEach((line) => console.error(line));
+        process.exit(1);
+    }
+    console.log(`\t✔  The measured securelock is this build's image (${served})`);
 
     // ----- MRENCLAVE match-gate (mainnet) -----
     // The runtime enclave measured just above (SCONE_HASH) MUST match the

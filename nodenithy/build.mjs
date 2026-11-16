@@ -71,6 +71,7 @@ export const ECRunner = {
 const require = createRequire(import.meta.url);
 const casConfig = require('../cas/config.js');
 const nodeFlags = require('./nodeFlags.js');
+const localRegistry = require('../localRegistry.js');
 export const VALIDATOR_REGISTRY = casConfig.VALIDATOR_REGISTRY;
 
 // An -unsafe network runs an -unsafe trustedzone and nothing else, and an
@@ -325,6 +326,22 @@ fs.writeFileSync('Dockerfile', dockerfileSecureContent);
 runCommand(`docker build --build-arg SCONE_NODE=${trustedZoneImage} --build-arg ENCLAVE_NAME_SECURELOCK=${ENCLAVE_NAME_SECURELOCK} -t etny-securelock:latest .`);
 runCommand('docker tag etny-securelock localhost:5000/etny-securelock');
 runCommand('docker push localhost:5000/etny-securelock');
+
+// The securelock this build pushed, recorded for ecld-publish to check the
+// image its tree serves against before measuring it (localRegistry.js): the
+// digest of the pushed manifest and the MRENCLAVE scone-signer signed, from
+// the image's /signed_mrenclave.txt. A publish of a build without these
+// records is refused.
+let pushed;
+try {
+  pushed = localRegistry.pushedSecurelock((command) => shell.exec(command, { silent: true }).stdout);
+} catch (e) {
+  console.error(`ERROR: ${e.message}`);
+  process.exit(1);
+}
+writeEnv('SECURELOCK_IMAGE_DIGEST', pushed.digest);
+writeEnv('MRENCLAVE_SECURELOCK_SIGNED', pushed.signed);
+console.log(`\t✔  Securelock image ${pushed.digest}, signed MRENCLAVE ${pushed.signed}`);
 process.chdir('..');
 
 console.log(`ENCLAVE_NAME_TRUSTEDZONE: ${ENCLAVE_NAME_TRUSTEDZONE}`);

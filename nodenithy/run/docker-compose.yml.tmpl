@@ -4,7 +4,10 @@
 # (SCONE_HASH is a build measurement; enclaves reach SGX via LAS over TCP). When
 # no local SGX is present, cert extraction falls back to the remote
 # publickey.ethernity.cloud service. The on-node runtime uses
-# docker-compose-final.yml, which targets real SGX hardware.
+# docker-compose-final.yml, which targets real SGX hardware. run.js renders
+# the image references at the address of the registry serving this build's
+# own image tree (localRegistry.js composeAgainst); docker-compose-final.yml
+# keeps the address a node's registry answers at.
 #
 # Tagged lines are kept, untagged, only where they apply (cas/config.js
 # renderCompose): __CAS_ONLY__ serves CAS attestation (mainnet, or a testnet

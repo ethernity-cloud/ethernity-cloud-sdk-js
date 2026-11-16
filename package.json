@@ -1,6 +1,6 @@
 {
   "name": "@ethernity-cloud/sdk-js",
-  "version": "1.8.3",
+  "version": "1.8.4",
   "description": "A package to run ethernity cloud build scripts",
   "scripts": {
     "test": "node --test \"test/**/*.test.js\"",
@@ -36,6 +36,7 @@
     "network.js",
     "execution.js",
     "localKubo.js",
+    "localRegistry.js",
     "revert.js",
     "!**/__pycache__/**",
     "!**/*.pyc"
