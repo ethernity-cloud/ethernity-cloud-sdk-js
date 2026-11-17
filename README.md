@@ -114,10 +114,12 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   at this step, all the initial configurations will be set up and the project will be ready to be built, published and run.
   Its last step is the order's execution object (see "The order's execution
   object" below): a yes/no question, "no" writing the defaults, "yes" asking
-  each key; every key is written to `.env` as `EXEC_*`. For an unattended run
+  each key; every key is written to `.env` as `EXEC_*`, and every other `.env`
+  line that sets an `EXEC_*` variable is removed. For an unattended run
   set the same keys with the `ECLD_` prefix (`ECLD_EXEC_MODE`,
   `ECLD_EXEC_DURATION_HOURS`, ...): any one set skips the questions, the set
-  keys are taken and the rest default.
+  keys are taken and the rest default; an `ECLD_EXEC_*` variable that is not
+  one of them ends the init with its name and the list of the keys.
 
 - **Build**: To build the project, run:
   ```sh
@@ -223,11 +225,13 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   value that is not a non-negative number is a usage error (exit 2). The
   order's execution object comes from the `EXEC_*` keys of `.env` and each
   execution flag overrides its key: `--mode task|session`, `--duration-hours`
-  (alias `--duration`), `--parallelism`, `--max-cu`, `--headroom`,
+  (alias `--duration`), `--parallelism`, `--max-gflops`, `--headroom`,
   `--expected-inputs`, `--keep-open`/`--no-keep-open`, `--renew`/`--no-renew`,
   `--max-renewals`, `--expected-commits`; it is validated before the runner is
   constructed and printed with the relays-per-hour default (`--relays-per-hour`
-  names another value). See "The order's execution object" below.
+  names another value). See "The order's execution object" below. An option
+  `ecld-run` does not know (an argument that starts with `-`, holds no
+  whitespace and is not a number) is a usage error (exit 2).
   `--input <file>` / `--input-text <string>` send the task's input dataset, read
   as `___etny_data_set___`; it travels encrypted, and the trustedzone checks it
   against the sha256 the request carries. Exit code 0 on a `SUCCESS` task result,
@@ -272,7 +276,7 @@ runners follow:
 | `mode` | `task` or `session` | `task` | `EXEC_MODE` | one payload run per order, or the order stays open for inputs |
 | `durationHours` | integer 1-65535 | 1 | `EXEC_DURATION_HOURS` | the order duration (the DO request's `_duration`) and the escrow hours |
 | `parallelism` | integer >= 1 | 1 | `EXEC_PARALLELISM` | orders opened at once, each a DO request with its own enclave |
-| `maxCu` | integer >= 0 | 0 | `EXEC_MAX_CU` | the largest node paid for, in thousandths of a CU; 0 = any node |
+| `maxGflops` | integer >= 0 | 0 | `EXEC_MAX_GFLOPS` | the largest node paid for, in GFLOPS (one CU is 100 GFLOPS); 0 = any node |
 | `headroomPercent` | integer 0-100 | 25 | `EXEC_HEADROOM_PERCENT` | margin over the quoted price when the runner sizes the price per CU-hour |
 | `session.expectedInputs` | integer 1-256 | 1 | `EXEC_SESSION_EXPECTED_INPUTS` | inputs the dApp expects to send; sizes the relay cap as 1 + expectedInputs rows |
 | `session.keepOpen` | boolean | false | `EXEC_SESSION_KEEP_OPEN` | keep the session open until the dApp closes it |
@@ -287,8 +291,10 @@ message; an unknown key at any level is an error; the session block is
 accepted in both modes and applied in mode `session`; `null` is not a value),
 `normalize(resources)` (a flat `resources` with the legacy `duration` becomes
 `{ resources, execution }` with `duration` as `execution.durationHours`, and
-`execution.durationHours` wins when both are given), `fromEnv(env, prefix)`
-(the `EXEC_*` strings parsed to numbers and booleans, not validated),
+`execution.durationHours` wins when both are given), `ENV_PREFIX` (`EXEC_`),
+`fromEnv(env, prefix)` (the `EXEC_*` strings parsed to numbers and booleans,
+not validated; a `<prefix>EXEC_*` variable that is not one of `ENV_KEYS`
+throws a message naming it and listing the execution variables),
 `toEnv(execution)` (the ten strings `ecld-init` writes), `esrEnabled(env)` and
 `relaysPerHour(execution, withEsr)`.
 
@@ -411,7 +417,7 @@ const NETWORK_ADDRESS = "";
 const CHAIN_ID = null;
 const UNSAFE_NETWORK = null;
 const IPFS_ENDPOINT = "";
-const EXECUTION = {"mode":"task","durationHours":1,"parallelism":1,"maxCu":0,"headroomPercent":25,"session":{"expectedInputs":1,"keepOpen":false,"renew":false,"maxRenewals":0},"esr":{"expectedCommits":0}};
+const EXECUTION = {"mode":"task","durationHours":1,"parallelism":1,"maxGflops":0,"headroomPercent":25,"session":{"expectedInputs":1,"keepOpen":false,"renew":false,"maxRenewals":0},"esr":{"expectedCommits":0}};
 
 // A call into src/serverless/backend.js; its return value is the task result.
 const code = `hello("World");`;

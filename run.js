@@ -91,7 +91,7 @@ const EXECUTION_FLAGS = {
   '--duration-hours': 'durationHours',
   '--duration': 'durationHours',
   '--parallelism': 'parallelism',
-  '--max-cu': 'maxCu',
+  '--max-gflops': 'maxGflops',
   '--headroom': 'headroomPercent',
   '--expected-inputs': 'session.expectedInputs',
   '--max-renewals': 'session.maxRenewals',
@@ -103,6 +103,12 @@ const EXECUTION_SWITCHES = {
   '--renew': ['session.renew', true],
   '--no-renew': ['session.renew', false],
 };
+
+// An argument that starts with '-', holds no whitespace and is not a number
+// is an option: parseArgs refuses one it does not know with a usage error.
+function isOption(a) {
+  return /^-\S*$/.test(a) && !Number.isFinite(Number(a));
+}
 
 function setKey(obj, dotted, value) {
   const [head, tail] = dotted.split('.');
@@ -137,6 +143,7 @@ function parseArgs(argv) {
     else if (a in EXECUTION_SWITCHES) setKey(opts.execution, ...EXECUTION_SWITCHES[a]);
     else if (a === '--json') opts.json = true;
     else if (a === '--help' || a === '-h') opts.help = true;
+    else if (isOption(a)) throw new UsageError(`unknown option ${a}`);
     else positional.push(a);
   }
   return { opts, positional };
@@ -173,7 +180,7 @@ enclaves:  --securelock <name> (default PROJECT_NAME), --trustedzone <name> (def
 key:       PRIVATE_KEY (a funded 0x key) from .env / env, or ECLD_PRIVATE_KEY
 resources: --task-price 3 (ECLD, fractional allowed: 2.5) --cpu 1 --memory 1 --storage 10 --bandwidth 1 --validators 1
 execution: each flag overrides its EXEC_* key in .env (ecld-init writes them; the defaults otherwise)
-           --mode task|session  --duration-hours 1 (alias --duration)  --parallelism 1  --max-cu 0  --headroom 25
+           --mode task|session  --duration-hours 1 (alias --duration)  --parallelism 1  --max-gflops 0  --headroom 25
            --expected-inputs 1  --keep-open / --no-keep-open  --renew / --no-renew  --max-renewals 0
            --expected-commits 0  --relays-per-hour <n> (default 1 + expected inputs, plus 10 with ESR_ENABLED)
 other:     --node <addr>  --ipfs intake|<ipfs api url> (default intake: the bootnode's payload intake;

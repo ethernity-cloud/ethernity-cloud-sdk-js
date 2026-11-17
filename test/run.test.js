@@ -1,9 +1,14 @@
 // ecld-run's flags: --task-price takes a fractional ECLD amount and refuses
 // anything that is not a non-negative number; the execution flags override
 // the EXEC_* keys of .env, --duration maps to durationHours, and the
-// relays-per-hour default follows execution.js unless the flag names it.
+// relays-per-hour default follows execution.js unless the flag names it; an
+// unknown option is a usage error and the CLI exits 2 before it submits.
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawnSync } = require('child_process');
 
 const { parseArgs, executionFor, relaysPerHourFor, UsageError } = require('../run.js');
 const { DEFAULTS } = require('../execution.js');
@@ -39,12 +44,12 @@ test('the count flags take integers only', () => {
 
 test('the execution flags fill the nested execution; --duration maps to durationHours', () => {
   const { opts } = parseArgs([
-    '--mode', 'session', '--duration', '3', '--parallelism', '2', '--max-cu', '1500', '--headroom', '10',
+    '--mode', 'session', '--duration', '3', '--parallelism', '2', '--max-gflops', '150', '--headroom', '10',
     '--expected-inputs', '5', '--keep-open', '--renew', '--max-renewals', '2', '--expected-commits', '4',
     '--relays-per-hour', '20', 'hello()',
   ]);
   assert.deepEqual(opts.execution, {
-    mode: 'session', durationHours: 3, parallelism: 2, maxCu: 1500, headroomPercent: 10,
+    mode: 'session', durationHours: 3, parallelism: 2, maxGflops: 150, headroomPercent: 10,
     session: { expectedInputs: 5, keepOpen: true, renew: true, maxRenewals: 2 },
     esr: { expectedCommits: 4 },
   });
@@ -52,6 +57,43 @@ test('the execution flags fill the nested execution; --duration maps to duration
   assert.equal(parseArgs(['--duration-hours', '4']).opts.execution.durationHours, 4);
   assert.deepEqual(parseArgs(['--no-keep-open', '--no-renew']).opts.execution.session, { keepOpen: false, renew: false });
   assert.equal('duration' in parseArgs([]).opts, false);
+});
+
+test('--max-gflops 150 gives maxGflops 150', () => {
+  const { opts, positional } = parseArgs(['--max-gflops', '150', 'hello()']);
+  assert.deepEqual(opts.execution, { maxGflops: 150 });
+  assert.deepEqual(positional, ['hello()']);
+  assert.equal(executionFor(opts, {}).maxGflops, 150);
+  assert.equal(executionFor(parseArgs([]).opts, { EXEC_MAX_GFLOPS: '150' }).maxGflops, 150);
+  assert.throws(() => parseArgs(['--max-gflops', '1.5']), { message: '--max-gflops takes a non-negative integer, got "1.5"' });
+});
+
+test('an unknown option is a usage error; a code string, a number and a spaced argument are payload', () => {
+  assert.throws(() => parseArgs(['--max-cu', '150', 'hello()']), UsageError);
+  assert.throws(() => parseArgs(['--max-cu', '150', 'hello()']), { message: 'unknown option --max-cu' });
+  assert.throws(() => parseArgs(['hello()', '--cu']), { message: 'unknown option --cu' });
+  assert.throws(() => parseArgs(['-x']), { message: 'unknown option -x' });
+  assert.deepEqual(parseArgs(['-1', '-2.5', '- x', 'hello("--max-cu")']).positional, ['-1', '-2.5', '- x', 'hello("--max-cu")']);
+});
+
+test('ecld-run --max-cu 150 exits 2 with the usage error and submits nothing', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecld-run-'));
+  try {
+    const env = { ...process.env, ECLD_PRIVATE_KEY: '', PRIVATE_KEY: '' };
+    const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'run.js'), '--max-cu', '150', 'hello()'],
+      { cwd: dir, env, encoding: 'utf8' });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /^ecld-run: unknown option --max-cu\n\n/);
+    assert.ok(!r.stdout.includes('submitting order'), r.stdout);
+    assert.ok(!r.stdout.includes('payload'), r.stdout);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('executionFor refuses an EXEC_MAX_CU in .env naming the variable', () => {
+  assert.throws(() => executionFor(parseArgs(['--max-gflops', '150']).opts, { EXEC_MAX_CU: '1500' }),
+    { message: /^execution has an unknown variable "EXEC_MAX_CU" \(the execution variables: EXEC_MODE, / });
 });
 
 test('executionFor reads .env and lets a flag override its key', () => {

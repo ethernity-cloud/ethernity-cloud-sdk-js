@@ -66,7 +66,7 @@ test('the execution step writes every EXEC_* key, replacing the ones an earlier 
         fs.writeFileSync('.env', 'PROJECT_NAME=demo\nEXEC_MODE=session\nEXEC_DURATION_HOURS=7');
         writeExecution({ durationHours: 2, session: { expectedInputs: 3 } });
         assert.equal(fs.readFileSync('.env', 'utf8'), [
-            'PROJECT_NAME=demo', 'EXEC_MODE=task', 'EXEC_DURATION_HOURS=2', 'EXEC_PARALLELISM=1', 'EXEC_MAX_CU=0',
+            'PROJECT_NAME=demo', 'EXEC_MODE=task', 'EXEC_DURATION_HOURS=2', 'EXEC_PARALLELISM=1', 'EXEC_MAX_GFLOPS=0',
             'EXEC_HEADROOM_PERCENT=25', 'EXEC_SESSION_EXPECTED_INPUTS=3', 'EXEC_SESSION_KEEP_OPEN=false',
             'EXEC_SESSION_RENEW=false', 'EXEC_SESSION_MAX_RENEWALS=0', 'EXEC_ESR_EXPECTED_COMMITS=0',
         ].join('\n'));
@@ -75,6 +75,32 @@ test('the execution step writes every EXEC_* key, replacing the ones an earlier 
             execution.validate({ durationHours: 2, session: { expectedInputs: 3 } }));
         assert.throws(() => writeExecution({ durationHours: 0 }),
             { message: 'execution.durationHours must be an integer between 1 and 65535' });
+    } finally {
+        process.chdir(cwd);
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('the execution step drops an EXEC_MAX_CU line and every other EXEC_* line outside the keys, and writes EXEC_MAX_GFLOPS', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecld-init-'));
+    const cwd = process.cwd();
+    process.chdir(dir);
+    try {
+        const stale = 'PROJECT_NAME=demo\nEXEC_MODE=task\nEXEC_MAX_CU=1500\nMAX_CU_NOTE=kept\n'
+            + 'export EXEC_OLD=1\n  EXEC_SPACED = 2\nEXEC_HEADROOM_PERCENT=10\nVERSION=v3\n';
+        fs.writeFileSync('.env', stale);
+        assert.throws(() => writeExecution({ maxCu: 150 }), { message: 'execution has an unknown key "maxCu"' });
+        assert.equal(fs.readFileSync('.env', 'utf8'), stale);
+        writeExecution({ maxGflops: 150 });
+        const text = fs.readFileSync('.env', 'utf8');
+        assert.equal(text, [
+            'PROJECT_NAME=demo', 'EXEC_MODE=task', 'MAX_CU_NOTE=kept', 'EXEC_HEADROOM_PERCENT=25', 'VERSION=v3', '',
+            'EXEC_DURATION_HOURS=1', 'EXEC_PARALLELISM=1', 'EXEC_MAX_GFLOPS=150', 'EXEC_SESSION_EXPECTED_INPUTS=1',
+            'EXEC_SESSION_KEEP_OPEN=false', 'EXEC_SESSION_RENEW=false', 'EXEC_SESSION_MAX_RENEWALS=0',
+            'EXEC_ESR_EXPECTED_COMMITS=0',
+        ].join('\n'));
+        const written = Object.fromEntries(text.split('\n').filter((l) => l).map((l) => l.split('=')));
+        assert.equal(execution.validate(execution.fromEnv(written)).maxGflops, 150);
     } finally {
         process.chdir(cwd);
         fs.rmSync(dir, { recursive: true, force: true });

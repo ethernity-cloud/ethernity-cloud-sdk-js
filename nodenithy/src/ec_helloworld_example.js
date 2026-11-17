@@ -15,7 +15,7 @@ const NETWORK_ADDRESS = "";
 const CHAIN_ID = null;
 const UNSAFE_NETWORK = null;
 const IPFS_ENDPOINT = "";
-const EXECUTION = {"mode":"task","durationHours":1,"parallelism":1,"maxCu":0,"headroomPercent":25,"session":{"expectedInputs":1,"keepOpen":false,"renew":false,"maxRenewals":0},"esr":{"expectedCommits":0}};
+const EXECUTION = {"mode":"task","durationHours":1,"parallelism":1,"maxGflops":0,"headroomPercent":25,"session":{"expectedInputs":1,"keepOpen":false,"renew":false,"maxRenewals":0},"esr":{"expectedCommits":0}};
 
 // A call into src/serverless/backend.js; its return value is the task result.
 const code = `hello("World");`;

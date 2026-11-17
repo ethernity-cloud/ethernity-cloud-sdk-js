@@ -157,7 +157,7 @@ const EXECUTION_PROMPTS = {
   EXEC_MODE: "Execution mode: task (one payload run per order) or session (the order stays open for inputs)",
   EXEC_DURATION_HOURS: "Order duration in hours (1-65535)",
   EXEC_PARALLELISM: "Orders opened at once, each a request with its own enclave (1 or more)",
-  EXEC_MAX_CU: "Largest node paid for, in thousandths of a CU (0 = any node)",
+  EXEC_MAX_GFLOPS: "Largest node paid for, in GFLOPS (one CU is 100 GFLOPS; 0 = any node)",
   EXEC_HEADROOM_PERCENT: "Margin over the quoted price when the runner sizes the price per CU-hour, in percent (0-100)",
   EXEC_SESSION_EXPECTED_INPUTS: "Inputs the dApp expects to send in a session (1-256)",
   EXEC_SESSION_KEEP_OPEN: "Keep the session open until the dApp closes it instead of after the expected inputs? (true/false)",
@@ -197,27 +197,43 @@ const promptExecution = async (withEsr, ask) => {
   return current;
 };
 
-// Writes every EXEC_* key of the execution object to .env.
+// A .env line that sets a variable carrying the execution prefix, with the
+// variable's name as group 1.
+const EXECUTION_LINE = new RegExp(`^\\s*(?:export\\s+)?(${execution.ENV_PREFIX}[\\w.-]*)\\s*=`);
+
+// Writes every EXEC_* key of the execution object to .env and removes every
+// other line that sets a variable carrying the execution prefix, so the .env
+// holds exactly the execution keys of execution.ENV_KEYS.
 const writeExecution = (exec) => {
-  for (const [name, value] of Object.entries(execution.toEnv(exec))) writeEnv(name, value);
+  const strings = execution.toEnv(exec);
+  if (fs.existsSync(".env")) {
+    const lines = fs.readFileSync(".env", "utf8").split("\n");
+    const kept = lines.filter((line) => {
+      const m = EXECUTION_LINE.exec(line);
+      return !m || m[1] in strings;
+    });
+    if (kept.length !== lines.length) fs.writeFileSync(".env", kept.join("\n"), "utf8");
+  }
+  for (const [name, value] of Object.entries(strings)) writeEnv(name, value);
 };
 
 // The execution step: the order's execution object (execution.js), written
 // to .env as the EXEC_* keys ecld-run, ecld-info and the template read. Env
 // equivalents for unattended runs: the same keys with the ECLD_ prefix
 // (ECLD_EXEC_MODE, ECLD_EXEC_DURATION_HOURS, ...); when any is set the
-// prompts are skipped, the set keys are taken and the rest default.
+// prompts are skipped, the set keys are taken and the rest default. An
+// ECLD_EXEC_* variable outside those keys ends the init with its message.
 const configureExecution = async (withEsr) => {
-  const fromEnvVars = execution.fromEnv(process.env, "ECLD_");
-  let exec;
-  if (Object.keys(fromEnvVars).length) {
-    try {
-      exec = execution.validate(fromEnvVars);
-    } catch (e) {
-      console.error(`ERROR: ${e.message}`);
-      console.error("       Set valid ECLD_EXEC_* values and re-run ecld-init.");
-      process.exit(1);
-    }
+  let exec = null;
+  try {
+    const fromEnvVars = execution.fromEnv(process.env, "ECLD_");
+    if (Object.keys(fromEnvVars).length) exec = execution.validate(fromEnvVars);
+  } catch (e) {
+    console.error(`ERROR: ${e.message}`);
+    console.error("       Set valid ECLD_EXEC_* values and re-run ecld-init.");
+    process.exit(1);
+  }
+  if (exec) {
     console.log(`Execution [ECLD_EXEC_* -> ${JSON.stringify(exec)}]`);
   } else {
     const answer = await promptOptions(

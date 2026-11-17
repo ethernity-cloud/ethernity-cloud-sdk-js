@@ -17,8 +17,8 @@ const SCHEMA = [
     message: 'execution.durationHours must be an integer between 1 and 65535' },
   { key: 'parallelism', type: 'integer', min: 1,
     message: 'execution.parallelism must be an integer >= 1' },
-  { key: 'maxCu', type: 'integer', min: 0,
-    message: 'execution.maxCu must be an integer >= 0 (thousandths of a CU, 0 = any node)' },
+  { key: 'maxGflops', type: 'integer', min: 0,
+    message: 'execution.maxGflops must be an integer >= 0 (GFLOPS; 0 = any node)' },
   { key: 'headroomPercent', type: 'integer', min: 0, max: 100,
     message: 'execution.headroomPercent must be an integer between 0 and 100' },
   { key: 'session.expectedInputs', type: 'integer', min: 1, max: 256,
@@ -39,11 +39,15 @@ const DEFAULTS = Object.freeze({
   mode: 'task',
   durationHours: 1,
   parallelism: 1,
-  maxCu: 0,
+  maxGflops: 0,
   headroomPercent: 25,
   session: Object.freeze({ expectedInputs: 1, keepOpen: false, renew: false, maxRenewals: 0 }),
   esr: Object.freeze({ expectedCommits: 0 }),
 });
+
+// The prefix of every execution variable. A variable carrying it that is not
+// one of ENV_KEYS is refused, as an unknown key of the object is.
+const ENV_PREFIX = 'EXEC_';
 
 // The .env keys, one per schema key in schema order; ecld-init writes every
 // one, ecld-run, ecld-info and the template's preStart read them.
@@ -51,7 +55,7 @@ const ENV_KEYS = Object.freeze([
   ['EXEC_MODE', 'mode'],
   ['EXEC_DURATION_HOURS', 'durationHours'],
   ['EXEC_PARALLELISM', 'parallelism'],
-  ['EXEC_MAX_CU', 'maxCu'],
+  ['EXEC_MAX_GFLOPS', 'maxGflops'],
   ['EXEC_HEADROOM_PERCENT', 'headroomPercent'],
   ['EXEC_SESSION_EXPECTED_INPUTS', 'session.expectedInputs'],
   ['EXEC_SESSION_KEEP_OPEN', 'session.keepOpen'],
@@ -158,10 +162,24 @@ function parseBoolean(s) {
   return s;
 }
 
+/* Throws for the first variable of env, in name order, that carries the
+ * execution prefix (<prefix>EXEC_) and is not <prefix> + one of ENV_KEYS; the
+ * message names the variable and lists the execution variables. */
+function checkEnv(env, prefix = '') {
+  const names = ENV_KEYS.map(([name]) => prefix + name);
+  for (const name of Object.keys(env).sort()) {
+    if (name.startsWith(prefix + ENV_PREFIX) && !names.includes(name)) {
+      throw new Error(`execution has an unknown variable ${JSON.stringify(name)} (the execution variables: ${names.join(', ')})`);
+    }
+  }
+}
+
 /* The execution keys set in an environment (process.env, or a parsed .env),
  * read from <prefix>EXEC_* and parsed to numbers and booleans; an unset or
- * blank variable leaves its key to the default. Not validated. */
+ * blank variable leaves its key to the default. A <prefix>EXEC_* variable
+ * outside ENV_KEYS throws (checkEnv). The values are not validated. */
 function fromEnv(env, prefix = '') {
+  checkEnv(env, prefix);
   const out = {};
   for (const [name, key] of ENV_KEYS) {
     const raw = env[prefix + name];
@@ -195,6 +213,6 @@ function relaysPerHour(execution, withEsr) {
 }
 
 module.exports = {
-  SCHEMA, DEFAULTS, ENV_KEYS, ESR_COMMITS_PER_HOUR,
+  SCHEMA, DEFAULTS, ENV_PREFIX, ENV_KEYS, ESR_COMMITS_PER_HOUR,
   validate, normalize, fromEnv, toEnv, esrEnabled, relaysPerHour,
 };

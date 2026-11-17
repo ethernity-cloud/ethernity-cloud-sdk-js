@@ -239,10 +239,16 @@ async function sectionEsr(prov, net, enclaveWallet, eventsN) {
 }
 
 // The execution object of the EXEC_* keys in env (.env is loaded into
-// process.env above) and the relays-per-hour default for it; an invalid key
-// is reported with execution.js's message.
+// process.env above) and the relays-per-hour default for it; an invalid key,
+// or an EXEC_* variable outside the execution keys, is reported with
+// execution.js's message.
 function sectionExecution(env) {
-  const given = execution.fromEnv(env);
+  let given;
+  try {
+    given = execution.fromEnv(env);
+  } catch (e) {
+    return { source: '.env EXEC_*', error: e.message };
+  }
   const out = { source: Object.keys(given).length ? '.env EXEC_*' : 'defaults (no EXEC_* in .env)' };
   try {
     out.execution = execution.validate(given);
@@ -263,7 +269,7 @@ function printExecution(x) {
   console.log(`  mode:         ${e.mode}`);
   console.log(`  duration:     ${e.durationHours} h`);
   console.log(`  parallelism:  ${e.parallelism}`);
-  console.log(`  max cu:       ${e.maxCu === 0 ? '0 (any node)' : `${e.maxCu} thousandths of a CU`}`);
+  console.log(`  max gflops:   ${e.maxGflops === 0 ? '0 (any node)' : `${e.maxGflops} GFLOPS`}`);
   console.log(`  headroom:     ${e.headroomPercent} %`);
   console.log(`  session:      expected inputs ${e.session.expectedInputs}, keep open ${e.session.keepOpen}, renew ${e.session.renew}, max renewals ${e.session.maxRenewals}${e.mode === 'session' ? '' : ' (applied in mode session)'}`);
   console.log(`  esr commits:  ${e.esr.expectedCommits} expected per order`);

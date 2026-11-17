@@ -78,6 +78,15 @@ test('unknown keys at every level are checked before any value', () => {
     { message: 'execution has an unknown key "bar"' });
 });
 
+test('an execution object with maxCu is refused as an unknown key, by validate and normalize', () => {
+  assert.throws(() => execution.validate({ maxCu: 150 }), { message: 'execution has an unknown key "maxCu"' });
+  assert.throws(() => execution.validate({ maxCu: 150, maxGflops: 150 }),
+    { message: 'execution has an unknown key "maxCu"' });
+  assert.throws(() => execution.normalize({ duration: 1, execution: { maxCu: 0 } }),
+    { message: 'execution has an unknown key "maxCu"' });
+  assert.equal(execution.validate({ maxGflops: 150 }).maxGflops, 150);
+});
+
 test('normalize refuses a resources argument that is not an object', () => {
   for (const bad of [undefined, null, 'nonsense', 3, [], true]) {
     assert.throws(() => execution.normalize(bad), { message: 'resources must be an object' });
@@ -86,16 +95,38 @@ test('normalize refuses a resources argument that is not an object', () => {
 
 test('ENV_KEYS are the ten EXEC_* keys in schema order', () => {
   assert.deepEqual(execution.ENV_KEYS.map(([name]) => name), [
-    'EXEC_MODE', 'EXEC_DURATION_HOURS', 'EXEC_PARALLELISM', 'EXEC_MAX_CU', 'EXEC_HEADROOM_PERCENT',
+    'EXEC_MODE', 'EXEC_DURATION_HOURS', 'EXEC_PARALLELISM', 'EXEC_MAX_GFLOPS', 'EXEC_HEADROOM_PERCENT',
     'EXEC_SESSION_EXPECTED_INPUTS', 'EXEC_SESSION_KEEP_OPEN', 'EXEC_SESSION_RENEW',
     'EXEC_SESSION_MAX_RENEWALS', 'EXEC_ESR_EXPECTED_COMMITS',
   ]);
   assert.deepEqual(execution.ENV_KEYS.map(([, key]) => key), spec.schema.map((f) => f.key));
+  assert.equal(execution.ENV_PREFIX, 'EXEC_');
+  assert.ok(execution.ENV_KEYS.every(([name]) => name.startsWith(execution.ENV_PREFIX)));
+});
+
+const EXECUTION_VARIABLES = 'EXEC_MODE, EXEC_DURATION_HOURS, EXEC_PARALLELISM, EXEC_MAX_GFLOPS, '
+  + 'EXEC_HEADROOM_PERCENT, EXEC_SESSION_EXPECTED_INPUTS, EXEC_SESSION_KEEP_OPEN, EXEC_SESSION_RENEW, '
+  + 'EXEC_SESSION_MAX_RENEWALS, EXEC_ESR_EXPECTED_COMMITS';
+
+test('an execution env carrying EXEC_MAX_CU is refused naming the key and listing the execution variables', () => {
+  const message = `execution has an unknown variable "EXEC_MAX_CU" (the execution variables: ${EXECUTION_VARIABLES})`;
+  assert.throws(() => execution.fromEnv({ EXEC_MAX_CU: '150' }), { message });
+  assert.throws(() => execution.fromEnv({ EXEC_MAX_CU: '' }), { message });
+  assert.throws(() => execution.fromEnv({ EXEC_MAX_GFLOPS: '150', EXEC_MAX_CU: '150', PROJECT_NAME: 'demo' }), { message });
+  assert.throws(() => execution.fromEnv({ EXEC_ZZ: '1', EXEC_MAX_CU: '1' }), { message });
+  assert.deepEqual(execution.fromEnv({ EXEC_MAX_GFLOPS: '150', MAX_CU: '1', XEXEC_MAX_CU: '1' }), { maxGflops: 150 });
+});
+
+test('a prefixed set refuses an unknown variable of its own prefix and ignores the bare one', () => {
+  const listed = EXECUTION_VARIABLES.split(', ').map((name) => `ECLD_${name}`).join(', ');
+  assert.throws(() => execution.fromEnv({ ECLD_EXEC_MAX_CU: '150' }, 'ECLD_'),
+    { message: `execution has an unknown variable "ECLD_EXEC_MAX_CU" (the execution variables: ${listed})` });
+  assert.deepEqual(execution.fromEnv({ ECLD_EXEC_MAX_GFLOPS: '150', EXEC_MAX_CU: '1' }, 'ECLD_'), { maxGflops: 150 });
 });
 
 test('fromEnv parses the EXEC_* strings to numbers and booleans and skips blank ones', () => {
   const env = {
-    EXEC_MODE: 'session', EXEC_DURATION_HOURS: '3', EXEC_PARALLELISM: ' 2 ', EXEC_MAX_CU: '',
+    EXEC_MODE: 'session', EXEC_DURATION_HOURS: '3', EXEC_PARALLELISM: ' 2 ', EXEC_MAX_GFLOPS: '',
     EXEC_HEADROOM_PERCENT: '10', EXEC_SESSION_EXPECTED_INPUTS: '5', EXEC_SESSION_KEEP_OPEN: 'true',
     EXEC_SESSION_RENEW: '1', EXEC_SESSION_MAX_RENEWALS: '2', EXEC_ESR_EXPECTED_COMMITS: '4',
     PROJECT_NAME: 'demo',
@@ -120,13 +151,13 @@ test('fromEnv keeps a string it cannot parse so validate names the key', () => {
 });
 
 test('fromEnv parses decimal integers and fractions only: an exponent or a bare trailing point is kept', () => {
-  assert.deepEqual(execution.fromEnv({ EXEC_PARALLELISM: '+3', EXEC_MAX_CU: '0', EXEC_DURATION_HOURS: '1.5' }),
-    { parallelism: 3, maxCu: 0, durationHours: 1.5 });
-  assert.deepEqual(execution.fromEnv({ EXEC_PARALLELISM: '1e2', EXEC_MAX_CU: '3.', EXEC_DURATION_HOURS: '.5' }),
-    { parallelism: '1e2', maxCu: '3.', durationHours: '.5' });
+  assert.deepEqual(execution.fromEnv({ EXEC_PARALLELISM: '+3', EXEC_MAX_GFLOPS: '0', EXEC_DURATION_HOURS: '1.5' }),
+    { parallelism: 3, maxGflops: 0, durationHours: 1.5 });
+  assert.deepEqual(execution.fromEnv({ EXEC_PARALLELISM: '1e2', EXEC_MAX_GFLOPS: '3.', EXEC_DURATION_HOURS: '.5' }),
+    { parallelism: '1e2', maxGflops: '3.', durationHours: '.5' });
   assert.throws(() => execution.validate(execution.fromEnv({ EXEC_PARALLELISM: '1e2' })),
     { message: spec.validationCases[3].error });
-  assert.throws(() => execution.validate(execution.fromEnv({ EXEC_MAX_CU: '3.' })),
+  assert.throws(() => execution.validate(execution.fromEnv({ EXEC_MAX_GFLOPS: '3.' })),
     { message: spec.validationCases[4].error });
 });
 
@@ -137,7 +168,7 @@ test('fromEnv reads a prefixed set (ecld-init\'s ECLD_EXEC_*)', () => {
 test('toEnv writes every EXEC_* key of the completed object, and fromEnv reads it back', () => {
   const strings = execution.toEnv({ mode: 'session', session: { expectedInputs: 5, renew: true, maxRenewals: 1 } });
   assert.deepEqual(strings, {
-    EXEC_MODE: 'session', EXEC_DURATION_HOURS: '1', EXEC_PARALLELISM: '1', EXEC_MAX_CU: '0',
+    EXEC_MODE: 'session', EXEC_DURATION_HOURS: '1', EXEC_PARALLELISM: '1', EXEC_MAX_GFLOPS: '0',
     EXEC_HEADROOM_PERCENT: '25', EXEC_SESSION_EXPECTED_INPUTS: '5', EXEC_SESSION_KEEP_OPEN: 'false',
     EXEC_SESSION_RENEW: 'true', EXEC_SESSION_MAX_RENEWALS: '1', EXEC_ESR_EXPECTED_COMMITS: '0',
   });
