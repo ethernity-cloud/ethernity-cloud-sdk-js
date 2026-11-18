@@ -31,19 +31,19 @@ const writeEnv = (key, value) => {
 // Kept in sync with etny-{pynithy,nodenithy}/v3/networks.yaml (the authoritative
 // on-chain constants). Covers all supported networks for both dApp types.
 export const ECRunner = {
-  // --- bloxberg: the testnet's PoX is the EthernityImplementationV2 1.2 of 2026-11-14 on its own storage (the tETNY token stays the legacy proxy 0x02882F03...) and reads ECImageRegistryV3; mainnet the legacy PoX and the original registry ---
-  'etny-pynithy-testnet': ['0x7E7C6eB435E3687CfDfe18C09C0340eb70567d7b', '0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1', 'https://bloxberg.ethernity.cloud', 8995],
-  'etny-nodenithy-testnet': ['0x7E7C6eB435E3687CfDfe18C09C0340eb70567d7b', '0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1', 'https://bloxberg.ethernity.cloud', 8995],
+  // --- bloxberg: the testnet's PoX is the EthernityImplementationV2 1.2 deployed 2026-11-18, whose compute figures are whole GFLOPS, on the EthernityCloudStorage 0xEE3aAa1A... of 2026-11-14 (the tETNY token stays the legacy proxy 0x02882F03...) and reads ECImageRegistryV3; mainnet the legacy PoX and the original registry ---
+  'etny-pynithy-testnet': ['0x830c781F0352050343211B6BFA83600B3e77647C', '0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1', 'https://bloxberg.ethernity.cloud', 8995],
+  'etny-nodenithy-testnet': ['0x830c781F0352050343211B6BFA83600B3e77647C', '0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1', 'https://bloxberg.ethernity.cloud', 8995],
   'etny-pynithy': ['0x549A6E06BB2084100148D50F51CF77a3436C3Ae7', '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31', 'https://bloxberg.ethernity.cloud', 8995],
   'etny-nodenithy': ['0x549A6E06BB2084100148D50F51CF77a3436C3Ae7', '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31', 'https://bloxberg.ethernity.cloud', 8995],
   // --- polygon mainnet ---
   'ecld-pynithy': ['0x439945BE73fD86fcC172179021991E96Beff3Cc4', '0x689f3806874d3c8A973f419a4eB24e6fBA7E830F', 'https://polygon-bor-rpc.publicnode.com', 137],
   'ecld-nodenithy': ['0x439945BE73fD86fcC172179021991E96Beff3Cc4', '0x689f3806874d3c8A973f419a4eB24e6fBA7E830F', 'https://polygon-bor-rpc.publicnode.com', 137],
-  // --- polygon amoy testnet: the PoX EthernityImplementationV2 1.2 of 2026-11-12 (on the storage of 1.1 0xB8f46D2B...) and the ECImageRegistryV3 of 2026-10-28 ---
-  'ecld-pynithy-amoy': ['0x3Aa1A0d7A8A9DaE9e13345D3261afe86D67326A4', '0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706', 'https://polygon-amoy-bor-rpc.publicnode.com', 80002],
-  'ecld-nodenithy-amoy': ['0x3Aa1A0d7A8A9DaE9e13345D3261afe86D67326A4', '0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706', 'https://polygon-amoy-bor-rpc.publicnode.com', 80002],
-  'ecld-pynithy-amoy-unsafe': ['0x3Aa1A0d7A8A9DaE9e13345D3261afe86D67326A4', '0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706', 'https://polygon-amoy-bor-rpc.publicnode.com', 80002],
-  'ecld-nodenithy-amoy-unsafe': ['0x3Aa1A0d7A8A9DaE9e13345D3261afe86D67326A4', '0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706', 'https://polygon-amoy-bor-rpc.publicnode.com', 80002],
+  // --- polygon amoy testnet: the PoX EthernityImplementationV2 1.2 deployed 2026-11-18, whose compute figures are whole GFLOPS (on the storage and token of the implementations 1.1 0xB8f46D2B... and 0x1579b37C...), and the ECImageRegistryV3 of 2026-10-28 ---
+  'ecld-pynithy-amoy': ['0xd1182deA61CDa785C320cdBE5888EaC4178cAAF2', '0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706', 'https://polygon-amoy-bor-rpc.publicnode.com', 80002],
+  'ecld-nodenithy-amoy': ['0xd1182deA61CDa785C320cdBE5888EaC4178cAAF2', '0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706', 'https://polygon-amoy-bor-rpc.publicnode.com', 80002],
+  'ecld-pynithy-amoy-unsafe': ['0xd1182deA61CDa785C320cdBE5888EaC4178cAAF2', '0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706', 'https://polygon-amoy-bor-rpc.publicnode.com', 80002],
+  'ecld-nodenithy-amoy-unsafe': ['0xd1182deA61CDa785C320cdBE5888EaC4178cAAF2', '0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706', 'https://polygon-amoy-bor-rpc.publicnode.com', 80002],
   // --- iotex testnet ---
   'ecld-pynithy-iotex-testnet': ['0xD56385A97413Ed80E28B1b54A193b98F2C49c975', '0xa7467A6391816be9367a1cC52E0ef0c15FfE3cCC', 'https://babel-api.testnet.iotex.io', 4690],
   'ecld-nodenithy-iotex-testnet': ['0xD56385A97413Ed80E28B1b54A193b98F2C49c975', '0xa7467A6391816be9367a1cC52E0ef0c15FfE3cCC', 'https://babel-api.testnet.iotex.io', 4690],
@@ -56,8 +56,8 @@ export const ECRunner = {
   'ecld-pynithy-litvm-testnet': ['0xE35991de1f2A435e29E70406FA2781b1AffCb168', '0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D', 'https://rpc.testnet.liteforge.zeeve.net/', 4441],
   'ecld-nodenithy-litvm-testnet': ['0xE35991de1f2A435e29E70406FA2781b1AffCb168', '0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D', 'https://rpc.testnet.liteforge.zeeve.net/', 4441],
   // --- the -unsafe networks: the contracts of the network each is named after ---
-  'etny-pynithy-testnet-unsafe': ['0x7E7C6eB435E3687CfDfe18C09C0340eb70567d7b', '0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1', 'https://bloxberg.ethernity.cloud', 8995],
-  'etny-nodenithy-testnet-unsafe': ['0x7E7C6eB435E3687CfDfe18C09C0340eb70567d7b', '0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1', 'https://bloxberg.ethernity.cloud', 8995],
+  'etny-pynithy-testnet-unsafe': ['0x830c781F0352050343211B6BFA83600B3e77647C', '0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1', 'https://bloxberg.ethernity.cloud', 8995],
+  'etny-nodenithy-testnet-unsafe': ['0x830c781F0352050343211B6BFA83600B3e77647C', '0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1', 'https://bloxberg.ethernity.cloud', 8995],
   'ecld-pynithy-litvm-testnet-unsafe': ['0xE35991de1f2A435e29E70406FA2781b1AffCb168', '0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D', 'https://rpc.testnet.liteforge.zeeve.net/', 4441],
   'ecld-nodenithy-litvm-testnet-unsafe': ['0xE35991de1f2A435e29E70406FA2781b1AffCb168', '0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D', 'https://rpc.testnet.liteforge.zeeve.net/', 4441]
 };

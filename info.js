@@ -48,13 +48,14 @@ const NETWORKS = {
     imageRegistry: '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31',
     esr: '0x4Bf5cDE3BFD73dd10B707f8B123Ba631D2EBEAD2',
   },
-  // The PoX 1.2 implementation of 2026-11-14 (pox-smart-contract-litvm) on its
-  // own EthernityCloudStorage; the tETNY token is the legacy proxy
+  // The PoX 1.2 implementation deployed 2026-11-18 (pox-smart-contract-litvm),
+  // whose compute figures are whole GFLOPS, on the EthernityCloudStorage
+  // 0xEE3aAa1A... of 2026-11-14; the tETNY token is the legacy proxy
   // 0x02882F03..., whose orders stay on the legacy path. The V3 registry of
   // 2026-10-06 and the ESR.
   BLOXBERG_TESTNET: {
     type: 'testnet', chainId: 8995, rpc: 'https://bloxberg.ethernity.cloud',
-    protocol: '0x7E7C6eB435E3687CfDfe18C09C0340eb70567d7b',
+    protocol: '0x830c781F0352050343211B6BFA83600B3e77647C',
     imageRegistry: '0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1',
     esr: '0x0Ea1728EAE108FD3B9340ae91451348E2Cc6b4E4',
   },
@@ -64,13 +65,14 @@ const NETWORKS = {
     imageRegistry: '0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D',
     esr: '0x709052Fe77Af543d3d9FE2Ac06a15c635c8D4Be5',
   },
-  // The implementation 1.2 of 2026-11-12 on the storage and token of the
-  // implementations 1.1 0xB8f46D2B... and 0x1579b37C... (a DO request is
-  // escrowed by the implementation it was posted through, so only 1.2 is
-  // served); the V3 registry and the ESR of 2026-10-28.
+  // The implementation 1.2 deployed 2026-11-18, whose compute figures are
+  // whole GFLOPS, on the storage and token of the implementations 1.1
+  // 0xB8f46D2B... and 0x1579b37C... (a DO request is escrowed by the
+  // implementation it was posted through, so only this one is served); the
+  // V3 registry and the ESR of 2026-10-28.
   POLYGON_AMOY_TESTNET: {
     type: 'testnet', chainId: 80002, rpc: 'https://polygon-amoy-bor-rpc.publicnode.com',
-    protocol: '0x3Aa1A0d7A8A9DaE9e13345D3261afe86D67326A4',
+    protocol: '0xd1182deA61CDa785C320cdBE5888EaC4178cAAF2',
     imageRegistry: '0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706',
     esr: '0x1DC58496ed1cA66FD1E0b51fA28A9E7451970843',
   },
