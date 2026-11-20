@@ -16,7 +16,7 @@
 const VALIDATOR_REGISTRY = {
   // Bloxberg testnet's ValidatorRegistry R3 of 2026-11-14 (ethernity-cas
   // CAS-SETUP.md "The cut of 2026-11-14 on bloxberg testnet"), seeded from the
-  // Phase 2 registry 0x8CC8B1dc... of 2026-10-21; its set judges the PoX 1.2.
+  // Phase 2 registry 0x8CC8B1dc... of 2026-10-21; its set judges the PoX 2.0.
   'etny-pynithy-testnet': '0xc346BfFC83f318FbbC34987cEF85716a3f7dCcB0',
   'etny-nodenithy-testnet': '0xc346BfFC83f318FbbC34987cEF85716a3f7dCcB0',
   'ecld-pynithy-litvm-testnet': '0xbE3759f327e8643fC5A1717fb2072A0dAcBAD29E',

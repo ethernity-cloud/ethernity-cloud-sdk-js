@@ -31,7 +31,7 @@ const writeEnv = (key, value) => {
 // Kept in sync with etny-{pynithy,nodenithy}/v3/networks.yaml (the authoritative
 // on-chain constants). Covers all supported networks for both dApp types.
 export const ECRunner = {
-  // --- bloxberg: the testnet's PoX is the EthernityImplementationV2 1.2 deployed 2026-11-18, whose compute figures are whole GFLOPS, on the EthernityCloudStorage 0xEE3aAa1A... of 2026-11-14 (the tETNY token stays the legacy proxy 0x02882F03...) and reads ECImageRegistryV3; mainnet the legacy PoX and the original registry ---
+  // --- bloxberg: the testnet's PoX is the PoX 2.0 implementation deployed 2026-11-18, whose compute figures are whole GFLOPS, on the EthernityCloudStorage 0xEE3aAa1A... of 2026-11-14 (the tETNY token stays the legacy proxy 0x02882F03...) and reads ECImageRegistryV3; mainnet the legacy PoX and the original registry ---
   'etny-pynithy-testnet': ['0x830c781F0352050343211B6BFA83600B3e77647C', '0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1', 'https://bloxberg.ethernity.cloud', 8995],
   'etny-nodenithy-testnet': ['0x830c781F0352050343211B6BFA83600B3e77647C', '0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1', 'https://bloxberg.ethernity.cloud', 8995],
   'etny-pynithy': ['0x549A6E06BB2084100148D50F51CF77a3436C3Ae7', '0x15D73a742529C3fb11f3FA32EF7f0CC3870ACA31', 'https://bloxberg.ethernity.cloud', 8995],
@@ -39,7 +39,7 @@ export const ECRunner = {
   // --- polygon mainnet ---
   'ecld-pynithy': ['0x439945BE73fD86fcC172179021991E96Beff3Cc4', '0x689f3806874d3c8A973f419a4eB24e6fBA7E830F', 'https://polygon-bor-rpc.publicnode.com', 137],
   'ecld-nodenithy': ['0x439945BE73fD86fcC172179021991E96Beff3Cc4', '0x689f3806874d3c8A973f419a4eB24e6fBA7E830F', 'https://polygon-bor-rpc.publicnode.com', 137],
-  // --- polygon amoy testnet: the PoX EthernityImplementationV2 1.2 deployed 2026-11-18, whose compute figures are whole GFLOPS (on the storage and token of the implementations 1.1 0xB8f46D2B... and 0x1579b37C...), and the ECImageRegistryV3 of 2026-10-28 ---
+  // --- polygon amoy testnet: the PoX 2.0 implementation deployed 2026-11-18, whose compute figures are whole GFLOPS (on the storage and token of the implementations 1.1 0xB8f46D2B... and 0x1579b37C...), and the ECImageRegistryV3 of 2026-10-28 ---
   'ecld-pynithy-amoy': ['0xd1182deA61CDa785C320cdBE5888EaC4178cAAF2', '0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706', 'https://polygon-amoy-bor-rpc.publicnode.com', 80002],
   'ecld-nodenithy-amoy': ['0xd1182deA61CDa785C320cdBE5888EaC4178cAAF2', '0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706', 'https://polygon-amoy-bor-rpc.publicnode.com', 80002],
   'ecld-pynithy-amoy-unsafe': ['0xd1182deA61CDa785C320cdBE5888EaC4178cAAF2', '0x0C0f52ebd72cd2d2cBe94F385c9e23cec528b706', 'https://polygon-amoy-bor-rpc.publicnode.com', 80002],
