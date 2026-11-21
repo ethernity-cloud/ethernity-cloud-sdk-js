@@ -225,12 +225,12 @@ test('the README names the networks the bootnode\'s intake serves, and the ones 
   assert.ok(read('../README.md').replace(/\s+/g, ' ').includes(sentence), sentence);
 });
 
-test('the SDK depends on a runner that carries the PoX 1.0 testnet networks', () => {
+test('the SDK depends on a runner of the PoX 1.0 line that carries the PoX 1.0 testnet networks: a caret range on major 1 from 1.9.0 on', () => {
   const range = JSON.parse(read('../package.json')).dependencies['@ethernity-cloud/runner'];
   const lowest = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(range);
   assert.ok(lowest, range);
-  const [major, minor, patch] = lowest.slice(1).map(Number);
-  assert.ok(major > 0 || minor > 6 || (minor === 6 && patch >= 36), range);
+  const [major, minor] = lowest.slice(1).map(Number);
+  assert.ok(major === 1 && minor >= 9, range);
   assert.equal(runnerEnums.ECPox10TestnetConfig.BLOXBERG.networkType, 'TESTNET_POX10');
   assert.equal(runnerEnums.ECPox10TestnetConfig.POLYGON.networkType, 'AMOY_POX10');
 });

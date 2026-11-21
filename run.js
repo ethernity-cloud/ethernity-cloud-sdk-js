@@ -232,8 +232,10 @@ async function main() {
     enums = await import('@ethernity-cloud/runner/enums.js');
     ({ ECStatus, ECEvent } = enums);
   } catch (e) {
+    // The range named is the one this SDK depends on.
+    const runnerRange = require('./package.json').dependencies['@ethernity-cloud/runner'];
     console.error('ecld-run: the runner package is not installed or is too old '
-      + '(need @ethernity-cloud/runner >= 0.6.11): ' + e.message);
+      + `(need @ethernity-cloud/runner ${runnerRange}): ` + e.message);
     process.exit(1);
   }
 

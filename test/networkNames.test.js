@@ -1,5 +1,5 @@
 // The network identifiers of the SDK and the values behind them, as literals:
-// what release 1.8.6 carries (PUBLISHED_*) and what release 1.8.7 adds beside
+// what release 1.8.6 carries (PUBLISHED_*) and what release 1.9.0 adds beside
 // it (ADDED_*: the PoX 1.0 testnet networks of the bloxberg testnet and
 // Polygon Amoy). A published BLOCKCHAIN_NETWORK value keeps its trustedzone
 // images, its SDK registry tag, its session tag, its name at the certificate
@@ -120,7 +120,7 @@ const PUBLISHED_NETWORKS = [
   }
 ];
 
-// The networks release 1.8.7 adds, in the order ecld-init offers them after
+// The networks release 1.9.0 adds, in the order ecld-init offers them after
 // the published ones.
 const ADDED_NETWORKS = [
   {

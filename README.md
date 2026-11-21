@@ -127,7 +127,7 @@ dApp is built, published and run on one as on the mainnet it copies.
   (`setNetwork('BLOXBERG', 'TESTNET_POX10')`, `setNetwork('POLYGON',
   'AMOY_POX10')`): Polygon Amoy's two networks are paid in the same token,
   and the name is what puts the runner on the PoX 1.0 one. This needs
-  `@ethernity-cloud/runner` 0.6.36 or later.
+  `@ethernity-cloud/runner` 1.9.0 or later.
 - tE10 has no faucet: a wallet receives it by a transfer from the owner of the
   network's contracts. On Polygon Amoy the runner draws the tECLD faucet (1000
   tECLD) for a wallet that is short of a request's escrow and holds less than

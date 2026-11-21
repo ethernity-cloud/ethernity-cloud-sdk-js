@@ -23,7 +23,7 @@ const casConfig = require('./cas/config.js');
  * the RPC of a network whose token the runner cannot key an RPC by. unsafe
  * and pox10 are the (network, type) the runner is set to. The PoX 1.0 testnet
  * networks are known with a runner that carries their table,
- * ECPox10TestnetConfig (0.6.36 and later). */
+ * ECPox10TestnetConfig (1.9.0 and later). */
 function networkFor({ ECAddress, ECNetworkByChainId, ECPox10TestnetConfig }, raw) {
   const key = String(raw || '').trim().toUpperCase().replace(/\s+/g, '_');
   const bloxbergTestnet = { address: ECAddress.BLOXBERG.TESTNET_ADDRESS };
