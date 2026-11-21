@@ -176,6 +176,23 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   `MRENCLAVE_SECURELOCK_SIGNED`, the enclave measurement it was signed with.
   `ecld-publish` checks the `registry/` tree against both.
 
+  For a Nodenithy dApp the build runs the payload safety lint
+  (`payloadLint.mjs`, in the installed package from 1.8.7 on) on
+  `src/serverless/backend.js` before the securelock image is built:
+  - `eval(...)`, `Function(...)` or `new Function(...)` with an argument that
+    names the task input, `___etny_data_set___`, is an error: the build
+    prints its line and exits with code 1.
+  - Any other `eval(...)` or `Function` constructor call, and a property
+    selected by a key that names the task input (`obj[___etny_data_set___]`),
+    is a warning: the build prints its line and goes on.
+  - `// ecld: allow-eval` on the line a finding is reported on silences that
+    finding; `// ecld: allow-eval-file` anywhere in the file turns the lint
+    off for the file.
+  - The lint finds the calls by the names `eval` and `Function`: a call
+    through another name (`const f = eval; f(x)`) is not reported. When the
+    lint itself cannot be loaded, the build prints `payload safety lint
+    skipped` and goes on.
+
 - **Publish**: To publish the project, run:
   ```sh
   npm run ecld-publish
