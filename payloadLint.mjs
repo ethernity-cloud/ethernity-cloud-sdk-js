@@ -17,13 +17,17 @@
  * POLICY
  * - ERROR: eval / a Function(...) constructor whose argument references the
  *   task input (`___etny_data_set___`).
+ * - ERROR: a file that parses neither as an ES module nor as a script (the
+ *   sloppy-mode CommonJS the build loads it as): the lint cannot check it.
  * - WARNING: any other eval / Function / dynamic member access we cannot prove
  *   is untainted (sound taint analysis is undecidable; indirection like
  *   `const f = eval; f(x)` is deliberately NOT claimed caught).
  *
  * OPT-OUT (this is a lint, not an unbypassable wall):
- * - `// ecld: allow-eval` on the offending line silences that finding.
- * - `// ecld: allow-eval-file` anywhere in the file disables the lint for it.
+ * - `// ecld: allow-eval` on the offending line silences an eval, Function or
+ *   member access finding there.
+ * - `// ecld: allow-eval-file` anywhere in the file disables the lint for it,
+ *   a file that does not parse included.
  */
 
 import { Parser } from 'acorn';
@@ -58,11 +62,36 @@ export function analyze(source, filename = 'backend.js') {
   const allowLines = new Set();
   source.split('\n').forEach((l, i) => { if (l.includes(LINE_OPT_OUT)) allowLines.add(i + 1); });
 
-  let ast;
-  try {
-    ast = Parser.parse(source, { ecmaVersion: 'latest', sourceType: 'module', locations: true });
-  } catch (e) {
-    return { findings: [], optedOut: false }; // caller already reports parse errors
+  // The file is parsed as an ES module, else as a script: a CommonJS file in
+  // sloppy mode (with, legacy octal literals, a return at its top level, as
+  // require() wraps it in a function) parses only as a script. A file that
+  // parses as neither is one error finding, with both parsers' messages and
+  // the line of the script parse's failure: nothing in it is checked, and
+  // nodenithy/build.mjs prints it among the errors and exits with code 1.
+  let ast = null;
+  const failures = [];
+  for (const sourceType of ['module', 'script']) {
+    try {
+      ast = Parser.parse(source, {
+        ecmaVersion: 'latest', sourceType, locations: true, allowReturnOutsideFunction: sourceType === 'script'
+      });
+      break;
+    } catch (e) {
+      failures.push(e);
+    }
+  }
+  if (!ast) {
+    const [asModule, asScript] = failures;
+    return {
+      findings: [{
+        severity: 'error',
+        line: asScript.loc ? asScript.loc.line : 1,
+        message: `${filename} parses neither as an ES module (${asModule.message}) nor as a script (${asScript.message}), `
+          + 'so the lint cannot check it for eval or Function of the task input. Fix the syntax, or add '
+          + '`// ecld: allow-eval-file` to build it unchecked.'
+      }],
+      optedOut: false
+    };
   }
 
   const findings = [];

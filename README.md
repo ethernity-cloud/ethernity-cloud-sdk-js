@@ -177,17 +177,24 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   `ecld-publish` checks the `registry/` tree against both.
 
   For a Nodenithy dApp the build runs the payload safety lint
-  (`payloadLint.mjs`, in the installed package from 1.8.7 on) on
-  `src/serverless/backend.js` before the securelock image is built:
+  (`payloadLint.mjs`, in the installed package from 1.9.0 on) on
+  `src/serverless/backend.js` before the securelock image is built. The lint
+  parses the file as an ES module, else as a script, the sloppy-mode
+  CommonJS the build loads it as (`with`, legacy octal literals such as
+  `0755`, a `return` at the top level):
   - `eval(...)`, `Function(...)` or `new Function(...)` with an argument that
     names the task input, `___etny_data_set___`, is an error: the build
     prints its line and exits with code 1.
+  - A file that parses neither as a module nor as a script is an error: the
+    lint cannot check it, and the build prints both parsers' messages with
+    the line of the script parse's failure and exits with code 1.
   - Any other `eval(...)` or `Function` constructor call, and a property
     selected by a key that names the task input (`obj[___etny_data_set___]`),
     is a warning: the build prints its line and goes on.
-  - `// ecld: allow-eval` on the line a finding is reported on silences that
-    finding; `// ecld: allow-eval-file` anywhere in the file turns the lint
-    off for the file.
+  - `// ecld: allow-eval` on the line an `eval`, `Function` or property
+    finding is reported on silences that finding; `// ecld: allow-eval-file`
+    anywhere in the file turns the lint off for the file, a file that does
+    not parse included.
   - The lint finds the calls by the names `eval` and `Function`: a call
     through another name (`const f = eval; f(x)`) is not reported. When the
     lint itself cannot be loaded, the build prints `payload safety lint

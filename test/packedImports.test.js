@@ -9,8 +9,9 @@
 // each with a string argument. A relative import resolves as a require() of
 // it does: the file named, it with .js, .mjs, .cjs or .json, or its index.js.
 // npm is npm's own CLI script, run by the node that runs this test, when
-// npm_execpath names it (npm test sets it), else the npm command on PATH; the
-// test is skipped, with the reason, when neither answers `npm --version`.
+// npm_execpath names it (npm test sets it), else the npm command on PATH.
+// Only that one npm is tried: the test is skipped, with the reason, when it
+// does not answer `npm --version`.
 'use strict';
 
 const test = require('node:test');
