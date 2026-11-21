@@ -8,8 +8,9 @@
 // from a validator resolved out of VALIDATOR_REGISTRY, and the securelock
 // takes its certificate from the CAS session and verifies the CAS against the
 // registry baked into it. A testnet template NOT listed here has no CAS: its
-// securelock self-signs from MR_ENCLAVE. Mainnet templates are provisioned by
-// the Scontain CAS and are not listed.
+// securelock self-signs from MR_ENCLAVE. Mainnet templates, and those of the
+// PoX 1.0 testnet networks (POX10_TESTNETS), are provisioned by the Scontain
+// CAS and are not listed.
 //
 // Kept in sync with etny-{pynithy,nodenithy}/v3/networks.yaml
 // (cas_session_registry_address, validator_registry_address).
@@ -59,15 +60,47 @@ const CHAIN = {
   'ecld-nodenithy-amoy': { rpcUrl: 'https://polygon-amoy-bor-rpc.publicnode.com', chainId: 80002 },
 };
 
-// Whether the securelock takes its certificate from a CAS session: mainnet
-// (Scontain CAS), or a testnet template with a SessionRegistry (ethernity-cas).
-const casProvisioned = (templateName, isMainnet) => isMainnet || Boolean(SESSION_REGISTRY[templateName]);
+// Whether the securelock takes its certificate from a CAS session: a network
+// the Scontain CAS provisions (`scontainCas`, isScontainCasNetwork), or a
+// testnet template with a SessionRegistry (ethernity-cas).
+const casProvisioned = (templateName, scontainCas) => scontainCas || Boolean(SESSION_REGISTRY[templateName]);
 
 // The mainnets, by BLOCKCHAIN_NETWORK. A template name does not tell: the Amoy
 // templates (ecld-*-amoy) do not contain "testnet".
 const MAINNETS = ['Bloxberg_Mainnet', 'Polygon_Mainnet'];
 const isMainnetNetwork = (network) =>
   MAINNETS.some((name) => name.toUpperCase() === String(network || '').toUpperCase());
+
+// The PoX 1.0 testnet networks, by BLOCKCHAIN_NETWORK, each with its network
+// word: copies of the mainnets' PoX 1.0 contracts on the bloxberg testnet and
+// on Polygon Amoy, beside those chains' PoX 2.0 networks (Bloxberg_Testnet,
+// Polygon_Amoy_Testnet). Their trustedzones are built as the mainnet PoX 1.0
+// trustedzones are (etny-{pynithy,nodenithy} branch pox-1.0, network_type
+// "mainnet"): signed --production, their sessions at the Scontain CAS under
+// the production attestation rules. A dApp is built and published for one as
+// for the mainnet it copies. The word is the network's key in
+// etny-{pynithy,nodenithy}/v3/networks.yaml, so the SDK registry tag of its
+// trustedzone, and is the network's name in the securelock session
+// (sessionTag) and at the certificate extraction service (extractionNetwork).
+const POX10_TESTNETS = {
+  Bloxberg_Testnet_Pox10: 'bloxberg_testnet_pox10',
+  Polygon_Amoy_Pox10: 'polygon_amoy_pox10',
+};
+
+// The network word of a PoX 1.0 testnet network, or undefined for any other
+// network. Case-insensitive, as isUnsafeNetwork is.
+const pox10Word = (network) => {
+  const name = Object.keys(POX10_TESTNETS)
+    .find((known) => known.toUpperCase() === String(network || '').toUpperCase());
+  return name && POX10_TESTNETS[name];
+};
+const isPox10TestnetNetwork = (network) => Boolean(pox10Word(network));
+
+// Whether the Scontain CAS provisions the network's enclaves: the mainnets
+// and the PoX 1.0 testnet networks. The securelock of such a network is built
+// with the enclave network type "mainnet" and signed --production, and its
+// session is POSTed to the Scontain CAS.
+const isScontainCasNetwork = (network) => isMainnetNetwork(network) || isPox10TestnetNetwork(network);
 
 // The -unsafe networks, by BLOCKCHAIN_NETWORK, each with the network it is the
 // unsafe variant of: the same chain and contracts, for SGX platforms the CAS
@@ -88,9 +121,9 @@ const UNSAFE_NETWORKS = {
 const isUnsafeNetwork = (network) =>
   Object.keys(UNSAFE_NETWORKS).some((name) => name.toUpperCase() === String(network || '').toUpperCase());
 
-// The testnets, by BLOCKCHAIN_NETWORK: every network ecld-init offers but the
-// two mainnets, the -unsafe ones included. A session relaxes attestation on
-// these alone (sessionAttestation).
+// The testnets whose sessions relax attestation (sessionAttestation), by
+// BLOCKCHAIN_NETWORK: every network ecld-init offers but the two mainnets and
+// the PoX 1.0 testnet networks, the -unsafe ones included.
 const TESTNETS = [
   'Bloxberg_Testnet', 'Polygon_Amoy_Testnet', 'IoTeX_Testnet', 'Ethereum_Sepolia', 'LitVM_LiteForge',
   ...Object.keys(UNSAFE_NETWORKS),
@@ -101,9 +134,9 @@ const isTestnetNetwork = (network) =>
 // The attestation rules a securelock session declares on `network`, as the
 // YAML flow sequences its template takes for __TOLERATE__ and
 // __IGNORE_ADVISORIES__. A testnet tolerates a debug-signed enclave and ignores
-// every Intel advisory. Any other network, a mainnet or a name not in TESTNETS,
-// gets the production rules: no debug-mode, and INTEL-SA-00615 the one
-// advisory ignored.
+// every Intel advisory. Any other network, a mainnet, a PoX 1.0 testnet
+// network or a name not in TESTNETS, gets the production rules: no
+// debug-mode, and INTEL-SA-00615 the one advisory ignored.
 const sessionAttestation = (network) => (isTestnetNetwork(network)
   ? { tolerate: '[hyperthreading, outdated-tcb, software-hardening-needed, debug-mode]', ignoreAdvisories: '["*"]' }
   : { tolerate: '[hyperthreading, outdated-tcb, software-hardening-needed]', ignoreAdvisories: '["INTEL-SA-00615"]' });
@@ -117,9 +150,15 @@ const nameOnNetwork = (name, network) =>
 
 // The network part of ENCLAVE_NAME_SECURELOCK: the second word of
 // BLOCKCHAIN_NETWORK, with _unsafe on an -unsafe network so the two variants
-// never share a session name.
+// never share a session name; the network word on a PoX 1.0 testnet network,
+// whose sessions are at the Scontain CAS beside the mainnets'.
 const sessionTag = (network) =>
-  `${network.split('_')[1].toLowerCase()}${isUnsafeNetwork(network) ? '_unsafe' : ''}`;
+  pox10Word(network) || `${network.split('_')[1].toLowerCase()}${isUnsafeNetwork(network) ? '_unsafe' : ''}`;
+
+// The name the certificate extraction service (publickey.ethernity.cloud)
+// takes for `network`: the second word of BLOCKCHAIN_NETWORK in lower case;
+// the network word on a PoX 1.0 testnet network.
+const extractionNetwork = (network) => pox10Word(network) || network.toLowerCase().split('_')[1];
 
 // A compose template rendered for its network. A line tagged `# __CAS_ONLY__`
 // serves CAS attestation and is kept where a CAS provisions the enclaves, one
@@ -147,6 +186,7 @@ const esrSessionEnvironment = (env) => {
 
 module.exports = {
   VALIDATOR_REGISTRY, SESSION_REGISTRY, CHAIN, casProvisioned, isMainnetNetwork,
+  POX10_TESTNETS, isPox10TestnetNetwork, isScontainCasNetwork,
   UNSAFE_NETWORKS, isUnsafeNetwork, TESTNETS, isTestnetNetwork, sessionAttestation,
-  nameOnNetwork, sessionTag, renderCompose, esrSessionEnvironment,
+  nameOnNetwork, sessionTag, extractionNetwork, renderCompose, esrSessionEnvironment,
 };

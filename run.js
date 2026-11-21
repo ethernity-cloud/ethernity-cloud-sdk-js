@@ -17,6 +17,8 @@
  * ecld-publish), matching how ethernity_task drives a run:
  *
  *   BLOCKCHAIN_NETWORK   e.g. "Bloxberg_Testnet" -> the network token address
+ *                        (and, on a PoX 1.0 testnet network, the name the
+ *                        runner is set to: network.js)
  *   PROJECT_NAME         the securelock enclave to run (<PROJECT_NAME>-unsafe
  *                        on an -unsafe network)
  *   TRUSTED_ZONE_IMAGE   the trustedzone enclave (its -unsafe variant on an
@@ -272,6 +274,9 @@ async function main() {
   if (network.unsafe) {
     console.log('             UNSAFE: no CAS; the enclaves are debug-signed and sign their own certificates');
   }
+  if (network.pox10) {
+    console.log(`             PoX 1.0 testnet network: the runner's ${network.pox10.join(' ')}`);
+  }
   console.log(`securelock : ${securelock}`);
   console.log(`trustedzone: ${trustedzone || '(runner default)'}`);
   console.log(`payload    : ${JSON.stringify(code)}`);
@@ -282,6 +287,7 @@ async function main() {
   try {
     runner = new EthernityCloudRunner(network.address, network.rpcUrl ? { privateKey, rpcUrl: network.rpcUrl } : { privateKey }, network.chainId);
     if (network.unsafe) await runner.setNetwork(...network.unsafe);
+    if (network.pox10) await runner.setNetwork(...network.pox10);
   } catch (e) {
     console.error('ecld-run: could not initialise the runner: ' + e.message);
     process.exit(1);

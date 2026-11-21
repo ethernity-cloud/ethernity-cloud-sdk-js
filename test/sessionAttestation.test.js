@@ -1,12 +1,17 @@
 // A securelock session relaxes attestation, tolerating a debug-signed enclave
-// and ignoring every Intel advisory, on a testnet alone: a mainnet, an empty
-// BLOCKCHAIN_NETWORK and a name the SDK does not list all get the production
-// rules. Both runners fill their session template through sessionAttestation.
+// and ignoring every Intel advisory, on a testnet alone: a mainnet, a PoX 1.0
+// testnet network (whose trustedzone session carries the production rules),
+// an empty BLOCKCHAIN_NETWORK and a name the SDK does not list all get the
+// production rules. Both runners fill their session template through
+// sessionAttestation.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { TESTNETS, isTestnetNetwork, isMainnetNetwork, sessionAttestation } = require('../cas/config.js');
+const {
+  TESTNETS, isTestnetNetwork, isMainnetNetwork, isPox10TestnetNetwork, sessionAttestation,
+} = require('../cas/config.js');
+const { NETWORK_OPTIONS } = require('../init.js');
 
 // The networks ecld-init offers, as it writes BLOCKCHAIN_NETWORK.
 const MAINNETS = ['Bloxberg_Mainnet', 'Polygon_Mainnet'];
@@ -14,18 +19,28 @@ const OFFERED_TESTNETS = [
   'Bloxberg_Testnet', 'Polygon_Amoy_Testnet', 'IoTeX_Testnet', 'Ethereum_Sepolia', 'LitVM_LiteForge',
   'Bloxberg_Testnet_Unsafe', 'LitVM_LiteForge_Unsafe', 'Ethereum_Sepolia_Unsafe', 'Polygon_Amoy_Testnet_Unsafe',
 ];
+const POX10_TESTNETS = ['Bloxberg_Testnet_Pox10', 'Polygon_Amoy_Pox10'];
 const PRODUCTION = '[hyperthreading, outdated-tcb, software-hardening-needed]';
 
-test('every network ecld-init offers is exactly one of a mainnet and a testnet', () => {
+test('every network ecld-init offers is exactly one of a mainnet, a testnet and a PoX 1.0 testnet network', () => {
   for (const n of MAINNETS) {
     assert.ok(isMainnetNetwork(n), n);
     assert.ok(!isTestnetNetwork(n), n);
+    assert.ok(!isPox10TestnetNetwork(n), n);
   }
   for (const n of OFFERED_TESTNETS) {
     assert.ok(isTestnetNetwork(n), n);
     assert.ok(!isMainnetNetwork(n), n);
+    assert.ok(!isPox10TestnetNetwork(n), n);
+  }
+  for (const n of POX10_TESTNETS) {
+    assert.ok(isPox10TestnetNetwork(n), n);
+    assert.ok(!isMainnetNetwork(n), n);
+    assert.ok(!isTestnetNetwork(n), n);
   }
   assert.deepEqual([...TESTNETS].sort(), [...OFFERED_TESTNETS].sort());
+  assert.deepEqual(NETWORK_OPTIONS.map((option) => option.replace(/ /g, '_')).sort(),
+    [...MAINNETS, ...OFFERED_TESTNETS, ...POX10_TESTNETS].sort());
 });
 
 test('a testnet session tolerates debug-mode and ignores every advisory, however its name is cased', () => {
@@ -38,8 +53,8 @@ test('a testnet session tolerates debug-mode and ignores every advisory, however
   }
 });
 
-test('a mainnet, an empty network and an unlisted name get no debug-mode and one ignored advisory', () => {
-  for (const n of [...MAINNETS, '', undefined, null, 'Ethereum_Mainnet', 'LitVM_Mainnet', 'Bloxberg Testnet', ' Bloxberg_Testnet']) {
+test('a mainnet, a PoX 1.0 testnet network, an empty network and an unlisted name get no debug-mode and one ignored advisory', () => {
+  for (const n of [...MAINNETS, ...POX10_TESTNETS, '', undefined, null, 'Ethereum_Mainnet', 'LitVM_Mainnet', 'Bloxberg Testnet', ' Bloxberg_Testnet']) {
     const a = sessionAttestation(n);
     assert.equal(a.tolerate, PRODUCTION, String(n));
     assert.doesNotMatch(a.tolerate, /debug/, String(n));

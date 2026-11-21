@@ -46,6 +46,48 @@ const IPFS_OPTIONS = [
   "an IPFS (Kubo) RPC API of your own (URL, optional Authorization token)",
 ];
 
+// The networks the prompt offers, in its order. The choice is written to .env
+// as BLOCKCHAIN_NETWORK with its spaces as underscores.
+const NETWORK_OPTIONS = [
+  "Bloxberg Mainnet",
+  "Bloxberg Testnet",
+  "Polygon Mainnet",
+  "Polygon Amoy Testnet",
+  "IoTeX Testnet",
+  "Ethereum Sepolia",
+  "LitVM LiteForge",
+  "Bloxberg Testnet Unsafe",
+  "LitVM LiteForge Unsafe",
+  "Ethereum Sepolia Unsafe",
+  "Polygon Amoy Testnet Unsafe",
+  "Bloxberg Testnet Pox10",
+  "Polygon Amoy Pox10",
+];
+
+// TRUSTED_ZONE_IMAGE of a NETWORK_OPTIONS choice for a service type
+// (Nodenithy, Pynithy): image_name of the network's entry in
+// etny-{pynithy,nodenithy}/v3/networks.yaml. A choice outside the list takes
+// the bloxberg testnet's.
+const trustedZoneImageFor = (blockchainNetwork, serviceType) => {
+  const svc = serviceType.toLowerCase();
+  const imageByNetwork = {
+    "Bloxberg Mainnet": `etny-${svc}`,
+    "Bloxberg Testnet": `etny-${svc}-testnet`,
+    "Polygon Mainnet": `ecld-${svc}`,
+    "Polygon Amoy Testnet": `ecld-${svc}-amoy`,
+    "IoTeX Testnet": `ecld-${svc}-iotex-testnet`,
+    "Ethereum Sepolia": `ecld-${svc}-ethereum-sepolia`,
+    "LitVM LiteForge": `ecld-${svc}-litvm-testnet`,
+    "Bloxberg Testnet Unsafe": `etny-${svc}-testnet-unsafe`,
+    "LitVM LiteForge Unsafe": `ecld-${svc}-litvm-testnet-unsafe`,
+    "Ethereum Sepolia Unsafe": `ecld-${svc}-ethereum-sepolia-unsafe`,
+    "Polygon Amoy Testnet Unsafe": `ecld-${svc}-amoy-unsafe`,
+    "Bloxberg Testnet Pox10": `etny-${svc}-testnet-pox10`,
+    "Polygon Amoy Pox10": `ecld-${svc}-amoy-pox10`,
+  };
+  return imageByNetwork[blockchainNetwork] || `etny-${svc}-testnet`;
+};
+
 // The .env values (IPFS_ENDPOINT, IPFS_TOKEN) of an IPFS_OPTIONS choice.
 const ipfsSettings = (choice, url, token) =>
   choice === IPFS_OPTIONS[1]
@@ -305,26 +347,19 @@ const main = async () => {
     );
   }
   console.log();
-  const blockchainNetworkOptions = [
-    "Bloxberg Mainnet",
-    "Bloxberg Testnet",
-    "Polygon Mainnet",
-    "Polygon Amoy Testnet",
-    "IoTeX Testnet",
-    "Ethereum Sepolia",
-    "LitVM LiteForge",
-    "Bloxberg Testnet Unsafe",
-    "LitVM LiteForge Unsafe",
-    "Ethereum Sepolia Unsafe",
-    "Polygon Amoy Testnet Unsafe",
-  ];
   const blockchainNetwork = await promptOptions(
     "On which Blockchain network do you want to have the app set up, as a starting point? (default is Bloxberg Testnet): ",
-    blockchainNetworkOptions,
+    NETWORK_OPTIONS,
     "Bloxberg Testnet",
   );
   console.log();
   const network = blockchainNetwork.replace(/ /g, "_");
+  if (casConfig.isPox10TestnetNetwork(network)) {
+    console.log(`${blockchainNetwork} is the PoX 1.0 network of its testnet: a copy of the mainnet's PoX 1.0 contracts, beside the`);
+    console.log("testnet's PoX 2.0 network. Your dApp is built and published for it as for that mainnet: its enclaves are");
+    console.log("production-signed and provisioned by the Scontain CAS.");
+    console.log();
+  }
   if (casConfig.isUnsafeNetwork(network)) {
     const sibling = casConfig.UNSAFE_NETWORKS[network].replace(/_/g, " ");
     console.log(`${blockchainNetwork} runs your dApp WITHOUT a CAS, on the chain and contracts of ${sibling},`);
@@ -474,30 +509,7 @@ const main = async () => {
     writeEnv("DOCKER_LOGIN", "");
     writeEnv("DOCKER_PASSWORD", "");
   }
-  // write TRUSTED_ZONE_IMAGE {token}_{name}{networktype} with the following rules:
-  // - token should be ecld if network is polygon, etny if network is bloxberg
-  // TRUSTED_ZONE_IMAGE = <prefix>-<service>-<suffix>, matching image_name in
-  // etny-{pynithy,nodenithy}/v3/networks.yaml. The old code derived this from
-  // "Polygon?ecld:etny" + "Mainnet?'':'-testnet'", which only worked for
-  // bloxberg/polygon and produced wrong names for iotex/sepolia/litvm (all use
-  // the ecld prefix and network-specific suffixes). Use an explicit per-network
-  // map instead.
-  const svc = serviceType.toLowerCase();
-  const imageByNetwork = {
-    "Bloxberg Mainnet": `etny-${svc}`,
-    "Bloxberg Testnet": `etny-${svc}-testnet`,
-    "Polygon Mainnet": `ecld-${svc}`,
-    "Polygon Amoy Testnet": `ecld-${svc}-amoy`,
-    "IoTeX Testnet": `ecld-${svc}-iotex-testnet`,
-    "Ethereum Sepolia": `ecld-${svc}-ethereum-sepolia`,
-    "LitVM LiteForge": `ecld-${svc}-litvm-testnet`,
-    "Bloxberg Testnet Unsafe": `etny-${svc}-testnet-unsafe`,
-    "LitVM LiteForge Unsafe": `ecld-${svc}-litvm-testnet-unsafe`,
-    "Ethereum Sepolia Unsafe": `ecld-${svc}-ethereum-sepolia-unsafe`,
-    "Polygon Amoy Testnet Unsafe": `ecld-${svc}-amoy-unsafe`,
-  };
-  const trustedZoneImage = imageByNetwork[blockchainNetwork] || `etny-${svc}-testnet`;
-  writeEnv("TRUSTED_ZONE_IMAGE", trustedZoneImage);
+  writeEnv("TRUSTED_ZONE_IMAGE", trustedZoneImageFor(blockchainNetwork, serviceType));
 
 
   writeEnv("BLOCKCHAIN_NETWORK", network);
@@ -517,4 +529,6 @@ const main = async () => {
 
 if (require.main === module) main();
 
-module.exports = { IPFS_OPTIONS, ipfsSettings, writeEnv, writeExecution, promptExecution };
+module.exports = {
+  IPFS_OPTIONS, ipfsSettings, writeEnv, writeExecution, promptExecution, NETWORK_OPTIONS, trustedZoneImageFor,
+};

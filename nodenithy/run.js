@@ -66,14 +66,18 @@ const writeEnv = (key, value) => {
 
 let templateName = process.env.TRUSTED_ZONE_IMAGE || 'etny-nodenithy-testnet';
 
-const isMainnet = casConfig.isMainnetNetwork(process.env.BLOCKCHAIN_NETWORK);
-// Mainnet enclaves are provisioned by the Scontain CAS. A testnet template
-// with a SessionRegistry is CAS-attested by the ethernity-cas validator set:
-// the session is registered on-chain, the enclave is provisioned from a
-// validator, and the certificate comes out of the CAS session. Every other
-// testnet's enclaves self-sign from MR_ENCLAVE and register no session.
-const cas = casConfig.casProvisioned(templateName, isMainnet);
-const casTestnet = !isMainnet && cas;
+const scontainCas = casConfig.isScontainCasNetwork(process.env.BLOCKCHAIN_NETWORK);
+// The enclaves of a mainnet and of a PoX 1.0 testnet network are provisioned
+// by the Scontain CAS. A testnet template with a SessionRegistry is
+// CAS-attested by the ethernity-cas validator set: the session is registered
+// on-chain, the enclave is provisioned from a validator, and the certificate
+// comes out of the CAS session. Every other testnet's enclaves self-sign from
+// MR_ENCLAVE and register no session.
+const cas = casConfig.casProvisioned(templateName, scontainCas);
+const casTestnet = !scontainCas && cas;
+// On a PoX 1.0 testnet network the compose names the trustedzone session the
+// network's image registry records, as on a CAS-attested testnet.
+const pox10 = casConfig.isPox10TestnetNetwork(process.env.BLOCKCHAIN_NETWORK);
 const casChain = casConfig.CHAIN[templateName] || {};
 // An -unsafe network is a self-signing testnet whose compose carries no LAS;
 // its securelock is registered as <project>-unsafe.
@@ -587,7 +591,9 @@ const main = async () => {
     // here, names a validator that answered (or ECLD_CAS_ADDR); the published
     // docker-compose-final.yml names the first validator in registry order,
     // so that a rerun of this publish renders the same compose. The node and
-    // the extraction service resolve a CAS again before they run it.
+    // the extraction service resolve a CAS again before they run it. On a PoX
+    // 1.0 testnet network the compose keeps the Scontain CAS and names the
+    // trustedzone session the ImageRegistry records for this template.
     let casAddr = null;
     let publishedCasAddr = null;
     let trustedZoneSession = null;
@@ -595,6 +601,8 @@ const main = async () => {
         casAddr = await casResolver.casAddressFor(casChain.rpcUrl, casConfig.VALIDATOR_REGISTRY[templateName]);
         publishedCasAddr = await casResolver.publishedCasAddress(casChain.rpcUrl, casConfig.VALIDATOR_REGISTRY[templateName]);
         console.log(`\t✔  CAS for this network: ${casAddr} (the published compose names ${publishedCasAddr})`);
+    }
+    if (casTestnet || pox10) {
         trustedZoneSession = execSync(`node ./image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" ${templateName} "v3" "getTrustedZoneSession"`).toString().trim();
         if (!trustedZoneSession) {
             console.error(`ERROR! The ImageRegistry records no trustedzone session for ${templateName}.`);
@@ -630,7 +638,7 @@ const main = async () => {
 
         // Named only in a CAS-provisioned compose; a self-signing one has no
         // __CAS_ONLY__ lines left.
-        const ENCLAVE_NAME_TRUSTEDZONE = casTestnet ? trustedZoneSession : 'ecld-nodenithy-trustedzone-v3-3.0.0';
+        const ENCLAVE_NAME_TRUSTEDZONE = trustedZoneSession || 'ecld-nodenithy-trustedzone-v3-3.0.0';
         let updatedContent = fileContentBefore
             .replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK)
             .replace(/__ENCLAVE_NAME_TRUSTEDZONE__/g, ENCLAVE_NAME_TRUSTEDZONE);

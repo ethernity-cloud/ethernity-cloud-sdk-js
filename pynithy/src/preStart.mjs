@@ -2,13 +2,14 @@
 // constants at the top of src/ec_helloworld_example.js from the project's
 // .env, the way ecld-run reads the same values. PROJECT_NAME and
 // TRUSTED_ZONE_IMAGE take their -unsafe form on an -unsafe network; the
-// network's token address, chain id and -unsafe (network, type) come from the
-// runner's own enums through the SDK's network table; IPFS_ENDPOINT is the
-// IPFS API of the dApp's own, or '' (no setting, or the public API, which
-// takes no writes without a token), on which the dApp delivers its task
-// artefacts through the bootnode's payload intake; EXECUTION is the order's
-// execution object from the EXEC_* keys (the SDK's execution.js: the
-// defaults where .env has none, an invalid key refused with its message).
+// network's token address, chain id and -unsafe or PoX 1.0 testnet (network,
+// type) come from the runner's own enums through the SDK's network table;
+// IPFS_ENDPOINT is the IPFS API of the dApp's own, or '' (no setting, or the
+// public API, which takes no writes without a token), on which the dApp
+// delivers its task artefacts through the bootnode's payload intake;
+// EXECUTION is the order's execution object from the EXEC_* keys (the SDK's
+// execution.js: the defaults where .env has none, an invalid key refused with
+// its message).
 import fs from 'fs';
 import { createRequire } from 'module';
 import dotenv from 'dotenv';
@@ -46,6 +47,7 @@ const constants = {
   NETWORK_ADDRESS: network.address,
   CHAIN_ID: network.chainId || null,
   UNSAFE_NETWORK: network.unsafe || null,
+  POX10_NETWORK: network.pox10 || null,
   IPFS_ENDPOINT: dappEndpoint(IPFS_ENDPOINT),
   EXECUTION,
 };

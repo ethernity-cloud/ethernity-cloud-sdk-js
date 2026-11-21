@@ -10,6 +10,7 @@
 const axios = require('axios');
 const fs = require('fs');
 const { Command } = require('commander');
+const casConfig = require('../../cas/config.js');
 
 const BASE_URL = "https://publickey.ethernity.cloud";
 // The watcher polls the registries every 30 s.
@@ -105,7 +106,7 @@ async function main() {
     const options = program.opts();
     const enclaveName = options.enclave_name;
     const protocolVersion = options.protocol_version;
-    const network = options.network.toLowerCase().split("_")[1];
+    const network = casConfig.extractionNetwork(options.network);
     const templateVersion = options.template_version;
 
     const hhash = fs.readFileSync('IPFS_HASH.ipfs', 'utf8').trim();

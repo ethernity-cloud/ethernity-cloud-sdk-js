@@ -18,7 +18,22 @@ let GAS = 9000000;
 let GAS_PRICE = 1;
 
 function setVars(network = "") {
-    if (BLOCKCHAIN_NETWORK.includes("Bloxberg")) {
+    if (BLOCKCHAIN_NETWORK.includes("Pox10")) {
+        // The PoX 1.0 testnet networks: each reads the ECImageRegistry (V1)
+        // deployed with its copy of the mainnet's PoX 1.0 contracts.
+        if (BLOCKCHAIN_NETWORK.includes("Bloxberg")) {
+            NETWORK_RPC = "https://bloxberg.ethernity.cloud";
+            IMAGE_REGISTRY_ADDRESS = "0x7dBC1b591cc3b7136D863bc7430C6Db50E929665";
+            CHAIN_ID = 8995;
+        } else if (BLOCKCHAIN_NETWORK.includes("Polygon")) {
+            // Amoy's base fee is about 30 gwei.
+            NETWORK_RPC = "https://polygon-amoy-bor-rpc.publicnode.com";
+            IMAGE_REGISTRY_ADDRESS = "0xa2EE2a9118d0011AF05a6196c862D37d8c29F8eC";
+            CHAIN_ID = 80002;
+            GAS = 20000000;
+            GAS_PRICE = 40000000010;
+        }
+    } else if (BLOCKCHAIN_NETWORK.includes("Bloxberg")) {
         // The bloxberg testnet reads ECImageRegistryV3; mainnet the original registry.
         IMAGE_REGISTRY_ADDRESS = BLOCKCHAIN_NETWORK.includes("Testnet")
             ? "0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1"

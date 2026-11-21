@@ -59,7 +59,12 @@ export const ECRunner = {
   'etny-pynithy-testnet-unsafe': ['0x830c781F0352050343211B6BFA83600B3e77647C', '0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1', 'https://bloxberg.ethernity.cloud', 8995],
   'etny-nodenithy-testnet-unsafe': ['0x830c781F0352050343211B6BFA83600B3e77647C', '0xa372a6e1Eb7Fcf343AF6b91E809b900C55001CD1', 'https://bloxberg.ethernity.cloud', 8995],
   'ecld-pynithy-litvm-testnet-unsafe': ['0xE35991de1f2A435e29E70406FA2781b1AffCb168', '0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D', 'https://rpc.testnet.liteforge.zeeve.net/', 4441],
-  'ecld-nodenithy-litvm-testnet-unsafe': ['0xE35991de1f2A435e29E70406FA2781b1AffCb168', '0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D', 'https://rpc.testnet.liteforge.zeeve.net/', 4441]
+  'ecld-nodenithy-litvm-testnet-unsafe': ['0xE35991de1f2A435e29E70406FA2781b1AffCb168', '0xAf8Ce29103E1f59feDD49688ff070Ffc2346AF1D', 'https://rpc.testnet.liteforge.zeeve.net/', 4441],
+  // --- the PoX 1.0 testnet networks, copies of the mainnets' PoX 1.0 contracts deployed 2026-11-21: on the bloxberg testnet the PoX proxy, which is its own token (tE10), and the copy of the original registry; on polygon amoy the PoX on a storage of its own, paid in the amoy tECLD, and the copy of the polygon mainnet registry ---
+  'etny-pynithy-testnet-pox10': ['0x69A7bEB5Da2d3dA711d52E491D71e51296b08745', '0x7dBC1b591cc3b7136D863bc7430C6Db50E929665', 'https://bloxberg.ethernity.cloud', 8995],
+  'etny-nodenithy-testnet-pox10': ['0x69A7bEB5Da2d3dA711d52E491D71e51296b08745', '0x7dBC1b591cc3b7136D863bc7430C6Db50E929665', 'https://bloxberg.ethernity.cloud', 8995],
+  'ecld-pynithy-amoy-pox10': ['0x9Aad82557c84c11C4031382d8Bf2cacF8f256a02', '0xa2EE2a9118d0011AF05a6196c862D37d8c29F8eC', 'https://polygon-amoy-bor-rpc.publicnode.com', 80002],
+  'ecld-nodenithy-amoy-pox10': ['0x9Aad82557c84c11C4031382d8Bf2cacF8f256a02', '0xa2EE2a9118d0011AF05a6196c862D37d8c29F8eC', 'https://polygon-amoy-bor-rpc.publicnode.com', 80002]
 };
 
 // ethernity-cas ValidatorRegistry per template, baked into the enclave so it
@@ -189,7 +194,10 @@ process.chdir(buildDir);
 
 let templateName = process.env.TRUSTED_ZONE_IMAGE || 'etny-nodenithy-testnet';
 
-const isMainnet = casConfig.isMainnetNetwork(process.env.BLOCKCHAIN_NETWORK);
+// Whether the Scontain CAS provisions the network's enclaves (a mainnet or a
+// PoX 1.0 testnet network): the securelock then carries the enclave network
+// type "mainnet", as the network's trustedzone does.
+const scontainCas = casConfig.isScontainCasNetwork(process.env.BLOCKCHAIN_NETWORK);
 
 const ENCLAVE_NAME_TRUSTEDZONE = templateName;
 
@@ -221,6 +229,8 @@ const trustedZoneNetByBlockchain = {
   LitVM_LiteForge_Unsafe: 'litvm_liteforge_unsafe',
   Ethereum_Sepolia_Unsafe: 'ethereum_sepolia_unsafe',
   Polygon_Amoy_Testnet_Unsafe: 'amoy_unsafe',
+  Bloxberg_Testnet_Pox10: 'bloxberg_testnet_pox10',
+  Polygon_Amoy_Pox10: 'polygon_amoy_pox10',
 };
 const trustedZoneNet = trustedZoneNetByBlockchain[process.env.BLOCKCHAIN_NETWORK];
 if (!trustedZoneNet) {
@@ -267,7 +277,7 @@ const esrEnvBlock = ESR_ENABLED ? `ENV ESR_CONTRACT_ADDRESS=${ESR_CONTRACT_ADDRE
 
 // runCommand(`cat Dockerfile.tmpl | sed s/"__ENCLAVE_NAME_SECURELOCK__"/"${ENCLAVE_NAME_SECURELOCK}"/g > Dockerfile`);
 const dockerfileSecureTemplate = fs.readFileSync('Dockerfile.tmpl', 'utf8');
-let dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__NETWORK_TYPE__/g, isMainnet ? 'mainnet' : 'testnet').replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]).replace(/__ETNY_VALIDATOR_REGISTRY_ADDRESS__/g, VALIDATOR_REGISTRY[templateName] || '').replace(/^__ESR_ENV__\r?\n/m, esrEnvBlock ? `${esrEnvBlock}\n` : '');
+let dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__NETWORK_TYPE__/g, scontainCas ? 'mainnet' : 'testnet').replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]).replace(/__ETNY_VALIDATOR_REGISTRY_ADDRESS__/g, VALIDATOR_REGISTRY[templateName] || '').replace(/^__ESR_ENV__\r?\n/m, esrEnvBlock ? `${esrEnvBlock}\n` : '');
 
 // The securelock's protected heap (SCONE_HEAP), signed into the enclave and
 // set on the run/docker-compose securelock service; ECLD_MEMORY_TO_ALLOCATE
@@ -305,11 +315,12 @@ const signedMrenclaveStep =
   '      | sed -E \'s/.*MRENCLAVE:[[:space:]]*//I\' | tr -d \'[:space:]\' > /signed_mrenclave.txt && \\\n' +
   '    echo "SIGNED_MRENCLAVE=$(cat /signed_mrenclave.txt)"';
 
-// A CAS-provisioned securelock (mainnet, or a testnet with a SessionRegistry)
-// is signed --production: the CAS session admits production enclaves only,
-// and a debug-signed one is refused at attestation. A self-signing testnet
-// securelock is signed debug with the same explicit params.
-const cas = casConfig.casProvisioned(templateName, isMainnet);
+// A CAS-provisioned securelock (a network the Scontain CAS provisions, or a
+// testnet with a SessionRegistry) is signed --production: the CAS session
+// admits production enclaves only, and a debug-signed one is refused at
+// attestation. A self-signing testnet securelock is signed debug with the
+// same explicit params.
+const cas = casConfig.casProvisioned(templateName, scontainCas);
 dockerfileSecureContent = dockerfileSecureContent
   .replace(/__MEMORY_TO_ALLOCATE__/g, MEMORY_TO_ALLOCATE)
   .replace(/__NODE_FLAGS__/g, NODE_FLAGS.map((flag) => `, "${flag}"`).join(''))

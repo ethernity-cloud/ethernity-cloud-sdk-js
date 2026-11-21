@@ -4,19 +4,25 @@
  * network; the runner is constructed with that network's token ADDRESS, the
  * chain id of a testnet whose token address other testnets share, and for an
  * -unsafe network is set to the (network, type) that runs only -unsafe
- * trustedzones. The table is built from the runner's own enums so the two
- * cannot drift; the enums are an argument because the runner is ESM and this
- * module is loaded from CJS (ecld-run) and ESM (a dApp's preStart) alike.
- * Shared by ecld-run and the Hello World template's src/preStart.mjs. */
+ * trustedzones. A PoX 1.0 testnet network (cas/config.js POX10_TESTNETS) is
+ * the runner's (network, 'TESTNET_POX10'), set on a runner constructed with
+ * the network's token: Polygon Amoy's is the token of the PoX 2.0 network, so
+ * the name is what puts the runner on the PoX 1.0 network. The table is built
+ * from the runner's own enums so the two cannot drift; the enums are an
+ * argument because the runner is ESM and this module is loaded from CJS
+ * (ecld-run) and ESM (a dApp's preStart) alike. Shared by ecld-run and the
+ * Hello World template's src/preStart.mjs. */
 
 'use strict';
 
 const casConfig = require('./cas/config.js');
 
 /* Accepts a few spellings per network. Returns the normalised key, the
- * network ({ address, chainId?, unsafe? }) or null, and the known keys; rpcUrl names
- * the RPC of a network whose token the runner cannot key an RPC by. */
-function networkFor({ ECAddress, ECNetworkByChainId }, raw) {
+ * network ({ address, chainId?, unsafe?, pox10? }) or null, and the known keys; rpcUrl names
+ * the RPC of a network whose token the runner cannot key an RPC by. unsafe
+ * and pox10 are the (network, type) the runner is set to. The PoX 1.0 testnet
+ * networks are known with a runner that carries them (0.6.36 and later). */
+function networkFor({ ECAddress, ECNetworkByChainId, POX10_TESTNET_TYPE }, raw) {
   const key = String(raw || '').trim().toUpperCase().replace(/\s+/g, '_');
   const bloxbergTestnet = { address: ECAddress.BLOXBERG.TESTNET_ADDRESS };
   const amoy = { address: ECAddress.POLYGON.TESTNET_ADDRESS };
@@ -39,6 +45,10 @@ function networkFor({ ECAddress, ECNetworkByChainId }, raw) {
     LITVM: litvm,
     LITVM_LITEFORGE_UNSAFE: { ...litvm, unsafe: ['LITVM', 'TESTNET_UNSAFE'] },
   };
+  if (POX10_TESTNET_TYPE) {
+    table.BLOXBERG_TESTNET_POX10 = { address: ECAddress.BLOXBERG.TESTNET_POX10_ADDRESS, pox10: ['BLOXBERG', POX10_TESTNET_TYPE] };
+    table.POLYGON_AMOY_POX10 = { address: ECAddress.POLYGON.TESTNET_ADDRESS, pox10: ['POLYGON', POX10_TESTNET_TYPE] };
+  }
   return { key, network: table[key] || null, known: Object.keys(table) };
 }
 

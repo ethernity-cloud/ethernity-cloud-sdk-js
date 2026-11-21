@@ -53,6 +53,8 @@ The sdk has been tested on the following operating systems:
       The certificate is harvested on an SGX host or, without one, extracted
       by publickey.ethernity.cloud (see "How the image reaches the network").
     - Testnet Unsafe - the unsafe network beside the testnet (see below).
+    - Testnet Pox10 - the PoX 1.0 network of the testnet (see "The PoX 1.0
+      testnet networks").
     - Mainnet - to be provided during the following updates
 - LitVM:
     - LiteForge - CAS-attested the same way, by LitVM's own ethernity-cas
@@ -66,6 +68,8 @@ The sdk has been tested on the following operating systems:
     - Sepolia Unsafe - the unsafe network beside Sepolia (see below).
 - Polyhon:
     - Amoy Testnet - to be provided during the following updates
+    - Amoy Pox10 - the PoX 1.0 network of Amoy (see "The PoX 1.0 testnet
+      networks").
     - Mainnet - to be provided during the following updates
 
 The remaining testnets (Amoy, IoTeX) have no ethernity-cas
@@ -91,6 +95,47 @@ one is registered as `<project>-unsafe` and runs on the
 (`ecld-<nodenithy|pynithy>-litvm-testnet-unsafe`,
 `ecld-<nodenithy|pynithy>-ethereum-sepolia-unsafe`) trustedzone. Both dApp types
 build for both networks. Mainnet has no unsafe network.
+
+### The PoX 1.0 testnet networks
+`Bloxberg Testnet Pox10` (`Bloxberg_Testnet_Pox10`) and `Polygon Amoy Pox10`
+(`Polygon_Amoy_Pox10`) are the PoX 1.0 networks of the bloxberg testnet and of
+Polygon Amoy: copies of the mainnets' PoX 1.0 contracts on those chains,
+beside their PoX 2.0 networks (`Bloxberg Testnet`, `Polygon Amoy Testnet`). A
+dApp is built, published and run on one as on the mainnet it copies.
+
+| | `Bloxberg_Testnet_Pox10` | `Polygon_Amoy_Pox10` |
+|---|---|---|
+| Chain id, RPC | 8995, `https://bloxberg.ethernity.cloud` | 80002, `https://polygon-amoy-bor-rpc.publicnode.com` |
+| PoX | `0x69A7bEB5Da2d3dA711d52E491D71e51296b08745` | `0x9Aad82557c84c11C4031382d8Bf2cacF8f256a02` |
+| Token | tE10, the PoX itself | the Amoy tECLD `0x9927809B61122B2af3f3b3A3303875e0687b8eE3` |
+| Image registry (V1) | `0x7dBC1b591cc3b7136D863bc7430C6Db50E929665` | `0xa2EE2a9118d0011AF05a6196c862D37d8c29F8eC` |
+| Trustedzone | `etny-<nodenithy\|pynithy>-testnet-pox10` | `ecld-<nodenithy\|pynithy>-amoy-pox10` |
+| SDK registry tag, session tag | `bloxberg_testnet_pox10` | `polygon_amoy_pox10` |
+
+- `ecld-build` signs the securelock `--production`, with the enclave network
+  type `mainnet`, and bundles the trustedzone of the table.
+- `ecld-publish` posts the securelock session to the Scontain CAS under the
+  production attestation rules, names in the compose the trustedzone session
+  the network's image registry records, and registers the image with its
+  certificate in one call: the registry records an image only with its
+  certificate, so a publish that runs its own IPFS node pins the image on the
+  public API first and needs `IPFS_TOKEN`, a writer token of that API. Without
+  an SGX host the publish asks publickey.ethernity.cloud for the certificate
+  and names the network by its tag of the table.
+- `ecld-run` and the Hello World template construct the runner with the
+  network's token address and name the network on it
+  (`setNetwork('BLOXBERG', 'TESTNET_POX10')`, `setNetwork('POLYGON',
+  'TESTNET_POX10')`): Polygon Amoy's two networks are paid in the same token,
+  and the name is what puts the runner on the PoX 1.0 one. This needs
+  `@ethernity-cloud/runner` 0.6.36 or later.
+- tE10 has no faucet: a wallet receives it by a transfer from the owner of the
+  network's contracts. On Polygon Amoy the runner draws the tECLD faucet (1000
+  tECLD) for a wallet that is short of a request's escrow and holds less than
+  100 tECLD.
+- Neither network has a payload intake route: set `IPFS_ENDPOINT` for the
+  Hello World template and pass `--ipfs <url>` to `ecld-run`.
+- `ecld-info --network BLOXBERG_TESTNET_POX10` and `--network
+  POLYGON_AMOY_POX10` read the networks' contracts.
 
 ### Pynithy dApps
 The Pynithy securelock is built exactly as `ethernity-cloud-sdk-py` builds it
@@ -246,7 +291,7 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   cover the other networks.
   The intake serves the networks the bootnode's agent runs, today the bloxberg
   testnet, LitVM LiteForge and Ethereum Sepolia, each with its unsafe twin: a dApp on any other
-  network (Bloxberg mainnet, Polygon, IoTeX) needs an IPFS API of its
+  network (Bloxberg mainnet, Polygon, IoTeX, the PoX 1.0 testnet networks) needs an IPFS API of its
   own (`IPFS_ENDPOINT` for the Hello World template, `--ipfs <url>` for `ecld-run`).
   Exit code 0 on a `SUCCESS` task result, 1 otherwise. `--unsafe` runs the
   network's unsafe variant; on an unsafe network the securelock and

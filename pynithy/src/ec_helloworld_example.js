@@ -5,7 +5,8 @@ import { ECStatus } from "@ethernity-cloud/runner/enums";
 // Filled in from the project's .env by src/preStart.mjs on `npm start`: the
 // securelock this dApp is published as, the trustedzone it was built against,
 // the network's token address and chain id, the -unsafe network when the dApp
-// runs without a CAS (null otherwise), the IPFS API of the dApp's own ('' when
+// runs without a CAS (null otherwise), the PoX 1.0 testnet network when the
+// dApp runs on one (null otherwise), the IPFS API of the dApp's own ('' when
 // the task's artefacts go through the bootnode's payload intake), and the
 // order's execution object from the EXEC_* keys ecld-init wrote (the defaults
 // below where .env has none).
@@ -14,6 +15,7 @@ const TRUSTED_ZONE_IMAGE = "";
 const NETWORK_ADDRESS = "";
 const CHAIN_ID = null;
 const UNSAFE_NETWORK = null;
+const POX10_NETWORK = null;
 const IPFS_ENDPOINT = "";
 const EXECUTION = {"mode":"task","durationHours":1,"parallelism":1,"maxGflops":0,"headroomPercent":25,"session":{"expectedInputs":1,"keepOpen":false,"renew":false,"maxRenewals":0},"esr":{"expectedCommits":0}};
 
@@ -26,6 +28,9 @@ function App() {
         const runner = new EthernityCloudRunner(NETWORK_ADDRESS, {}, CHAIN_ID || undefined);
         if (UNSAFE_NETWORK) {
             await runner.setNetwork(...UNSAFE_NETWORK);
+        }
+        if (POX10_NETWORK) {
+            await runner.setNetwork(...POX10_NETWORK);
         }
         // An IPFS API of the dApp's own (IPFS_ENDPOINT) carries the task's
         // artefacts; without one they go through the bootnode's payload intake.

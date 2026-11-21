@@ -84,6 +84,24 @@ const NETWORKS = {
     imageRegistry: '0xa7E43a269E3307cf9d246b07df2B89CAA1b4C42F',
     esr: '0x9927809B61122B2af3f3b3A3303875e0687b8eE3',
   },
+  // The PoX 1.0 network of the bloxberg testnet: a copy of bloxberg mainnet's
+  // PoX 1.0 contracts deployed 2026-11-21. The protocol is the PoX proxy,
+  // which is its own token (tE10); the registry is the copy of the mainnet's
+  // (V1); the ESR is the one its trustedzones bake, the bloxberg testnet's.
+  BLOXBERG_TESTNET_POX10: {
+    type: 'testnet, PoX 1.0', chainId: 8995, rpc: 'https://bloxberg.ethernity.cloud',
+    protocol: '0x69A7bEB5Da2d3dA711d52E491D71e51296b08745',
+    imageRegistry: '0x7dBC1b591cc3b7136D863bc7430C6Db50E929665',
+    esr: '0x0Ea1728EAE108FD3B9340ae91451348E2Cc6b4E4',
+  },
+  // The PoX 1.0 network of Polygon Amoy: a copy of Polygon mainnet's PoX 1.0
+  // contracts deployed 2026-11-21, on a storage of its own
+  // (0x20B9fDBD...) and paid in the Amoy tECLD. Its trustedzones bake no ESR.
+  POLYGON_AMOY_POX10: {
+    type: 'testnet, PoX 1.0', chainId: 80002, rpc: 'https://polygon-amoy-bor-rpc.publicnode.com',
+    protocol: '0x9Aad82557c84c11C4031382d8Bf2cacF8f256a02',
+    imageRegistry: '0xa2EE2a9118d0011AF05a6196c862D37d8c29F8eC',
+  },
 };
 // The -unsafe networks: the chain and contracts of the network each is the
 // unsafe variant of, without a CAS.
@@ -424,7 +442,7 @@ async function main() {
   printFull(info);
 }
 
-module.exports = { lastLogs, LOG_CHUNK_BLOCKS };
+module.exports = { lastLogs, LOG_CHUNK_BLOCKS, NETWORKS };
 
 if (require.main === module) {
   main().catch((e) => { console.error(`ecld-info: ${e.message}`); process.exit(1); });
