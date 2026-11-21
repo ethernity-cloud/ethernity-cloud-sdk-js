@@ -70,7 +70,7 @@ test('Polygon Amoy\'s two networks share the constructor address and nothing els
   const pox10 = network.networkFor(runnerEnums, 'Polygon_Amoy_Pox10').network;
   assert.equal(pox10.address, pox20.address);
   assert.equal(pox20.pox10, undefined);
-  assert.deepEqual(pox10.pox10, ['POLYGON', 'TESTNET_POX10']);
+  assert.deepEqual(pox10.pox10, ['POLYGON', 'AMOY_POX10']);
 
   const onPox20 = await runnerFor('Polygon_Amoy_Testnet', 80002);
   const onPox10 = await runnerFor('Polygon_Amoy_Pox10', 80002);
@@ -84,9 +84,19 @@ test('Polygon Amoy\'s two networks share the constructor address and nothing els
   for (const kind of ['nodenithy', 'pynithy']) {
     assert.doesNotThrow(() => onPox20.selectTrustedZone(`ecld-${kind}-amoy`));
     assert.doesNotThrow(() => onPox10.selectTrustedZone(`ecld-${kind}-amoy-pox10`));
-    assert.throws(() => onPox20.selectTrustedZone(`ecld-${kind}-amoy-pox10`), /is a trustedzone of the PoX 1\.0 network POLYGON TESTNET_POX10/);
-    assert.throws(() => onPox10.selectTrustedZone(`ecld-${kind}-amoy`), /^Error: POLYGON TESTNET_POX10 runs only its PoX 1\.0 trustedzones/);
+    assert.throws(() => onPox20.selectTrustedZone(`ecld-${kind}-amoy-pox10`), /is a trustedzone of the PoX 1\.0 network POLYGON AMOY_POX10/);
+    assert.throws(() => onPox10.selectTrustedZone(`ecld-${kind}-amoy`), /^Error: POLYGON AMOY_POX10 runs only its PoX 1\.0 trustedzones/);
   }
+});
+
+test('the runner takes (POLYGON, AMOY_POX10) for Polygon Amoy\'s PoX 1.0 network and refuses (POLYGON, TESTNET_POX10)', async () => {
+  const runner = await runnerFor('Polygon_Amoy_Testnet', 80002);
+  await assert.rejects(runner.setNetwork('POLYGON', 'TESTNET_POX10'), {
+    message: 'setNetwork: POLYGON TESTNET_POX10 is not a network this runner knows'
+  });
+  assert.equal(runner.protocolContract.getContract().target, '0xd1182deA61CDa785C320cdBE5888EaC4178cAAF2');
+  await runner.setNetwork('POLYGON', 'AMOY_POX10');
+  assert.equal(runner.protocolContract.getContract().target, '0x9Aad82557c84c11C4031382d8Bf2cacF8f256a02');
 });
 
 test('the bloxberg PoX 1.0 network has its own constructor address: the copy\'s PoX, which is its token', async () => {
@@ -109,14 +119,15 @@ test('both builds bake the runner\'s PoX, image registry and chain into a PoX 1.
     const rows = buildRows(file);
     for (const [prefix, suffix, key, rpc] of families) {
       const descriptor = runnerEnums.ECPox10TestnetConfig[key];
+      const type = descriptor.networkType;
       for (const kind of ['pynithy', 'nodenithy']) {
         const name = `${prefix}-${kind}-${suffix}`;
-        assert.equal(name, runnerEnums.ECRunner[key][`${kind.toUpperCase()}_RUNNER_TESTNET_POX10`]);
+        assert.equal(name, runnerEnums.ECRunner[key][`${kind.toUpperCase()}_RUNNER_${type}`]);
         assert.deepEqual(rows[name], {
           pox: descriptor.protocolAddress,
           registry: descriptor.imageRegistry[kind.toUpperCase()],
           rpc,
-          chainId: runnerEnums.ECNetworkByChainId[key].TESTNET_POX10
+          chainId: runnerEnums.ECNetworkByChainId[key][type]
         }, `${file} ${name}`);
         // No ethernity-cas registry is baked or consulted for the template.
         assert.equal(casConfig.VALIDATOR_REGISTRY[name], undefined, name);
@@ -202,5 +213,6 @@ test('the SDK depends on a runner that carries the PoX 1.0 testnet networks', ()
   assert.ok(lowest, range);
   const [major, minor, patch] = lowest.slice(1).map(Number);
   assert.ok(major > 0 || minor > 6 || (minor === 6 && patch >= 36), range);
-  assert.equal(runnerEnums.POX10_TESTNET_TYPE, 'TESTNET_POX10');
+  assert.equal(runnerEnums.ECPox10TestnetConfig.BLOXBERG.networkType, 'TESTNET_POX10');
+  assert.equal(runnerEnums.ECPox10TestnetConfig.POLYGON.networkType, 'AMOY_POX10');
 });

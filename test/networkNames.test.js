@@ -239,7 +239,7 @@ const PUBLISHED_RUNNER_NETWORKS = {
 };
 const ADDED_RUNNER_NETWORKS = {
   BLOXBERG_TESTNET_POX10: { address: '0x69A7bEB5Da2d3dA711d52E491D71e51296b08745', pox10: ['BLOXBERG', 'TESTNET_POX10'] },
-  POLYGON_AMOY_POX10: { address: AMOY_TOKEN, pox10: ['POLYGON', 'TESTNET_POX10'] }
+  POLYGON_AMOY_POX10: { address: AMOY_TOKEN, pox10: ['POLYGON', 'AMOY_POX10'] }
 };
 
 // The networks ecld-info knows, and the -unsafe ones it derives from them.
@@ -446,8 +446,8 @@ test('network.js names the published runner network of every published key, and 
 });
 
 test('with a runner that predates the PoX 1.0 testnet networks, network.js knows the published keys alone', () => {
-  const { POX10_TESTNET_TYPE, ...before } = runnerEnums;
-  assert.equal(POX10_TESTNET_TYPE, 'TESTNET_POX10');
+  const { ECPox10TestnetConfig, ...before } = runnerEnums;
+  assert.deepEqual(Object.keys(ECPox10TestnetConfig), ['BLOXBERG', 'POLYGON']);
   for (const [key, runnerNetwork] of Object.entries(PUBLISHED_RUNNER_NETWORKS)) {
     const found = network.networkFor(before, key);
     assert.deepEqual(found.network, runnerNetwork, key);

@@ -125,7 +125,7 @@ dApp is built, published and run on one as on the mainnet it copies.
 - `ecld-run` and the Hello World template construct the runner with the
   network's token address and name the network on it
   (`setNetwork('BLOXBERG', 'TESTNET_POX10')`, `setNetwork('POLYGON',
-  'TESTNET_POX10')`): Polygon Amoy's two networks are paid in the same token,
+  'AMOY_POX10')`): Polygon Amoy's two networks are paid in the same token,
   and the name is what puts the runner on the PoX 1.0 one. This needs
   `@ethernity-cloud/runner` 0.6.36 or later.
 - tE10 has no faucet: a wallet receives it by a transfer from the owner of the
