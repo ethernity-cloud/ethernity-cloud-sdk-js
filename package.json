@@ -63,6 +63,9 @@
     "web-vitals": "^2.1.4",
     "web3": "^4.9.0"
   },
+  "devDependencies": {
+    "acorn-jsx": "^5.3.2"
+  },
   "author": "Alexandru Luca",
   "license": "AGPL-3.0"
 }

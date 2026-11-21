@@ -8,6 +8,9 @@
 // exports from another module, and its require() and require.resolve() calls,
 // each with a string argument. A relative import resolves as a require() of
 // it does: the file named, it with .js, .mjs, .cjs or .json, or its index.js.
+// npm is npm's own CLI script, run by the node that runs this test, when
+// npm_execpath names it (npm test sets it), else the npm command on PATH; the
+// test is skipped, with the reason, when neither answers `npm --version`.
 'use strict';
 
 const test = require('node:test');
@@ -29,9 +32,29 @@ const FILLED_FROM_PROJECT = {
   'nodenithy/build/securelock/src/serverless/': 'nodenithy/src/serverless/'
 };
 
+// npm run with `args` from the package's root: npm's CLI script under this
+// node when npm_execpath names it, else the npm command on PATH through the
+// shell. The arguments are this file's own literals.
+const runNpm = (args) => {
+  const cli = process.env.npm_execpath;
+  if (cli && /^npm-cli\.[cm]?js$/.test(path.basename(cli))) {
+    return spawnSync(process.execPath, [cli, ...args], { cwd: root, encoding: 'utf8' });
+  }
+  return spawnSync(['npm', ...args].join(' '), { cwd: root, encoding: 'utf8', shell: true });
+};
+
+// Why npm cannot be run here, on one line, or null when `npm --version`
+// answers a version.
+const npmUnavailable = () => {
+  const probe = runNpm(['--version']);
+  if (probe.error) return probe.error.message;
+  if (probe.status === 0 && /^\d+\.\d+\.\d+/.test(probe.stdout.trim())) return null;
+  return (probe.stderr || probe.stdout || '').replace(/\s+/g, ' ').trim() || `exit status ${probe.status}`;
+};
+
 // The paths npm pack lists, from the package's root with forward slashes.
 const packedFiles = () => {
-  const packed = spawnSync('npm pack --dry-run --json --ignore-scripts', { cwd: root, encoding: 'utf8', shell: true });
+  const packed = runNpm(['pack', '--dry-run', '--json', '--ignore-scripts']);
   assert.equal(packed.status, 0, packed.stderr);
   return JSON.parse(packed.stdout)[0].files.map((file) => file.path);
 };
@@ -93,7 +116,15 @@ const resolved = (files, file, specifier) => {
   return candidates.find((candidate) => files.has(candidate)) || null;
 };
 
-test('every relative import of a packed JavaScript file names a file of the package', () => {
+test('the parsers this file reads the packed files with are dependencies the package declares', () => {
+  const { dependencies = {}, devDependencies = {} } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  for (const name of ['acorn', 'acorn-jsx']) assert.ok(name in dependencies || name in devDependencies, name);
+});
+
+const unavailable = npmUnavailable();
+const skip = unavailable ? `npm cannot be run here, so the list npm pack makes cannot be read: ${unavailable}` : false;
+
+test('every relative import of a packed JavaScript file names a file of the package', { skip }, () => {
   const files = new Set(packedFiles());
   const imports = [];
   for (const file of [...files].filter((name) => /\.(js|mjs|cjs)$/.test(name))) {
