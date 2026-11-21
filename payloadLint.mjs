@@ -85,6 +85,7 @@ export function analyze(source, filename = 'backend.js') {
     return {
       findings: [{
         severity: 'error',
+        kind: 'unparsed',
         line: asScript.loc ? asScript.loc.line : 1,
         message: `${filename} parses neither as an ES module (${asModule.message}) nor as a script (${asScript.message}), `
           + 'so the lint cannot check it for eval or Function of the task input. Fix the syntax, or add '

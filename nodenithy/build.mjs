@@ -162,9 +162,16 @@ try {
   const { findings, optedOut } = analyze(src, 'src/serverless/backend.js');
   if (!optedOut) {
     const warnings = findings.filter((f) => f.severity === 'warning');
-    const errors = findings.filter((f) => f.severity === 'error');
+    const unparsed = findings.filter((f) => f.kind === 'unparsed');
+    const errors = findings.filter((f) => f.severity === 'error' && f.kind !== 'unparsed');
     for (const f of warnings) {
       console.warn(`WARNING: src/serverless/backend.js:${f.line}: ${f.message}`);
+    }
+    if (unparsed.length) {
+      console.error('');
+      console.error('ERROR: the payload safety lint cannot parse src/serverless/backend.js:');
+      for (const f of unparsed) console.error(`       line ${f.line}: ${f.message}`);
+      process.exit(1);
     }
     if (errors.length) {
       console.error('');

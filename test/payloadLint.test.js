@@ -16,6 +16,13 @@ const reported = async (source) => {
   return { optedOut, findings: findings.map((f) => `${f.severity}@${f.line}`), messages: findings.map((f) => f.message) };
 };
 
+// The kind of each finding analyze() reports of `source` (undefined for a
+// finding of the code it checked).
+const kinds = async (source) => {
+  const { analyze } = await lint();
+  return analyze(source, 'src/serverless/backend.js').findings.map((f) => f.kind);
+};
+
 test('a backend.js that parses only in sloppy mode is checked: eval of the task input after a with statement, a legacy octal literal or a top-level return is an error on its line', async () => {
   const sources = {
     'with statement': 'with (o) { x = 1; }\nfunction f() { return eval(___etny_data_set___); }',
@@ -39,6 +46,10 @@ test('a backend.js that parses neither as a module nor as a script is one error,
   assert.equal(optedOut, false);
   assert.deepEqual(findings, ['error@1']);
   assert.match(messages[0], /^src\/serverless\/backend\.js parses neither as an ES module \(.+ \(2:\d+\)\) nor as a script \(.+ \(1:0\)\), so the lint cannot check it/);
+  // That error is of the kind 'unparsed', which nodenithy/build.mjs prints
+  // under its own heading; an error of the code it checked has no kind.
+  assert.deepEqual(await kinds(source), ['unparsed']);
+  assert.deepEqual(await kinds('module.exports = () => eval(___etny_data_set___);'), [undefined]);
   // The line opt-out on that line does not silence it.
   assert.deepEqual((await reported('const ok = 1;\nconst = 2; // ecld: allow-eval')).findings, ['error@2']);
   assert.deepEqual(await reported(`// ecld: allow-eval-file\n${source}`), { optedOut: true, findings: [], messages: [] });
