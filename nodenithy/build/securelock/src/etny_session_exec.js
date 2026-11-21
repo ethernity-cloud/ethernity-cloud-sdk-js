@@ -41,6 +41,7 @@
 const etny_exec = require('./etny_exec');
 const etny_crypto = require('./etny_crypto');
 const { TaskStatus } = require('./task_status');
+const { errorClass } = require('./log_text');
 
 const HANDLER_GRACE_MS = 30000;
 const TICK_MS = 2000;
@@ -310,7 +311,10 @@ class SecureLockSession {
         if (control === false) return null;
         const value = String(control).trim();
         if (!CONTROLS.has(value)) {
-            console.log(`session: unknown control ${JSON.stringify(value)} -- ignoring`);
+            // Not quoted: the trustedzone signs session.control over the
+            // plain text, as it signs session.input.<n>, so the store can put
+            // a session input in its place.
+            console.log('session: unknown control -- ignoring');
             return null;
         }
         this.control = value;
@@ -458,7 +462,8 @@ class SecureLockSession {
             emitted: this.emitted,
             unprocessed: this.unprocessed,
         };
-        console.log('session: finalizing --', JSON.stringify(summary));
+        // The summary is the session's result and is not logged.
+        console.log('session: finalizing');
         return [TaskStatus.SUCCESS, JSON.stringify(summary)];
     }
 
@@ -498,7 +503,10 @@ async function runSession(app, payloadData, inputData) {
         session = new SecureLockSession(app, JSON.parse(String(raw)));
         return await session.run(payloadData, inputData);
     } catch (e) {
-        console.error('session executor failed:', e && e.message ? e.message : e);
+        // Logged by class: the parse error of a session.config that is not
+        // JSON quotes its text, which the store can take from a session
+        // input signed over the plain text as session.config is.
+        console.error('session executor failed:', errorClass(e));
         if (session !== null) {
             try {
                 await session.closeHeld();

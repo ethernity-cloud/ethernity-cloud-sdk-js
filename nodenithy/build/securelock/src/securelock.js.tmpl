@@ -22,17 +22,19 @@ const {TaskStatus} = require("./task_status");
 const SwiftStreamService = require("./swift_stream_service");
 const {SecurelockProbe} = require("./securelock_probe");
 const {runSession, pushSignedForTrustedzone, TRANSFERRED} = require("./etny_session_exec");
+const {errorClass, resultDigest} = require("./log_text");
 
 // An error a network socket emits after its request's caller has moved on
 // (a connection the server closed, ECONNRESET) reaches no handler of the
 // request; without these the node runtime exits on it, and the task is lost.
-// Logged and the run goes on: every step awaits its own result and treats a
-// failed one.
+// These also receive the payload's own uncaught errors, whose message and
+// stack can quote its data: an error is logged by its class alone, and the
+// run goes on: every step awaits its own result and treats a failed one.
 process.on('uncaughtException', (e) => {
-    console.log('uncaught exception:', e && (e.stack || e.message) ? (e.stack || e.message) : e);
+    console.log('uncaught exception:', errorClass(e));
 });
 process.on('unhandledRejection', (e) => {
-    console.log('unhandled rejection:', e && (e.stack || e.message) ? (e.stack || e.message) : e);
+    console.log('unhandled rejection:', errorClass(e));
 });
 
 const contract_abi = require('./pox_abi');
@@ -551,7 +553,6 @@ class EtnySecureLock {
             this.version = 'v3';
             this.etny_mode = process.env.ETNY_MODE;
             console.log(`ETNY Nodenithy [${this.version}] - running in ${this.etny_mode} MODE`);
-            //console.log(process.env);
 
             return true;
         } catch (e) {
@@ -877,11 +878,12 @@ class EtnySecureLock {
                 'result_code.txt.sig');
 
             const encrypted = etny_crypto.encryptWithPublicKey(this._metadata.public_key, this.task_result);
-            //console.log('Encrypted result:', encrypted.toString('hex'));
             const result = await this.swiftStreamService.putFileContent(this.etny_bucket, 'result.txt', this.result_file, encrypted.toString('hex'));
             //console.log('Save result put: ', result);
         } catch (e) {
-            console.log('Save result: ', e);
+            // Logged by class: the encryption's error can quote a result
+            // that is not text.
+            console.log('Save result failed:', errorClass(e));
         }
     }
 
@@ -1091,7 +1093,6 @@ class EtnySecureLock {
                 if (this.probe) this.probe.busyEnd();
             }
         }
-        console.log('TASK RESULT (code, data):', task_result);
         this.task_code = task_result[0];
         this.task_result = task_result[1];
 
@@ -1123,6 +1124,10 @@ class EtnySecureLock {
             console.error('ESR ledger re-stamp skipped:', e && e.message ? e.message : e);
         }
         this.task_result = attachTaskAttestation(this.task_result, ledgerAttestation, this.task_binding);
+        // The code, and the result as the length and the SHA-256 of the text
+        // the trustedzone receives; the result is encrypted for the
+        // trustedzone and the data owner and is not logged.
+        console.log(`TASK RESULT: code ${this.task_code}, ${resultDigest(this.task_result)}`);
 
         return true;
     }
@@ -1199,7 +1204,7 @@ async function reportFailure(app, err) {
         await app.saveResult();
         console.log(`failure reported (task_code=${app.task_code})`);
     } catch (reportErr) {
-        console.log('could not report the failure result:', reportErr);
+        console.log('could not report the failure result:', errorClass(reportErr));
     }
 }
 
@@ -1286,7 +1291,8 @@ async function execute() {
     try {
         await execute();
     } catch (e) {
-        console.log(e);
+        // Logged by class: its message and stack can quote the order's data.
+        console.log('securelock failed:', errorClass(e));
         await reportFailure(currentApp, e);
         failed = true;
     }

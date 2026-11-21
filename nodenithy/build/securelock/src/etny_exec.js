@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { TaskStatus } = require('./task_status');
+const { errorClass } = require('./log_text');
 
 // Load EVERY export of ./serverless/backend into the payload's scope. The
 // backend is copied next to this file by ecld-build (and staged the same way
@@ -285,7 +286,9 @@ async function exec(payload, input, globals = null) {
             return [TaskStatus.ESR_COMMIT_LIMIT_EXCEEDED, 'ESR_COMMIT_LIMIT_EXCEEDED: ' + error.message];
         }
         const detail = (error && (error.stack || error.message)) || String(error);
-        console.error('Error in payload execution -- full stack follows:\n' + detail);
+        // The log names the error's class alone: its message and stack can
+        // quote the payload, the input and what they computed.
+        console.error(`Error in payload execution: ${errorClass(error)}`);
 
         if (error instanceof ReferenceError) {
             return [TaskStatus.SYSTEM_ERROR, 'SYSTEM_ERROR (ReferenceError): ' + detail];

@@ -19,7 +19,6 @@ function fileChecksum(file) {
 
 async function fileChecksumFromSwiftStream(swiftStreamClient, bucketName, fileName) {
     const fileContent = await swiftStreamClient.getFileContent(bucketName, fileName);
-    //console.log(fileContent);
     return sha256(fileContent);
 }
 
@@ -135,7 +134,6 @@ function encrypt_ecc(msg, publicKey) {
 }
 
 function decrypt(privateKeyFile, encryptedMsg) {
-    //console.log(privateKeyFile);
     const privatePoint = getPrivatePointFromPrivateKey(privateKeyFile);
     return decrypt_ecc(encryptedMsg, privatePoint);
 }
