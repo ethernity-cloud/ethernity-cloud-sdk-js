@@ -290,9 +290,10 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   endpoint, LitVM's Zeeve endpoint, IoTeX's babel API); the runner's defaults
   cover the other networks.
   The intake serves the networks the bootnode's agent runs, today the bloxberg
-  testnet, LitVM LiteForge and Ethereum Sepolia, each with its unsafe twin: a dApp on any other
-  network (Bloxberg mainnet, Polygon, IoTeX, the PoX 1.0 testnet networks) needs an IPFS API of its
-  own (`IPFS_ENDPOINT` for the Hello World template, `--ipfs <url>` for `ecld-run`).
+  testnet, Polygon Amoy, LitVM LiteForge and Ethereum Sepolia, each with its
+  unsafe twin: a dApp on any other network (Bloxberg mainnet, Polygon mainnet,
+  IoTeX, the PoX 1.0 testnet networks) needs an IPFS API of its own
+  (`IPFS_ENDPOINT` for the Hello World template, `--ipfs <url>` for `ecld-run`).
   Exit code 0 on a `SUCCESS` task result, 1 otherwise. `--unsafe` runs the
   network's unsafe variant; on an unsafe network the securelock and
   trustedzone default to their `-unsafe` names.

@@ -207,6 +207,24 @@ test('the Hello World template names the PoX 1.0 network on the runner, in both 
   assert.match(ecldRun, /if \(network\.unsafe\) await runner\.setNetwork\(\.\.\.network\.unsafe\);\s+if \(network\.pox10\) await runner\.setNetwork\(\.\.\.network\.pox10\);/);
 });
 
+test('the README names the networks the bootnode\'s intake serves, and the ones that need an IPFS API, as the runner\'s descriptors do', () => {
+  const names = {
+    bloxberg_testnet: 'the bloxberg testnet',
+    polygon_amoy: 'Polygon Amoy',
+    litvm_liteforge: 'LitVM LiteForge',
+    ethereum_sepolia: 'Ethereum Sepolia'
+  };
+  const published = [...Object.values(runnerEnums.ECNetworkConfig), ...Object.values(runnerEnums.ECEcldTestnetConfig)];
+  const routed = published.filter((cfg) => cfg.agentNetwork).map((cfg) => names[cfg.agentNetwork]);
+  const unrouted = [...published, ...Object.values(runnerEnums.ECPox10TestnetConfig)].filter((cfg) => !cfg.agentNetwork)
+    .map((cfg) => `${cfg.networkKey} ${runnerEnums.networkTypeOf(cfg)}`);
+  assert.deepEqual(unrouted, ['BLOXBERG MAINNET', 'POLYGON MAINNET', 'IOTEX TESTNET', 'BLOXBERG TESTNET_POX10', 'POLYGON AMOY_POX10']);
+  const sentence = `The intake serves the networks the bootnode's agent runs, today ${routed.slice(0, -1).join(', ')} and ${routed.at(-1)}, ` +
+    'each with its unsafe twin: a dApp on any other network (Bloxberg mainnet, Polygon mainnet, IoTeX, the PoX 1.0 testnet networks) ' +
+    'needs an IPFS API of its own';
+  assert.ok(read('../README.md').replace(/\s+/g, ' ').includes(sentence), sentence);
+});
+
 test('the SDK depends on a runner that carries the PoX 1.0 testnet networks', () => {
   const range = JSON.parse(read('../package.json')).dependencies['@ethernity-cloud/runner'];
   const lowest = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(range);
