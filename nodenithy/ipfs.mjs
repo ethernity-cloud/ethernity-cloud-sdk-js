@@ -344,24 +344,152 @@ const hashForIPFS = async (p) => {
   return null;
 };
 
-// Pin `cid` on the API (`pin/add`), which fetches the blocks it does not hold
-// from the peers that provide them and answers once the pin is complete.
-// Resolves true when the API names the CID among its pins.
-const pinOnIPFS = (cid, timeoutMs = 3600000) =>
-  new Promise((resolve, reject) => {
-    const url = new URL(`${apiUrl}/api/v0/pin/add?arg=${encodeURIComponent(cid)}&recursive=true`);
-    const mod = url.protocol === 'https:' ? https : http;
-    const headers = { 'Content-Length': '0' };
-    if (authHeader) headers.Authorization = authHeader;
-    const req = mod.request(
-      {
-        method: 'POST',
-        hostname: url.hostname,
-        port: url.port || (url.protocol === 'https:' ? 443 : 80),
-        path: `${url.pathname}${url.search}`,
-        headers,
-        timeout: timeoutMs
+// The bounds of pinOnIPFS, the values of IPFSClient.pin in the Python SDK
+// (ethernity_cloud_sdk_py/commands/pynithy/ipfs_client.py): how many times
+// `pin/add` is asked for one CID, how long the client waits before it asks
+// again, how long a `pin/ls` may stay silent, the longest silence in an
+// answer of `pin/add` (asked with progress=true, the API writes a line every
+// half second while it fetches the blocks), and the time of the whole pin.
+const PIN_ATTEMPTS = 5;
+const PIN_RETRY_MS = 10000;
+const PIN_REQUEST_MS = 30000;
+const PIN_SILENCE_MS = 120000;
+const PIN_TIMEOUT_MS = 3600000;
+const PIN_OUT_OF_TIME = 'the pin was not complete when its time ran out';
+
+const monotonicNow = () => performance.now();
+
+// The JSON object `text` holds, or {} when it holds anything else.
+const jsonObject = (text) => {
+  try {
+    const value = JSON.parse(text);
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+};
+
+// What ended a request: the error's code, when it has one, and its message.
+const errorText = (e) => (e.code ? `${e.code}: ${e.message}` : e.message);
+
+// A POST without a body of `pathQuery` (from /api/v0/) to the API, with the
+// Authorization header and `headers`, on a connection of its own. The request
+// is destroyed when no byte moves on its connection for `silenceMs`, from its
+// start on. `onResponse` is called with the answer, `onError` with the error
+// that ends the request.
+const postToApi = (pathQuery, headers, silenceMs, onResponse, onError) => {
+  const url = new URL(`${apiUrl}/api/v0/${pathQuery}`);
+  const mod = url.protocol === 'https:' ? https : http;
+  const all = { 'Content-Length': '0', ...headers };
+  if (authHeader) all.Authorization = authHeader;
+  const req = mod.request(
+    {
+      method: 'POST',
+      hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: `${url.pathname}${url.search}`,
+      headers: all,
+      agent: false,
+      timeout: silenceMs
+    },
+    onResponse
+  );
+  req.on('timeout', () => req.destroy(new Error(`no byte of the answer for ${Math.round(silenceMs)} ms`)));
+  req.on('error', onError);
+  req.end();
+  return req;
+};
+
+// One `pin/add` of `cid` with progress=true, asked without compression and
+// read as it arrives, until the line that reports the pin or an error (in an
+// answer that is no 200, until its first 1200 bytes), the answer's end, a
+// silence of `silenceMs` or the first piece that arrives after `deadline`.
+// Resolves { failure, refused }: failure is null when a line names the CID
+// among its Pins and says what the attempt ended with otherwise; refused is
+// true when that is a 401 or 403.
+const pinAdd = (cid, deadline, silenceMs) =>
+  new Promise((resolve) => {
+    const left = deadline - monotonicNow();
+    if (left <= 0) {
+      resolve({ failure: PIN_OUT_OF_TIME, refused: false });
+      return;
+    }
+    let req = null;
+    const settle = (failure, refused = false) => {
+      resolve({ failure, refused });
+      if (req) req.destroy();
+    };
+    req = postToApi(
+      `pin/add?arg=${encodeURIComponent(cid)}&recursive=true&progress=true`,
+      { 'Accept-Encoding': 'identity' },
+      Math.min(silenceMs, left),
+      (res) => {
+        if (res.statusCode !== 200) {
+          const chunks = [];
+          let length = 0;
+          const status = () => settle(
+            `status ${res.statusCode}\n\t${Buffer.concat(chunks).toString('utf8').slice(0, 300)}`,
+            res.statusCode === 401 || res.statusCode === 403
+          );
+          res.on('data', (chunk) => {
+            chunks.push(chunk);
+            length += chunk.length;
+            if (length >= 1200 || monotonicNow() >= deadline) status();
+          });
+          res.on('end', status);
+          res.on('error', status);
+          res.on('close', status);
+          return;
+        }
+        res.setEncoding('utf8');
+        let pending = '';
+        // Reads the lines `text` completes; true when one of them settles the
+        // attempt.
+        const read = (text) => {
+          const lines = (pending + text).split('\n');
+          pending = lines.pop();
+          for (const line of lines) {
+            const answer = jsonObject(line);
+            if (Array.isArray(answer.Pins) && answer.Pins.includes(cid)) {
+              settle(null);
+              return true;
+            }
+            if (answer.Type === 'error') {
+              settle(String(answer.Message));
+              return true;
+            }
+          }
+          return false;
+        };
+        res.on('data', (chunk) => {
+          if (!read(chunk) && monotonicNow() >= deadline) settle(PIN_OUT_OF_TIME);
+        });
+        // The line feed after the answer's end makes a line of what the
+        // answer left without one.
+        res.on('end', () => {
+          if (!read('\n')) settle('the answer ended without the pin');
+        });
+        res.on('error', (e) => settle(errorText(e)));
+        res.on('close', () => settle('the answer broke off'));
       },
+      (e) => settle(errorText(e))
+    );
+  });
+
+// Whether `pin/ls` lists `cid` among the recursive pins of the API. False also
+// when the API does not answer the question, and when no time is left before
+// `deadline` to ask it.
+const pinListed = (cid, deadline) =>
+  new Promise((resolve) => {
+    const left = deadline - monotonicNow();
+    if (left <= 0) {
+      resolve(false);
+      return;
+    }
+    const req = postToApi(
+      `pin/ls?arg=${encodeURIComponent(cid)}&type=recursive`,
+      {},
+      Math.min(PIN_REQUEST_MS, left),
       (res) => {
         let text = '';
         res.setEncoding('utf8');
@@ -369,20 +497,50 @@ const pinOnIPFS = (cid, timeoutMs = 3600000) =>
           text += chunk;
         });
         res.on('end', () => {
-          if (res.statusCode !== 200) {
-            console.log(`Failed to pin ${cid} on ${apiUrl}: status ${res.statusCode}`);
-            console.log(text.slice(0, 300));
-            resolve(false);
-            return;
-          }
-          resolve(text.includes(cid));
+          const keys = jsonObject(text).Keys;
+          resolve(res.statusCode === 200 && keys !== null && typeof keys === 'object' && !Array.isArray(keys)
+            && Object.prototype.hasOwnProperty.call(keys, cid));
+          req.destroy();
         });
-      }
+        res.on('error', () => resolve(false));
+        res.on('close', () => resolve(false));
+      },
+      () => resolve(false)
     );
-    req.on('timeout', () => req.destroy(new Error(`pin/add of ${cid} took longer than ${timeoutMs} ms`)));
-    req.on('error', reject);
-    req.end();
   });
+
+// Pin `cid` on the API (`pin/add`), which fetches the blocks it does not hold
+// from the peers that provide them, as IPFSClient.pin of the Python SDK does.
+// The pin is asked with progress=true: the API answers with a stream of lines,
+// one every half second while it fetches and one that names the CID among its
+// Pins once the pin is complete. An attempt that reads no such line (the
+// answer ends, breaks off, stays silent for `silenceMs`, or is an error) is
+// followed by `pin/ls` under the same Authorization header, which tells
+// whether the API holds the pin; when it does not, `pin/add` is asked again
+// after `retryMs`, PIN_ATTEMPTS times at most, and no request starts once
+// `timeoutMs` have passed. A 401 or 403, the API refusing the token, ends the
+// pin at once. Resolves true when the pin is complete, having printed the
+// number of attempts when there was more than one; otherwise prints what the
+// last attempt ended with and resolves false.
+const pinOnIPFS = async (cid, { timeoutMs = PIN_TIMEOUT_MS, silenceMs = PIN_SILENCE_MS, retryMs = PIN_RETRY_MS } = {}) => {
+  const deadline = monotonicNow() + timeoutMs;
+  let attempt = 0;
+  let failure = null;
+  while (attempt < PIN_ATTEMPTS) {
+    attempt += 1;
+    const ended = await pinAdd(cid, deadline, silenceMs);
+    failure = ended.failure;
+    if (failure === null || (!ended.refused && (await pinListed(cid, deadline)))) {
+      if (attempt > 1) console.log(`\tthe pin took ${attempt} attempts`);
+      return true;
+    }
+    if (ended.refused || attempt === PIN_ATTEMPTS || deadline - monotonicNow() <= retryMs) break;
+    await delay(retryMs);
+  }
+  const tried = attempt > 1 ? ` in ${attempt} attempts` : '';
+  console.log(`\tFailed to pin ${cid} on ${apiUrl}${tried}: ${failure}`);
+  return false;
+};
 
 // ---------------------------------------------------------------------------
 // Download helpers (kubo-rpc-client, with the Authorization header of initialize())
@@ -461,6 +619,11 @@ export {
   upload,
   hashForIPFS,
   pinOnIPFS,
+  PIN_ATTEMPTS,
+  PIN_RETRY_MS,
+  PIN_REQUEST_MS,
+  PIN_SILENCE_MS,
+  PIN_TIMEOUT_MS,
   uploadFileToIPFS,
   uploadFolderToIPFS,
   getFromIPFS,

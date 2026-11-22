@@ -121,7 +121,11 @@ dApp is built, published and run on one as on the mainnet it copies.
   certificate, so a publish that runs its own IPFS node pins the image on the
   public API before the certificate is extracted, pins the tree it registers,
   which carries the certificate files, before the registration, and needs
-  `IPFS_TOKEN`, a writer token of that API. A pin the public API does not make
+  `IPFS_TOKEN`, a writer token of that API. A pin is asked with progress and
+  read as it arrives; an answer that stays silent for 120 s, breaks off or
+  ends without the pin is settled by `pin/ls`, and a pin the API does not list
+  is asked again 10 s later, five times at most within an hour; a 401 or 403
+  ends it at once. A pin the public API does not make
   ends the publish with nothing registered. Without an SGX host the publish
   asks publickey.ethernity.cloud for the certificate and names the network by
   its tag of the table.
