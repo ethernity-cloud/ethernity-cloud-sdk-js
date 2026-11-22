@@ -20,6 +20,7 @@ const {getWalletAddress} = require("./wallet");
 const {executeTask} = require("./etny_exec");
 const {TaskStatus} = require("./task_status");
 const SwiftStreamService = require("./swift_stream_service");
+const {loadStoreCredential} = require('./store_credential');
 const {SecurelockProbe} = require("./securelock_probe");
 const {runSession, pushSignedForTrustedzone, TRANSFERRED} = require("./etny_session_exec");
 const {errorClass, resultDigest} = require("./log_text");
@@ -819,7 +820,9 @@ class EtnySecureLock {
 
             await this.swiftStreamService.putFileContent(this.etny_bucket, 'cert.pem', this.pub_cert_file);
         } catch (err) {
-            console.error(err);
+            // Logged by class: the error of a put the store refuses holds
+            // what the store's answer names, the access key among it.
+            console.error('Save public certificate error:', errorClass(err));
         }
     }
 
@@ -1163,11 +1166,12 @@ function attachTaskAttestation(taskResult, attestation, binding) {
 
 function initSwiftStreamClient() {
     console.log('Initializing SwiftStream Service...');
+    const credential = loadStoreCredential();
     const swiftStreamClient = new SwiftStreamService(
         EtnySecureLock.debug ? "localhost" : "etny-swift-stream",
         9000,
-        "swiftstreamadmin",
-        "swiftstreamadmin");
+        credential.accessKey,
+        credential.secretKey);
     console.log('SwiftStream Service started.');
     console.log('################################');
 

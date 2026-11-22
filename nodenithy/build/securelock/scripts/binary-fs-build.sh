@@ -26,6 +26,7 @@ EXEC=(scone binaryfs / /binary-fs-dir -v \
   --include '/usr/local/bin/node' \
   --include '/etny-securelock/*' \
   --host-path=/etc/resolv.conf \
+  --host-path=/run/ecld \
   --host-path=/etc/hosts)
 echo "finished building binary-fs..."
 
