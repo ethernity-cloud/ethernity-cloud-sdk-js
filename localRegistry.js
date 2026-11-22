@@ -179,10 +179,12 @@ class LocalRegistry {
         return `${this.host}/${repository}`;
     }
 
-    // Remove the container, and the tags the publish pulled from it, which
-    // name a port no registry answers at any more.
+    // Remove the container with its anonymous volumes (`-v`), and the tags
+    // the publish pulled from it, which name a port no registry answers at
+    // any more. `-v` leaves the tree in place: a bind mount is not a volume
+    // docker removes.
     stop() {
-        try { this.docker(['rm', '-f', this.container], 'ignore'); } catch (e) { /* already gone */ }
+        try { this.docker(['rm', '-f', '-v', this.container], 'ignore'); } catch (e) { /* already gone */ }
         if (this.host !== null) {
             try { this.docker(['rmi', ...REPOSITORIES.map((r) => this.image(r))], 'ignore'); } catch (e) { /* not pulled */ }
         }

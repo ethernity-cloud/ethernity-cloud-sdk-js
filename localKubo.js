@@ -291,15 +291,18 @@ class LocalKubo {
         }
     }
 
-    // Remove the container.
+    // Remove the container and its anonymous volumes (`-v`). The Kubo image
+    // declares /data/ipfs and /export as volumes, and /data/ipfs holds the
+    // repo with every block the publish added. A container run afresh gets
+    // new anonymous volumes, so no container reads these again.
     stop() {
-        try { this.docker(['rm', '-f', this.container], 'ignore'); } catch (e) { /* already gone */ }
+        try { this.docker(['rm', '-f', '-v', this.container], 'ignore'); } catch (e) { /* already gone */ }
     }
 
     // End the publish's use of the Kubo: stop it, unless it is the source of
     // a registered image whose certificate is not on chain yet, which it keeps
     // serving to the extraction service and the bootnode's mirror; the next
-    // publish of the project takes it over, `docker rm -f` stops it.
+    // publish of the project takes it over, `docker rm -f -v` stops it.
     release() {
         if (!this.serving) {
             this.stop();
@@ -307,7 +310,7 @@ class LocalKubo {
         }
         console.log(`\t⚠  The registered image stays available from this publish's IPFS node, the docker`);
         console.log(`\t   container ${this.container}, for the extraction service and the bootnode.`);
-        console.log(`\t   Publish again to retry; \`docker rm -f ${this.container}\` stops it.`);
+        console.log(`\t   Publish again to retry; \`docker rm -f -v ${this.container}\` stops it.`);
     }
 }
 

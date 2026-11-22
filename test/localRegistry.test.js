@@ -196,7 +196,7 @@ test('start serves the tree read-only on a loopback port free on the host and wa
   const treePath = tree(t);
   const { r, commands } = registry(treePath);
   await r.start();
-  assert.deepEqual(commands[0], ['rm', '-f', 'ecld-registry-accept-m3']);
+  assert.deepEqual(commands[0], ['rm', '-f', '-v', 'ecld-registry-accept-m3']);
   const run = commands[1];
   assert.deepEqual(run.slice(0, 5), ['run', '-d', '--name', 'ecld-registry-accept-m3', '-p']);
   assert.match(run[5], /^127\.0\.0\.1:\d+:5000$/);
@@ -217,7 +217,7 @@ test('a run docker refuses leaves no container', async (t) => {
   const { r, commands } = registry(tree(t), 'port is already allocated');
   await assert.rejects(() => r.start(), { message: 'docker could not start registry:2: port is already allocated' });
   assert.equal(commands[1][0], 'run');
-  assert.deepEqual(commands[2], ['rm', '-f', 'ecld-registry-accept-m3']);
+  assert.deepEqual(commands[2], ['rm', '-f', '-v', 'ecld-registry-accept-m3']);
   assert.equal(commands.length, 3);
   assert.equal(r.host, null);
 });
@@ -238,22 +238,33 @@ test('a registry that does not answer in time is removed, with the tags of its p
   assert.equal(commands[1][0], 'run');
   const host = commands[1][5].replace(/:5000$/, '');
   assert.deepEqual(commands.slice(2), [
-    ['rm', '-f', 'ecld-registry-accept-m3'],
+    ['rm', '-f', '-v', 'ecld-registry-accept-m3'],
     ['rmi', ...REPOSITORIES.map((repository) => `${host}/${repository}`)],
   ]);
 });
 
-test('stop removes the container, and the tags pulled from it once it served', async (t) => {
+test('stop removes the container with its anonymous volumes, and the tags pulled from it once it served', async (t) => {
   const { r, commands } = registry(tree(t));
   r.stop();
-  assert.deepEqual(commands, [['rm', '-f', 'ecld-registry-accept-m3']]);
+  assert.deepEqual(commands, [['rm', '-f', '-v', 'ecld-registry-accept-m3']]);
   await r.start();
   commands.length = 0;
   r.stop();
   assert.deepEqual(commands, [
-    ['rm', '-f', 'ecld-registry-accept-m3'],
+    ['rm', '-f', '-v', 'ecld-registry-accept-m3'],
     ['rmi', ...REPOSITORIES.map((repository) => `${r.host}/${repository}`)],
   ]);
+});
+
+test('every container the registry removes is removed with -v: the one a previous publish left, a refused run, the stop', async (t) => {
+  for (const runError of [undefined, 'port is already allocated']) {
+    const { r, commands } = registry(tree(t), runError);
+    await r.start().catch(() => {});
+    r.stop();
+    const removals = commands.filter((args) => args[0] === 'rm');
+    assert.equal(removals.length, runError ? 3 : 2);
+    for (const removal of removals) assert.deepEqual(removal, ['rm', '-f', '-v', 'ecld-registry-accept-m3']);
+  }
 });
 
 for (const runner_ of ['nodenithy', 'pynithy']) {

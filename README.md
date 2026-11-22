@@ -176,7 +176,8 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   of the project takes that node over (starting it again when a restart of
   docker stopped it), finds the image registered and goes on to the
   certificate, and keeps the node in turn should it end before the
-  certificate. `docker rm -f ecld-kubo-<project>` stops it; a new node has a
+  certificate. `docker rm -f -v ecld-kubo-<project>` stops it and removes its
+  IPFS repo; a new node has a
   new peer id, which matches nothing on chain, so the image then needs a new
   build. `ECLD_KUBO_SWARM_PORT` (default 4001) is the port your node
   listens on when it is free; when another container holds it published, the
