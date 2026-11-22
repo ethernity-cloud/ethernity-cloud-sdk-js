@@ -71,6 +71,7 @@ export const ECRunner = {
 const require = createRequire(import.meta.url);
 const casConfig = require('../cas/config.js');
 const nodeFlags = require('./nodeFlags.js');
+const securelockDockerfile = require('./securelockDockerfile.js');
 const localRegistry = require('../localRegistry.js');
 export const VALIDATOR_REGISTRY = casConfig.VALIDATOR_REGISTRY;
 
@@ -265,10 +266,6 @@ if (ESR_ENABLED && !/^0x[0-9a-fA-F]{40}$/.test(ESR_CONTRACT_ADDRESS)) {
 // Rendered only when enabled, so non-ESR images keep byte-identical layers.
 const esrEnvBlock = ESR_ENABLED ? `ENV ESR_CONTRACT_ADDRESS=${ESR_CONTRACT_ADDRESS}` : '';
 
-// runCommand(`cat Dockerfile.tmpl | sed s/"__ENCLAVE_NAME_SECURELOCK__"/"${ENCLAVE_NAME_SECURELOCK}"/g > Dockerfile`);
-const dockerfileSecureTemplate = fs.readFileSync('Dockerfile.tmpl', 'utf8');
-let dockerfileSecureContent = dockerfileSecureTemplate.replace(/__ENCLAVE_NAME_SECURELOCK__/g, ENCLAVE_NAME_SECURELOCK).replace(/__NETWORK_TYPE__/g, isMainnet ? 'mainnet' : 'testnet').replace(/__BUCKET_NAME__/g, templateName + "-v3").replace(/__SMART_CONTRACT_ADDRESS__/g, ECRunner[templateName][0]).replace(/__IMAGE_REGISTRY_ADDRESS__/g, ECRunner[templateName][1]).replace(/__RPC_URL__/g, ECRunner[templateName][2]).replace(/__CHAIN_ID__/g, ECRunner[templateName][3]).replace(/__ETNY_VALIDATOR_REGISTRY_ADDRESS__/g, VALIDATOR_REGISTRY[templateName] || '').replace(/^__ESR_ENV__\r?\n/m, esrEnvBlock ? `${esrEnvBlock}\n` : '');
-
 // The securelock's protected heap (SCONE_HEAP), signed into the enclave and
 // set on the run/docker-compose securelock service; ECLD_MEMORY_TO_ALLOCATE
 // overrides the default. The default 1024M keeps V8's JIT, whose code range
@@ -281,42 +278,25 @@ const NODE_FLAGS = nodeFlags.securelockNodeFlags(MEMORY_TO_ALLOCATE);
 writeEnv('MEMORY_TO_ALLOCATE', MEMORY_TO_ALLOCATE);
 writeEnv('SECURELOCK_NODE_FLAGS', NODE_FLAGS.join(' '));
 
-// CRITICAL (mainnet DCAP): sign /usr/local/bin/node -- the binary the enclave
-// actually EXECUTES (ENTRYPOINT + the run/publish compose command both run
-// /usr/local/bin/node). Signing anything else leaves the executed binary as the
-// base image's DEBUG-signed one, so at load SCONE recomputes MRENCLAVE and
-// re-signs it as debug -> CAS rejects the DCAP quote ("Debug mode enabled").
-//
-// The enclave-creation params (--heap/--stack/--dlopen/--extensions) MUST be
-// passed explicitly and match the runtime env exactly (scone-signer embeds SCONE
-// defaults for anything not passed as a flag) -- any drift triggers the same
-// debug re-sign. Values mirror the run/docker-compose securelock service.
-const signFlags =
-  `--key=/enclave-key.pem --env --heap=${MEMORY_TO_ALLOCATE} ` +
-  `--stack=4M --tcs=64 --dlopen=1 --extensions=/lib/libbinary-fs.so`;
-
-// scone-signer prints two tab-indented "MRENCLAVE:" lines (non-EDMM first;
-// runtime has EDMM disabled, so the first is what SCONE_HASH produces). Capture
-// to a file first -- piping into head/grep kills scone-signer with SIGPIPE
-// (exit 141) under buildkit's pipefail shell.
-const signedMrenclaveStep =
-  'RUN scone-signer info /usr/local/bin/node > /tmp/siginfo.txt 2>&1; \\\n' +
-  '    grep -iE "MRENCLAVE:" /tmp/siginfo.txt | sed -n \'1p\' \\\n' +
-  '      | sed -E \'s/.*MRENCLAVE:[[:space:]]*//I\' | tr -d \'[:space:]\' > /signed_mrenclave.txt && \\\n' +
-  '    echo "SIGNED_MRENCLAVE=$(cat /signed_mrenclave.txt)"';
-
 // A CAS-provisioned securelock (mainnet, or a testnet with a SessionRegistry)
 // is signed --production: the CAS session admits production enclaves only,
 // and a debug-signed one is refused at attestation. A self-signing testnet
 // securelock is signed debug with the same explicit params.
 const cas = casConfig.casProvisioned(templateName, isMainnet);
-dockerfileSecureContent = dockerfileSecureContent
-  .replace(/__MEMORY_TO_ALLOCATE__/g, MEMORY_TO_ALLOCATE)
-  .replace(/__NODE_FLAGS__/g, NODE_FLAGS.map((flag) => `, "${flag}"`).join(''))
-  .replace('__SCONE_SIGN__', `RUN scone-signer sign ${signFlags}${cas ? ' --production' : ''} /usr/local/bin/node`)
-  .replace('__SIGNED_MRENCLAVE__', signedMrenclaveStep);
-
-fs.writeFileSync('Dockerfile', dockerfileSecureContent);
+fs.writeFileSync('Dockerfile', securelockDockerfile.renderSecurelockDockerfile(fs.readFileSync('Dockerfile.tmpl', 'utf8'), {
+  enclaveName: ENCLAVE_NAME_SECURELOCK,
+  networkType: isMainnet ? 'mainnet' : 'testnet',
+  bucket: `${templateName}-v3`,
+  smartContractAddress: ECRunner[templateName][0],
+  imageRegistryAddress: ECRunner[templateName][1],
+  rpcUrl: ECRunner[templateName][2],
+  chainId: ECRunner[templateName][3],
+  validatorRegistryAddress: VALIDATOR_REGISTRY[templateName] || '',
+  esrEnvBlock,
+  memory: MEMORY_TO_ALLOCATE,
+  nodeFlags: NODE_FLAGS,
+  production: cas,
+}));
 
 
 

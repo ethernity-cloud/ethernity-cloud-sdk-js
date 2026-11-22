@@ -355,6 +355,19 @@ rebuilding and republishing on 1.8.0.
   each network (`info.js`); on Polygon Amoy the securelocks commit to
   `0x1DC58496ed1cA66FD1E0b51fA28A9E7451970843`. The registry with
   `commitForBatch` enters the tables when the networks switch to it.
+- **The fixed start.** `nodenithy/build/securelock/fixed-start/fixed_start.c`
+  is linked into the extension the signer measures (`/lib/libbinary-fs.so`)
+  with the securelock's header `securelock.h`: the enclave's program is called
+  with the ENTRYPOINT's vector (`/usr/local/bin/node`, `--jitless` when the
+  build runs node jitless, `/etny-securelock/securelock.js`;
+  `renderSecurelockDockerfile` sets `FIXED_START_JITLESS` to match) and with
+  the first entry of each of `ETNY_MODE`, `ETNY_ORDER_ID`,
+  `ETNY_CLIENT_CHALLENGE`, `ECAS_ATTEST_SESSION`, `ECAS_ENCLAVE_NONCE`,
+  `ECAS_CAS_QUOTE` and `ESR_CONTRACT_ADDRESS` its start's environment holds,
+  and nothing else; the arguments and environment of the compose or of a CAS
+  session reach neither node nor the securelock. A start that did not come
+  through the launcher ends with status 78. The pynithy securelock carries the
+  same file with its own header (the mirror below).
 - **The pynithy mirror.** `pynithy/build/securelock` is a byte-for-byte copy
   of the Python SDK's securelock tree (`ethernity-cloud-sdk-py`,
   `ethernity_cloud_sdk_py/commands/pynithy/build/securelock`), never edited

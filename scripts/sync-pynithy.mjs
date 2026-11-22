@@ -4,7 +4,7 @@
 // The pynithy securelock's canonical sources live in ethernity-cloud-sdk-py
 // (ethernity_cloud_sdk_py/commands/pynithy/build/securelock); this package
 // ships a byte-for-byte copy of its Dockerfile.base.tpl, Dockerfile.tpl,
-// scripts/ and src/. `__pycache__` directories and `*.pyc` files are build
+// scripts/, src/ and fixed-start/. `__pycache__` directories and `*.pyc` files are build
 // leftovers of either checkout and are never copied or compared.
 //
 //   node scripts/sync-pynithy.mjs [--check] [<path to ethernity-cloud-sdk-py>]
@@ -32,7 +32,7 @@ export const ENV_VAR = 'ETHERNITY_CLOUD_SDK_PY';
 export const DEFAULT_SDK_PY = path.join(ROOT, '..', 'ethernity-cloud-sdk-py');
 export const SOURCE_SUBDIR = path.join('ethernity_cloud_sdk_py', 'commands', 'pynithy', 'build', 'securelock');
 export const MIRROR_DIR = path.join(ROOT, 'pynithy', 'build', 'securelock');
-export const ENTRIES = ['Dockerfile.base.tpl', 'Dockerfile.tpl', 'scripts', 'src'];
+export const ENTRIES = ['Dockerfile.base.tpl', 'Dockerfile.tpl', 'scripts', 'src', 'fixed-start'];
 
 export function pythonSdkDir(env = process.env) {
   return path.resolve(env[ENV_VAR] || DEFAULT_SDK_PY);

@@ -50,8 +50,15 @@ RUN etny-securelock/binary-fs-build.sh
 FROM registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/sconecuratedimages/crosscompilers:alpine-scone6.0.7 as build
 
 COPY --from=release /binary-fs-dir /.
+# The fixed start (fixed-start/fixed_start.c, with the securelock's argument
+# vector and environment keys in fixed-start/securelock.h) is linked into the
+# extension, which the signer measures: the enclave runs the ENTRYPOINT's
+# vector with the listed keys of its environment, whatever arguments and
+# environment its start gives it. build.mjs renders __FIXED_START_JITLESS__ to
+# 1 when the ENTRYPOINT runs node --jitless, else to 0.
+COPY fixed-start/ /fixed-start/
 
-RUN scone gcc ./binary_fs_blob.s ./libbinary_fs_template.a -shared -o /libbinary-fs.so
+RUN scone gcc ./binary_fs_blob.s -O2 -fPIC -include /fixed-start/securelock.h -DFIXED_START_JITLESS=__FIXED_START_JITLESS__ /fixed-start/fixed_start.c ./libbinary_fs_template.a -shared -o /libbinary-fs.so
 
 FROM ${SCONE_NODE}
 

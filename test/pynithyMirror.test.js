@@ -1,6 +1,6 @@
 // pynithy/build/securelock mirrors the Python SDK's securelock tree
 // (ethernity-cloud-sdk-py ethernity_cloud_sdk_py/commands/pynithy/build/securelock:
-// Dockerfile.base.tpl, Dockerfile.tpl, scripts/, src/). scripts/sync-pynithy.mjs
+// Dockerfile.base.tpl, Dockerfile.tpl, scripts/, src/, fixed-start/). scripts/sync-pynithy.mjs
 // copies it; this test fails when the mirror differs from a reachable Python
 // SDK checkout (ETHERNITY_CLOUD_SDK_PY, else the sibling
 // ../ethernity-cloud-sdk-py) and checks the comparison itself on a scratch tree.
@@ -38,12 +38,14 @@ test('the mirror equals the Python SDK securelock tree', (t) => {
     `pynithy/build/securelock differs from ${source}; run node scripts/sync-pynithy.mjs`);
 });
 
-test('the mirror tree holds the four mirrored entries and no build leftovers', () => {
+test('the mirror tree holds the five mirrored entries and no build leftovers', () => {
   const files = listTree(MIRROR_DIR);
   assert.ok(files.includes('Dockerfile.base.tpl'));
   assert.ok(files.includes('Dockerfile.tpl'));
   assert.ok(files.some((f) => f.startsWith('scripts/')));
   assert.ok(files.some((f) => f.startsWith('src/')));
+  assert.ok(files.includes('fixed-start/fixed_start.c'));
+  assert.ok(files.includes('fixed-start/securelock.h'));
   assert.ok(!files.some((f) => f.includes('__pycache__') || f.endsWith('.pyc')));
 });
 
