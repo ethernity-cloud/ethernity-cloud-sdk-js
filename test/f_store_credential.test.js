@@ -23,9 +23,9 @@
 //     credential is not followed by the other one, and nothing is put;
 //   - the build: each binary-fs-build.sh declares /run/ecld as a host path;
 //     the last stage of each securelock Dockerfile carries the label
-//     cloud.ethernity.securelock.store="file" on the line before its
-//     ENTRYPOINT, in the template and with the tokens ecld-build replaces
-//     rendered; ecld-build builds, tags and pushes that image as built; no
+//     cloud.ethernity.securelock.store="file", then creates the empty
+//     directory /run/ecld (mode 0700) on the line before its ENTRYPOINT, in
+//     the template and with the tokens ecld-build replaces rendered; ecld-build builds, tags and pushes that image as built; no
 //     compose ecld-publish renders names /run/ecld, and each names the image
 //     ecld-build pushed;
 //   - the names: every object the securelock puts over a plain task and a
@@ -377,6 +377,9 @@ test('each binary-fs-build.sh declares /run/ecld, the directory of STORE_CREDENT
 });
 
 const LABEL = 'LABEL cloud.ethernity.securelock.store="file"';
+// The directory of STORE_CREDENTIAL_PATH, the host path of binary-fs-build.sh,
+// as the image holds it: empty, root's, mode 0700.
+const DIRECTORY = `RUN mkdir -p -m 0700 ${path.posix.dirname(STORE_CREDENTIAL_PATH)}`;
 // The securelock Dockerfile template of each kind of dApp, the build script
 // that renders it, and the ENTRYPOINT of its last stage as that script
 // renders it for a jitless node.
@@ -395,16 +398,19 @@ const BUILDS = [
   },
 ];
 
-// The last stage of the Dockerfile `content` holds the securelock's label on
-// the line before its one ENTRYPOINT, the file's last instruction; the file
-// holds no other LABEL, no key of a trustedzone image and no USER
-// instruction (the credential file is readable by uid 0 alone).
+// The last stage of the Dockerfile `content` holds the securelock's label
+// and, on the line after it, the creation of /run/ecld, on the line before
+// its one ENTRYPOINT, the file's last instruction; no other instruction of
+// the file names /run/ecld; the file holds no other LABEL, no key of a
+// trustedzone image and no USER instruction (the credential file is readable
+// by uid 0 alone).
 function assertLabelled(content, entrypoint, what) {
   const lines = content.replace(/\n+$/, '').split('\n');
   const stage = lines.slice(lines.reduce((last, line, i) => (/^FROM\s/.test(line) ? i : last), -1));
   assert.match(stage[0], /^FROM\s/, `${what}: a last stage`);
   assert.deepEqual(stage.filter((line) => /^ENTRYPOINT\s/.test(line)), [entrypoint], what);
-  assert.deepEqual(stage.slice(-2), [LABEL, entrypoint], what);
+  assert.deepEqual(stage.slice(-3), [LABEL, DIRECTORY, entrypoint], what);
+  assert.deepEqual(lines.filter((line) => !/^\s*#/.test(line) && line.includes('/run/ecld')), [DIRECTORY], what);
   assert.deepEqual(lines.filter((line) => /^\s*LABEL\b/.test(line)), [LABEL], what);
   assert.ok(!content.includes('cloud.ethernity.store'), what);
   assert.deepEqual(lines.filter((line) => /^\s*USER\b/.test(line)), [], what);
@@ -427,7 +433,7 @@ function renderedDockerfile({ template, kind }) {
 }
 
 for (const build of BUILDS) {
-  test(`${build.kind}: the last stage of ${build.name} carries the label cloud.ethernity.securelock.store="file" on the line before its ENTRYPOINT, in the template and in the Dockerfile ecld-build writes from it`, () => {
+  test(`${build.kind}: the last stage of ${build.name} carries the label cloud.ethernity.securelock.store="file", then creates the empty directory /run/ecld on the line before its ENTRYPOINT, in the template and in the Dockerfile ecld-build writes from it`, () => {
     assertLabelled(text(build.template).split('__NODE_FLAGS__').join(', "--jitless"'), build.entrypoint, build.name);
     const rendered = renderedDockerfile(build);
     assert.ok(!/__[A-Z][A-Z0-9_]*__/.test(rendered), 'every token of the template is rendered');

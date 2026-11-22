@@ -373,9 +373,13 @@ rebuilding and republishing on 1.8.0.
   the port and the bucket are baked; the file names none. Each
   `scripts/binary-fs-build.sh` declares `/run/ecld` as a host path of the
   binary-fs, and the securelock image carries the label
-  `cloud.ethernity.securelock.store="file"` (the line before `ENTRYPOINT` in
-  `Dockerfile.tmpl` and in `Dockerfile.tpl`), which the node agent reads from
-  the image: `ecld-build` pushes the image as built to the dApp's registry
+  `cloud.ethernity.securelock.store="file"` and the empty directory
+  `/run/ecld`, root's, mode 0700 (the two lines before `ENTRYPOINT` in
+  `Dockerfile.tmpl` and in `Dockerfile.tpl`): SCONE ends the start of a
+  process whose container has no such path, so with nothing mounted the
+  securelock logs `store credential: literal (/run/ecld/store.json: absent)`
+  and runs on the literal pair. The node agent reads the label from the
+  image: `ecld-build` pushes the image as built to the dApp's registry
   tree, where the composes name it `localhost:5000/etny-securelock`. The
   composes `ecld-publish` renders declare no volume at `/run/ecld`; the mount
   is the agent's. A dApp takes the reader up by rebuilding and republishing,
