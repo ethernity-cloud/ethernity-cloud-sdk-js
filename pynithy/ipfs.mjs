@@ -183,28 +183,23 @@ const postAdd = (query, body, boundary, contentLength, onProgress) =>
     }, 3000);
   });
 
-// Parse the NDJSON add response and return the wrapping-directory root hash --
-// the entry whose "Name" is "" (matches Python upload_dir).
+// Parse the NDJSON add response and return the wrapping-directory root hash,
+// the Hash of the first entry whose "Name" is "" (Python upload_dir). An answer
+// without such an entry gives null: the API ended the add before it wrote the
+// wrapping directory, and its other entries name the files added until then.
 const parseRootHash = (text) => {
-  const rootLineHash = () => {
-    let root = null;
-    let last = null;
-    for (const line of text.split('\n')) {
-      const t = line.trim();
-      if (!t) continue;
-      let obj;
-      try {
-        obj = JSON.parse(t);
-      } catch {
-        continue;
-      }
-      last = obj;
-      if (obj.Name === '') root = obj.Hash;
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    let obj;
+    try {
+      obj = JSON.parse(t);
+    } catch {
+      continue;
     }
-    // Some gateways don't emit an empty-Name entry; fall back to the last hash.
-    return root || (last && last.Hash) || null;
-  };
-  return rootLineHash();
+    if (obj && obj.Name === '' && obj.Hash) return obj.Hash;
+  }
+  return null;
 };
 
 // Generic retry wrapper mirroring Python's retry_on_failure (10 attempts,
@@ -292,8 +287,10 @@ const uploadDirOnce = async (dirPath, onlyHash = false) => {
     }
   };
 
+  // `timeout` is the IPFS API's own bound on the add (Python upload_dir's);
+  // 60m covers a 1.2 GB upload over an ordinary uplink.
   const query =
-    '?quieter=true&stream-channels=true&wrap-with-directory=true&progress=false&timeout=5m' +
+    '?quieter=true&stream-channels=true&wrap-with-directory=true&progress=false&timeout=60m' +
     (onlyHash ? '&only-hash=true' : '');
   const { statusCode, text } = await postAdd(query, body, boundary, length, onProgress);
 
@@ -305,7 +302,7 @@ const uploadDirOnce = async (dirPath, onlyHash = false) => {
   const rootHash = parseRootHash(text);
   if (!rootHash) {
     process.stdout.write(`\r\t${FAIL}${step}\n`);
-    console.log('Failed to upload to IPFS. Could not determine root hash.');
+    console.log(`Failed to upload to IPFS: the IPFS API returned no root hash (${text.length} bytes of response)`);
     return false;
   }
   process.stdout.write(`\r\t${CHECK}${step}\n`);
