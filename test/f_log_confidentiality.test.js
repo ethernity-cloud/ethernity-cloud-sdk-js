@@ -15,42 +15,25 @@
 //   - a session's input, output and summary, and a session input the store
 //     puts in the place of session.control and of session.config.
 //
-// securelock.js.tmpl starts its run at load and carries the build's tokens:
-// its text is read, the tokens are rendered (a testnet_cas network without a
-// ValidatorRegistry), the statement that starts the run is exported as
-// main(), and the rest is compiled with a require that resolves from the
-// securelock's src/ and a process of the test's own (its environment, the
-// handlers the template registers, its exit code). etny_crypto is stood in
-// for by helpers/securelock_app.js's signatures and the AES-256-GCM sealing
-// below, the object store by esr_local's MemSwift, SwiftStreamService by a
-// class that answers the test's store.
+// The store credential is written there neither: the template's run on the
+// credential of a file at /run/ecld/store.json against a store that refuses
+// it and names its access key in the refusal, and on the literal pair where
+// nothing is at that path.
+//
+// helpers/securelock_template.js compiles the template off SGX and holds the
+// stand-ins the runs use.
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const util = require('util');
-const crypto = require('crypto');
-const Module = require('module');
-const { SRC, cryptoStub, freshModules, p384KeyPair, settle } = require('./helpers/securelock_app');
+const { SRC, settle } = require('./helpers/securelock_app');
+const T = require('./helpers/securelock_template');
 
-const TEMPLATE = path.join(SRC, 'securelock.js.tmpl');
-const BUCKET = 'etny-suite-v3';
-const ORDER_ID = 4101;
-const CHALLENGE = 'k7p2x9qv4m1zr8t3hw6n';
-const RENDERED = Object.freeze({
-  __ETNY_NETWORK_TYPE__: 'testnet_cas',
-  __ETNY_BUCKET__: BUCKET,
-  __ENCLAVE_NAME_SECURELOCK__: 'etny-suite-securelock',
-  __ETNY_SMART_CONTRACT_ADDRESS__: '0x00000000000000000000000000000000000000A1',
-  __ETNY_IMAGE_REGISTRY_ADDRESS__: '0x00000000000000000000000000000000000000B2',
-  __ETNY_VALIDATOR_REGISTRY_ADDRESS__: '',
-  __ETNY_CHAIN_ID__: '8995',
-  __ETNY_WEB3_PROVIDER__: 'http://rpc.invalid',
-});
-// The statement at the end of the template that starts the run.
-const START = '\n(async () => {\n    let failed = false;';
+const { BUCKET, ORDER_ID, loadTemplate, written, opened, sha256 } = T;
 
 const PAYLOAD = 'zq9PAYLOADsecret';
 const INPUT = 'zq9INPUTsecret';
@@ -58,106 +41,6 @@ const RESULT = 'zq9RESULTsecret';
 const SESSION_INPUT = 'zq9SESSIONinput';
 const SESSION_OUTPUT = 'zq9OUTPUTsecret';
 const SECRETS = [PAYLOAD, INPUT, RESULT];
-const METHODS = ['log', 'info', 'debug', 'error', 'warn', 'trace', 'dir'];
-
-const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
-
-// etny_crypto's sealing on node's crypto: AES-256-GCM under the SHA-256 of
-// the recipient's public key (SPKI DER), the tuple stored as base64 JSON as
-// the enclaves store it. encrypt reads its message as etny_crypto's
-// encrypt_ecc does (cipher.update(message, 'utf8', 'hex')), so a message
-// that is not text throws as it does there; decrypt answers false for an
-// object that does not open, with etny_crypto's fixed log line.
-const sealKey = (keyPem) => crypto.createHash('sha256')
-  .update(crypto.createPublicKey(keyPem).export({ type: 'spki', format: 'der' })).digest();
-const sealing = {
-  encrypt(certificate, message) {
-    const nonce = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv('aes-256-gcm', sealKey(certificate), nonce);
-    let ciphertext = cipher.update(message, 'utf8', 'hex');
-    ciphertext += cipher.final('hex');
-    return { ciphertext, nonce, authTag: cipher.getAuthTag().toString('hex') };
-  },
-  encryptedDataToBase64Json(m) {
-    return Buffer.from(JSON.stringify({ ciphertext: m.ciphertext, nonce: m.nonce.toString('hex'), authTag: m.authTag }), 'utf8').toString('base64');
-  },
-  encryptedDataFromBase64Json(base64Data) {
-    return JSON.parse(Buffer.from(base64Data, 'base64').toString('utf8'));
-  },
-  decrypt(privateKeyPem, m) {
-    try {
-      const decipher = crypto.createDecipheriv('aes-256-gcm', sealKey(privateKeyPem), Buffer.from(m.nonce, 'hex'));
-      decipher.setAuthTag(Buffer.from(m.authTag, 'hex'));
-      return decipher.update(m.ciphertext, 'hex', 'utf8') + decipher.final('utf8');
-    } catch (e) {
-      console.log('Error while decrypting ECC');
-      return false;
-    }
-  },
-  // The data owner's encryption: the data read as Buffer.from reads it, as
-  // etny_crypto's encryptWithPublicKey reads it.
-  encryptWithPublicKey(publicKey, data) {
-    const nonce = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', crypto.createHash('sha256').update(String(publicKey)).digest(), nonce);
-    return Buffer.concat([nonce, cipher.update(Buffer.from(data)), cipher.final(), cipher.getAuthTag()]);
-  },
-};
-const sealed = (publicPem, text) => sealing.encryptedDataToBase64Json(sealing.encrypt(publicPem, text));
-const opened = (privatePem, stored) => sealing.decrypt(privatePem, sealing.encryptedDataFromBase64Json(String(stored)));
-
-// The template compiled off SGX: its EtnySecureLock, reportFailure and
-// main() (the statement that starts the run), the process it was given, and
-// the securelock modules it loaded. `store()` answers each construction of
-// SwiftStreamService.
-function loadTemplate({ store = null } = {}) {
-  const mods = freshModules();
-  let source = fs.readFileSync(TEMPLATE, 'utf8').replace(/\r\n/g, '\n');
-  for (const [token, value] of Object.entries(RENDERED)) source = source.split(token).join(value);
-  assert.ok(!/__[A-Z][A-Z0-9_]*__/.test(source), 'every token of the template is rendered');
-  const start = source.lastIndexOf(START);
-  assert.notEqual(start, -1, 'the template ends with the statement that starts the run');
-  const tail = source.slice(start + 1);
-  const end = tail.lastIndexOf('})();');
-  assert.equal(tail.slice(end).trim(), '})();');
-  source = `${source.slice(0, start)}\nmodule.exports = { EtnySecureLock, reportFailure, main: ${tail.slice(1, end + 1)} };\n`;
-
-  const storeOf = store || (() => new mods.esrLocal.MemSwift());
-  const standIns = {
-    dotenv: { config: () => ({}), parse: require('dotenv').parse },
-    './etny_crypto': { ...cryptoStub, ...sealing },
-    './swift_stream_service': class SwiftStreamService {
-      constructor() { return storeOf(); }
-    },
-    './self_sign': { generateCertFromMrEnclave() { throw new Error('no SGX report off the enclave'); } },
-  };
-  const fromSrc = Module.createRequire(path.join(SRC, 'securelock.js'));
-  const requireOf = (name) => (Object.prototype.hasOwnProperty.call(standIns, name) ? standIns[name] : fromSrc(name));
-  const handlers = {};
-  const proc = {
-    env: {},
-    handlers,
-    exitCode: undefined,
-    on(event, fn) { handlers[event] = fn; return proc; },
-    exit(code) { proc.exited = code; },
-  };
-  const compiled = { exports: {} };
-  new Function('require', 'module', 'exports', '__filename', '__dirname', 'process', source)(
-    requireOf, compiled, compiled.exports, path.join(SRC, 'securelock.js'), SRC, proc);
-  return { ...compiled.exports, process: proc, mods };
-}
-
-// fn()'s value and every text console wrote while it ran, each method's
-// arguments formatted as console formats them.
-async function written(fn) {
-  const lines = [];
-  const saved = Object.fromEntries(METHODS.map((name) => [name, console[name]]));
-  for (const name of METHODS) console[name] = (...args) => { lines.push(util.format(...args)); };
-  try {
-    return { value: await fn(), lines };
-  } finally {
-    Object.assign(console, saved);
-  }
-}
 
 // Neither a secret nor its first ten characters (the part of a text a JSON
 // parse error quotes) is in any line.
@@ -168,46 +51,8 @@ function assertNothingOf(lines, secrets, what) {
   }
 }
 
-// An order handed to the template's securelock: the payload and the input
-// sealed for it and signed by the trustedzone, the order metadata their
-// checksums, the task binding the trustedzone's. stage() puts a session
-// object as the trustedzone stages it, signed over the plain text.
-function order({ payload, input = INPUT, store = null } = {}) {
-  const L = loadTemplate({ store });
-  const swift = new L.mods.esrLocal.MemSwift();
-  const tz = p384KeyPair();
-  const sl = p384KeyPair();
-  const app = new L.EtnySecureLock(swift);
-  app.identity_private_key_pem = sl.privateKeyPem;
-  app.trustedZonePublicKey = tz.publicKeyPem;
-  app.image_registry = { getLatestTrustedZoneImageCertPublicKey: async () => ['v3', tz.publicKeyPem] };
-  app.task_binding = { order_id: ORDER_ID, challenge: CHALLENGE };
-  app._metadata = {
-    image_metadata: 'v3:QmSecurelock:etny-suite-trustedzone',
-    payload_metadata_obj: { has_checksum: true, checksum: sha256(payload) },
-    input_metadata_obj: { has_checksum: true, checksum: sha256(input), ipfs_hash: 'QmInput' },
-    public_key: `0x${'42'.repeat(32)}`,
-  };
-  const put = (name, text) => { swift._store.set(`${BUCKET}/${name}`, Buffer.from(text, 'utf8')); };
-  const get = (name) => {
-    const v = swift._store.get(`${BUCKET}/${name}`);
-    return v === undefined ? undefined : v.toString('utf8');
-  };
-  put('payload.etny.securelock', sealed(sl.publicKeyPem, payload));
-  put('payload.etny.securelock.sig', sealed(sl.publicKeyPem, cryptoStub.signData(tz.privateKeyPem, payload)));
-  put('input.txt.securelock', sealed(sl.publicKeyPem, input));
-  put('input.txt.securelock.sig', sealed(sl.publicKeyPem, cryptoStub.signData(tz.privateKeyPem, input)));
-  const stage = (base, text) => {
-    put(`${base}.sig.securelock`, sealed(sl.publicKeyPem, cryptoStub.signData(tz.privateKeyPem, text)));
-    put(`${base}.securelock`, sealed(sl.publicKeyPem, text));
-  };
-  // The store puts the objects of session object `from` in the place of `to`.
-  const copy = (from, to) => {
-    put(`${to}.sig.securelock`, get(`${from}.sig.securelock`));
-    put(`${to}.securelock`, get(`${from}.securelock`));
-  };
-  return { ...L, app, swift, tz, sl, get, stage, copy };
-}
+// An order of the template's securelock whose input is INPUT unless given.
+const order = (given) => T.order({ input: INPUT, ...given });
 
 const resultLine = (code, result) => `TASK RESULT: code ${code}, ${Buffer.byteLength(String(result), 'utf8')} bytes, sha256 ${sha256(String(result))}`;
 
@@ -428,6 +273,71 @@ test('a session input the store puts in the place of session.config is not writt
   assert.match(o.app.task_result, /^SESSION EXECUTOR ERROR: /);
   assert.ok(o.app.task_result.includes(SESSION_INPUT.slice(0, 10)), 'the parse error quotes the text it parsed');
   assert.ok(lines.includes('session executor failed: SyntaxError'));
+});
+
+test('the store credential: a run on the keys of the file at /run/ecld/store.json, refused by a store that names the access key, and a run on the literal pair write neither key and nothing of the file', async () => {
+  const ACCESS = 'zq9ACCESSsecret';
+  const SECRET = 'zq9SECRETsecret0123456789';
+  const LITERAL = 'swiftstreamadmin';
+  const CERTIFICATE = '-----BEGIN CERTIFICATE-----\nc3VpdGU=\n-----END CERTIFICATE-----\n';
+  const content = `{"accessKey":"${ACCESS}","secretKey":"${SECRET}"}\n`;
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ecld-log-credential-'));
+  const file = path.join(directory, 'store.json');
+  fs.writeFileSync(file, content);
+  fs.writeFileSync(path.join(directory, 'cert.pem'), CERTIFICATE);
+  try {
+    // The securelock's SwiftStreamService over a minio client whose store
+    // refuses every request.
+    const minio = new T.MinioStandIn();
+    minio.refuse = true;
+    const Service = T.storeService(minio);
+
+    const refusal = await new Service('etny-swift-stream', 9000, ACCESS, SECRET).getFileContent(BUCKET, '.env').catch((e) => e);
+    assert.equal(refusal.code, 'InvalidAccessKeyId');
+    assert.ok(util.inspect(refusal).includes(ACCESS), 'the error of a refused request names the access key');
+
+    // The run finds no .env and saves its certificate: the read and the put
+    // are both refused.
+    const run = async (credentialFile) => {
+      minio.clients.length = 0;
+      minio.calls.length = 0;
+      const L = loadTemplate({ modules: { './swift_stream_service': Service } });
+      T.certificateIn(L, directory);
+      const { value, opens } = await T.withCredentialFile(credentialFile, () => written(() => L.execute()));
+      return { lines: value.lines, opens };
+    };
+
+    const mounted = await run(file);
+    assert.equal(mounted.opens, 1);
+    assert.deepEqual(minio.clients.map((options) => [options.accessKey, options.secretKey]), [[ACCESS, SECRET]]);
+    assert.deepEqual(minio.calls, [['getObject', BUCKET, '.env'], ['bucketExists', BUCKET]]);
+    assert.deepEqual(mounted.lines.filter((line) => line.includes('store credential')), ['store credential: file (/run/ecld/store.json)']);
+    assert.ok(mounted.lines.includes('Failed reading .env file.'));
+    assert.ok(mounted.lines.includes(CERTIFICATE), 'the certificate is read and logged before its put');
+    assertNothingOf(mounted.lines, [ACCESS, SECRET, content.trim()], 'a refused file credential');
+    assert.ok(mounted.lines.includes('Save public certificate error: S3Error'));
+
+    const absent = await run(path.join(directory, 'nothing', 'store.json'));
+    assert.equal(absent.opens, 1);
+    assert.deepEqual(minio.clients.map((options) => [options.accessKey, options.secretKey]), [[LITERAL, LITERAL]]);
+    assert.deepEqual(minio.calls, [['getObject', BUCKET, '.env'], ['bucketExists', BUCKET]]);
+    assert.deepEqual(absent.lines.filter((line) => line.includes('store credential')), ['store credential: literal (/run/ecld/store.json: absent)']);
+    assert.ok(!absent.lines.join('\n').includes(LITERAL), 'the literal pair is not written');
+    assert.ok(absent.lines.includes('Save public certificate error: S3Error'));
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+
+  // No console call of the template or of a module names the credential or
+  // the store client, whose minio client holds both keys; the reader's one
+  // mention of console is the default of its log argument, and
+  // SwiftStreamService calls console nowhere.
+  const code = (name) => sourceLines(name).filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join('\n');
+  for (const name of sourceNames()) {
+    assert.ok(!/console\.\w+\([^\n]*(\b(credential|swiftStreamClient|swiftStreamService|accessKey|secretKey)\b|\b_swift\b|\bthis\.swift\b)/.test(code(name)), name);
+  }
+  assert.deepEqual(code('store_credential.js').match(/\bconsole\.\w+/g), ['console.log']);
+  assert.equal(code('swift_stream_service.js').match(/\bconsole\.\w+/g), null);
 });
 
 test('errorClass and resultDigest', () => {

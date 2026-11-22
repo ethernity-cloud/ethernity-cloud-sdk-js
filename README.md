@@ -355,6 +355,38 @@ rebuilding and republishing on 1.8.0.
   each network (`info.js`); on Polygon Amoy the securelocks commit to
   `0x1DC58496ed1cA66FD1E0b51fA28A9E7451970843`. The registry with
   `commitForBatch` enters the tables when the networks switch to it.
+- **The store credential.** A securelock reaches the node's object store
+  (`etny-swift-stream:9000`) with the credential of `/run/ecld/store.json`, a
+  file the node agent mounts read-only into the container: one JSON object of
+  the members `accessKey` (`[A-Za-z0-9]{3,20}`) and `secretKey`
+  (`[A-Za-z0-9]{8,40}`), in that order, with JSON white space between the
+  tokens, of at most 4096 bytes. The reader (`src/store_credential.js` in the
+  JS securelock, `src/store_credential.py` in the Python one) reads it once a
+  run, before the one store client is constructed, and logs one line:
+  `store credential: file (/run/ecld/store.json)`, or
+  `store credential: literal (/run/ecld/store.json: <reason>)` where the file
+  gives no credential (`absent`, `unreadable`, `too large`, `malformed`) and
+  the client is constructed with the access key and the secret key
+  `swiftstreamadmin`. Neither key and nothing of the file is logged; the JS
+  securelock logs a failed save of its certificate by the error's class. A
+  credential the store refuses is not followed by the other one. The host,
+  the port and the bucket are baked; the file names none. Each
+  `scripts/binary-fs-build.sh` declares `/run/ecld` as a host path of the
+  binary-fs, and the securelock image carries the label
+  `cloud.ethernity.securelock.store="file"` (the line before `ENTRYPOINT` in
+  `Dockerfile.tmpl` and in `Dockerfile.tpl`), which the node agent reads from
+  the image: `ecld-build` pushes the image as built to the dApp's registry
+  tree, where the composes name it `localhost:5000/etny-securelock`. The
+  composes `ecld-publish` renders declare no volume at `/run/ecld`; the mount
+  is the agent's. A dApp takes the reader up by rebuilding and republishing,
+  and its securelock then has a new MRENCLAVE. `store_credential.js` is the
+  same text in the etny-nodenithy trustedzone. Tests:
+  `test/f_store_credential.test.js`, whose `store:` tests run against a MinIO
+  named by `ECLD_TEST_STORE_ENDPOINT` (with `ECLD_TEST_STORE_BUCKET`,
+  `ECLD_TEST_STORE_ROLE=securelock` and `ECLD_TEST_STORE_CREDENTIAL`, the path
+  of a `store.json`; they load the `minio` package of the securelock's
+  `src/package.json`, which is to be installed for them) and are skipped
+  without it, and `test/f_log_confidentiality.test.js`.
 - **The pynithy mirror.** `pynithy/build/securelock` is a byte-for-byte copy
   of the Python SDK's securelock tree (`ethernity-cloud-sdk-py`,
   `ethernity_cloud_sdk_py/commands/pynithy/build/securelock`), never edited
