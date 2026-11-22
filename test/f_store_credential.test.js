@@ -41,7 +41,9 @@
 // securelock. They run the securelock's SwiftStreamService over the minio
 // package of src/package.json, which is no dependency of this package and
 // has to be installed where node resolves it from the securelock's src/.
-// The objects they put stay in the bucket: the user removes nothing.
+// The objects they put stay in the bucket: the user removes nothing. One of
+// them also asks the store under an access key it does not hold and under
+// another secret key than the file's.
 'use strict';
 
 const { test, after } = require('node:test');
@@ -50,6 +52,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
+const util = require('node:util');
 const crypto = require('node:crypto');
 const casConfig = require('../cas/config.js');
 const { SRC, settle } = require('./helpers/securelock_app');
@@ -675,8 +678,9 @@ const onStore = { skip: STORE_ENDPOINT ? false : 'ECLD_TEST_STORE_ENDPOINT names
 
 // The securelock's SwiftStreamService on the store of
 // ECLD_TEST_STORE_ENDPOINT, constructed with the reader's answer for the
-// file of ECLD_TEST_STORE_CREDENTIAL, and the bucket of
-// ECLD_TEST_STORE_BUCKET.
+// file of ECLD_TEST_STORE_CREDENTIAL (service), that answer (credential), the
+// bucket of ECLD_TEST_STORE_BUCKET, and connect(accessKey, secretKey): the
+// service on the same store with another pair.
 function storeUser() {
   const endpoint = /^(.+):([0-9]+)$/.exec(STORE_ENDPOINT);
   assert.ok(endpoint, 'ECLD_TEST_STORE_ENDPOINT is host:port');
@@ -692,7 +696,8 @@ function storeUser() {
   } catch (e) {
     assert.fail(`the securelock's SwiftStreamService does not load (${e.code}): the minio package of src/package.json has to be installed where node resolves it from ${SRC}`);
   }
-  return { service: new SwiftStreamService(endpoint[1], Number(endpoint[2]), credential.accessKey, credential.secretKey), bucket };
+  const connect = (accessKey, secretKey) => new SwiftStreamService(endpoint[1], Number(endpoint[2]), accessKey, secretKey);
+  return { service: connect(credential.accessKey, credential.secretKey), credential, bucket, connect };
 }
 
 const denied = (e) => e.code === 'AccessDenied';
@@ -750,9 +755,32 @@ test('store: the securelock\'s user removes no object of its bucket and puts non
   await service.putFileContent(bucket, 'securelock.ready', null, 'the content');
   await assert.rejects(service.client.removeObject(bucket, 'securelock.ready'), denied);
   assert.equal((await service.isObjectInBucket(bucket, 'securelock.ready'))[1], true);
+  // An object of more than one part: the minio client starts a multipart
+  // upload on its name.
+  const parts = Buffer.alloc(MULTIPART_BYTES, 0x61);
+  assert.ok(parts.length > service.client.partSize, 'the object is more than one part');
   for (const name of OTHER_NAMES) {
     await assert.rejects(service.putFileContent(bucket, name, null, 'the content'), denied, name);
+    await assert.rejects(service.putFileContent(bucket, name, null, parts), denied, `${name}, in parts`);
   }
-  await assert.rejects(service.putFileContent(bucket, 'payload.etny', null, Buffer.alloc(MULTIPART_BYTES, 0x61)), denied);
   assert.equal((await service.isObjectInBucket(bucket, 'payload.etny.links'))[1], false);
+});
+
+test('store: the error minio makes of a request the store refuses holds neither key of the request, in its message or in an element of the store\'s answer: a put the policy denies, a request under an access key the store does not hold, a request signed with another secret key than the user\'s', onStore, async () => {
+  const { service, credential, bucket, connect } = storeUser();
+  const unheld = `ecldno${crypto.randomBytes(7).toString('hex')}`;
+  const other = crypto.randomBytes(20).toString('hex');
+  for (const [code, accessKey, secretKey, request] of [
+    ['AccessDenied', credential.accessKey, credential.secretKey, () => service.putFileContent(bucket, 'payload.etny', null, 'the content')],
+    ['InvalidAccessKeyId', unheld, other, () => connect(unheld, other).getFileContent(bucket, '.env')],
+    ['SignatureDoesNotMatch', credential.accessKey, other, () => connect(credential.accessKey, other).getFileContent(bucket, '.env')],
+  ]) {
+    const error = await request().then(() => assert.fail(`${code}: the request is not refused`), (e) => e);
+    assert.equal(error.code, code);
+    // The error as console writes it, to any depth, and its message.
+    const written = `${util.inspect(error, { depth: null, maxArrayLength: null, maxStringLength: null })}\n${error.message}`;
+    for (const key of new Set([accessKey, secretKey, credential.secretKey])) {
+      assert.ok(!written.includes(key), `${code}: the error holds no key`);
+    }
+  }
 });

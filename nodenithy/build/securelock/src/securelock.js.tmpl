@@ -820,8 +820,8 @@ class EtnySecureLock {
 
             await this.swiftStreamService.putFileContent(this.etny_bucket, 'cert.pem', this.pub_cert_file);
         } catch (err) {
-            // Logged by class: the error of a put the store refuses holds
-            // what the store's answer names, the access key among it.
+            // Logged by class: minio's error of a refused put carries every
+            // element of the store's answer.
             console.error('Save public certificate error:', errorClass(err));
         }
     }
