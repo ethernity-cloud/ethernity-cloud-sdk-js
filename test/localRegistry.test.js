@@ -267,7 +267,7 @@ for (const runner_ of ['nodenithy', 'pynithy']) {
     assert.doesNotMatch(src, /localRegistry\.release\(/, 'the registry is removed on every exit: nothing on chain names it');
     assert.match(src, /process\.on\('exit', \(\) => localKubo\.release\(\)\);/);
     // An interruption exits through process.exit, which runs those listeners.
-    assert.match(src, /const \{ LocalKubo, ownEndpoint, exitOnInterrupt, PUBLIC_IPFS_HOST \} = require\('\.\.\/localKubo\.js'\);/);
+    assert.match(src, /const \{ LocalKubo, ownEndpoint, exitOnInterrupt, pinOnPublicApi \} = require\('\.\.\/localKubo\.js'\);/);
     const wired = src.indexOf('\nexitOnInterrupt(rl);\n');
     assert.ok(wired > 0 && wired < src.indexOf('const main = async () => {'), 'wired up at load, before the publish starts anything');
     assert.ok(src.indexOf("process.on('exit', () => localKubo.release());") < src.indexOf('await localKubo.start()'),

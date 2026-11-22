@@ -102,6 +102,27 @@ function dappEndpoint(endpoint) {
     return ownEndpoint(endpoint) ? endpoint : '';
 }
 
+// Pin each of `cids`, in order, on the public IPFS API, which fetches a CID
+// from the peers it holds a connection to, the publish's Kubo among them, and
+// answers once it holds the whole tree. A pin is `node ../ipfs.mjs --action
+// pin`, a path from the runner's run directory, run through `run` with `token`
+// as IPFS_TOKEN in its environment. Throws with no pin made when `token` is
+// empty, and at the first CID whose pin fails, naming it.
+function pinOnPublicApi(cids, token, run = execFileSync) {
+    if (!token) {
+        throw new Error("this network's image registry records an image only with its certificate, so the image must be pinned on the public IPFS API before the certificate is extracted, and the public API takes a pin only with a token.\n"
+            + `       Set IPFS_TOKEN to a writer token of ${PUBLIC_IPFS_HOST} and publish again.`);
+    }
+    for (const cid of cids) {
+        console.log(`Pinning ${cid} on the public IPFS API`);
+        try {
+            run(process.execPath, ['../ipfs.mjs', '--host', `https://${PUBLIC_IPFS_HOST}`, '--action', 'pin', '--hhash', cid], { stdio: 'inherit', env: { ...process.env, IPFS_TOKEN: token } });
+        } catch (e) {
+            throw new Error(`the public IPFS API did not pin ${cid} (${e.status != null ? `exit ${e.status}` : (e.signal || e.code)}).`);
+        }
+    }
+}
+
 class LocalKubo {
     constructor(name) {
         this.container = `ecld-kubo-${String(name || 'publish').replace(/[^A-Za-z0-9_.-]/g, '-')}`;
@@ -290,4 +311,4 @@ class LocalKubo {
     }
 }
 
-module.exports = { LocalKubo, ownEndpoint, dappEndpoint, apiPortIn, freePort, exitOnInterrupt, PUBLIC_IPFS_HOST };
+module.exports = { LocalKubo, ownEndpoint, dappEndpoint, apiPortIn, freePort, exitOnInterrupt, pinOnPublicApi, PUBLIC_IPFS_HOST };

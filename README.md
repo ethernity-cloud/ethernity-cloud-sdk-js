@@ -119,9 +119,12 @@ dApp is built, published and run on one as on the mainnet it copies.
   the network's image registry records, and registers the image with its
   certificate in one call: the registry records an image only with its
   certificate, so a publish that runs its own IPFS node pins the image on the
-  public API first and needs `IPFS_TOKEN`, a writer token of that API. Without
-  an SGX host the publish asks publickey.ethernity.cloud for the certificate
-  and names the network by its tag of the table.
+  public API before the certificate is extracted, pins the tree it registers,
+  which carries the certificate files, before the registration, and needs
+  `IPFS_TOKEN`, a writer token of that API. A pin the public API does not make
+  ends the publish with nothing registered. Without an SGX host the publish
+  asks publickey.ethernity.cloud for the certificate and names the network by
+  its tag of the table.
 - `ecld-run` and the Hello World template construct the runner with the
   network's token address and name the network on it
   (`setNetwork('BLOXBERG', 'TESTNET_POX10')`, `setNetwork('POLYGON',

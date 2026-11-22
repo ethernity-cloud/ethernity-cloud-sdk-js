@@ -8,7 +8,7 @@ const https = require('https');
 const casConfig = require('../cas/config.js');
 const casResolver = require('../cas/resolver.js');
 const sessionRegistry = require('../cas/session_registry.js');
-const { LocalKubo, ownEndpoint, exitOnInterrupt, PUBLIC_IPFS_HOST } = require('../localKubo.js');
+const { LocalKubo, ownEndpoint, exitOnInterrupt, pinOnPublicApi } = require('../localKubo.js');
 const { LocalRegistry, recordedSecurelockBuild, servedDigest, composeAgainst, buildGateRefusal } = require('../localRegistry.js');
 
 if (!fs.existsSync('.env')) {
@@ -701,20 +701,11 @@ const main = async () => {
         // are pinned on the public API, which fetches them from this Kubo over
         // the connection it holds. The pin takes a token (IPFS_TOKEN); without
         // one the publish stops here, before anything is on chain.
-        const publicToken = process.env.IPFS_TOKEN || '';
-        if (!publicToken) {
-            console.error("Error: this network's image registry records an image only with its certificate, so the image must be pinned on the public IPFS API before the certificate is extracted, and the public API takes a pin only with a token.");
-            console.error(`       Set IPFS_TOKEN to a writer token of ${PUBLIC_IPFS_HOST} and publish again.`);
+        try {
+            pinOnPublicApi([process.env.IPFS_DOCKER_COMPOSE_HASH, process.env.IPFS_HASH], process.env.IPFS_TOKEN);
+        } catch (e) {
+            console.error(`Error: ${e.message}`);
             process.exit(1);
-        }
-        for (const cid of [process.env.IPFS_DOCKER_COMPOSE_HASH, process.env.IPFS_HASH]) {
-            console.log(`Pinning ${cid} on the public IPFS API`);
-            try {
-                execFileSync(process.execPath, ['../ipfs.mjs', '--host', `https://${PUBLIC_IPFS_HOST}`, '--action', 'pin', '--hhash', cid], { stdio: 'inherit', env: { ...process.env, IPFS_TOKEN: publicToken } });
-            } catch (e) {
-                console.error(`Error: the public IPFS API did not pin ${cid} (${e.status != null ? `exit ${e.status}` : (e.signal || e.code)}).`);
-                process.exit(1);
-            }
         }
     }
     if (casTestnet) await registerSessionOnChain();
@@ -857,6 +848,17 @@ const main = async () => {
         process.env.IPFS_HASH = fs.readFileSync(`./IPFS_HASH.ipfs`, 'utf8').trim();
         console.log("IPFS_HASH: ", process.env.IPFS_HASH);
         writeEnv('IPFS_HASH', process.env.IPFS_HASH);
+        // Of the tree registered below, the publish's Kubo alone holds the
+        // certificate files, and the release at the publish's exit removes
+        // it: the public API pins the tree before it is registered, in a call
+        // made from the run directory. A pin that fails ends the publish with
+        // nothing registered.
+        try {
+            if (localKubo) pinOnPublicApi([process.env.IPFS_HASH], process.env.IPFS_TOKEN);
+        } catch (e) {
+            console.error(`Error: ${e.message}`);
+            process.exit(1);
+        }
         if (localKubo) await localKubo.provide(process.env.IPFS_HASH);
         process.chdir(currentDir);
         console.log(`Adding certificates for SECURELOCK ${securelock} into IMAGE REGISTRY smart contract...`);
