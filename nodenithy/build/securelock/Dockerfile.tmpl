@@ -91,6 +91,12 @@ RUN rm -rf /enclave-key.pem
 # the published .env's SECURELOCK_NODE_FLAGS; the composes run this ENTRYPOINT.
 # The label: this securelock builds its store client from the credential file
 # /run/ecld/store.json (src/store_credential.js). The node agent reads the
-# label from the image.
+# label from the image. /run/ecld is a host path of the binary-fs
+# (scripts/binary-fs-build.sh) and SCONE ends the start of a process whose
+# container has no such path, so the image holds it: an empty directory,
+# root's, mode 0700, over which the node agent mounts the directory of the
+# credential file read-only. mkdir -p keeps the directory a SCONE_NODE image
+# already holds.
 LABEL cloud.ethernity.securelock.store="file"
+RUN mkdir -p -m 0700 /run/ecld
 ENTRYPOINT ["/usr/local/bin/node"__NODE_FLAGS__, "/etny-securelock/securelock.js"]
