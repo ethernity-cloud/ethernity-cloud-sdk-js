@@ -28,6 +28,7 @@
     "build.js",
     "init.js",
     "publish.js",
+    "privateKey.js",
     "postinstall.js",
     "test.js",
     "info.js",

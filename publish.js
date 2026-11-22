@@ -2,8 +2,12 @@ const fs = require('fs');
 const readline = require('readline');
 const { execSync, spawn } = require('child_process');
 const path = require('path');
+// The environment publish.js was started with, before dotenv adds the
+// variables of .env to process.env.
+const startEnv = { ...process.env };
 require('dotenv').config();
 const casConfig = require('./cas/config.js');
+const { resolvePrivateKey, promptHidden, readEnvFile, KeyError } = require('./privateKey.js');
 
 // Function to write to .env file
 const writeEnv = (key, value) => {
@@ -43,7 +47,7 @@ async function prompt(question) {
 }
 
 (async () => {
-    const { PROJECT_NAME, BLOCKCHAIN_NETWORK, PRIVATE_KEY, DEVELOPER_FEE, SERVICE_TYPE } = process.env;
+    const { PROJECT_NAME, BLOCKCHAIN_NETWORK, DEVELOPER_FEE, SERVICE_TYPE } = process.env;
     const scriptPath = path.resolve(__dirname, 'nodenithy/run/image_registry.js');
     process.env.NODE_NO_WARNINGS = 1
     // image_registry.js reads the wallet's key from PRIVATE_KEY in its
@@ -51,26 +55,37 @@ async function prompt(question) {
     const registry = (args, privateKey) => execSync(`node ${scriptPath} ${args}`,
         { env: { ...process.env, PRIVATE_KEY: privateKey } }).toString().trim();
     let result = '';
-    if (!PROJECT_NAME || !BLOCKCHAIN_NETWORK || !PRIVATE_KEY || !DEVELOPER_FEE) {
-        const hasWallet = await prompt('Do you have an existing wallet? (yes/no) (default value: no) ') || 'no';
-        console.log()
-        if (hasWallet.toLowerCase() !== 'yes') {
-            console.log('Without a wallet, you will not be able to publish.');
-            console.log('Please refer to Blockchain Wallets Documentation (https://docs.ethernity.cloud/ethernity-node/prerequisites-ethernity-node/blockchain-wallets).');
-            process.exit(1);
-        }
-
-        let privateKey = await prompt('Enter your private key: ');
-        result = registry('"" "" "" "validateAddress"', privateKey);
-
+    const isTTY = Boolean(process.stdin.isTTY);
+    // ECLD_PRIVATE_KEY, PRIVATE_KEY, the ENC_PRIVATE_KEY of .env decrypted,
+    // or a key entered here and stored encrypted (privateKey.js).
+    let privateKey;
+    try {
+        privateKey = await resolvePrivateKey('publish', {
+            env: startEnv, file: readEnvFile('.env'), isTTY,
+            prompt, promptHidden, writeEnv, log: (line) => console.log(line),
+        });
+    } catch (e) {
+        if (!(e instanceof KeyError)) throw e;
+        if (e.message) console.log(e.message);
+        process.exit(e.exitCode);
+    }
+    // The key when image_registry.js accepts it, else one entered on the
+    // terminal until it does.
+    const validated = async (key) => {
+        result = registry('"" "" "" "validateAddress"', key);
         while (result !== 'OK') {
             console.log(result);
-            privateKey = await prompt('Invalid private key. Please enter a valid private key: ');
-            result = registry('"" "" "" "validateAddress"', privateKey);
+            if (!isTTY) {
+                console.log('The private key is not valid and there is no terminal to enter another.');
+                process.exit(2);
+            }
+            key = await prompt('Invalid private key. Please enter a valid private key: ');
+            result = registry('"" "" "" "validateAddress"', key);
         }
-
-        console.log('Inputted Private key is valid.');
-        writeEnv('PRIVATE_KEY', privateKey);
+        return key;
+    };
+    if (!PROJECT_NAME || !BLOCKCHAIN_NETWORK || !DEVELOPER_FEE) {
+        privateKey = await validated(privateKey);
         console.log()
         console.log('Checking blockchain for required funds...');
 
@@ -95,27 +110,22 @@ async function prompt(question) {
         const taskPercentage = await prompt('Your fee as the publisher of this image, in % of each task\'s base price, 0 to 15 (default 0): ') || '0';
         writeEnv('DEVELOPER_FEE', taskPercentage);
     } else {
-        console.log('Using PROJECT_NAME, BLOCKCHAIN_NETWORK, PRIVATE_KEY, DEVELOPER_FEE from .env');
+        console.log('Using PROJECT_NAME, BLOCKCHAIN_NETWORK, DEVELOPER_FEE from .env');
         console.log('Checking blockchain for required funds...');
-        result = registry('"" "" "" "checkBalance"', PRIVATE_KEY);
+        result = registry('"" "" "" "checkBalance"', privateKey);
 
         console.log(`Available funds: ${result}`);
         console.log()
-        let privateKey = PRIVATE_KEY;
-        result = registry('"" "" "" "validateAddress"', privateKey);
-
-        while (result !== 'OK') {
-            console.log(result);
-            privateKey = await prompt('Invalid private key. Please enter a valid private key: ');
-            result = registry('"" "" "" "validateAddress"', privateKey);
-        }
-        writeEnv('PRIVATE_KEY', privateKey);
+        privateKey = await validated(privateKey);
     }
 
+    // run.js, and the image_registry.js it runs, read the key from PRIVATE_KEY
+    // in their environment: dotenv sets no variable the environment holds.
     if (SERVICE_TYPE === 'Nodenithy') {
         console.log('Adding prerequisites for Nodenithy...');
         // the current process can be exited 'cross-env node ./node_modules/@ethernity-cloud/sdk-js/nodenithy/run.js'
         const run = spawn('node', ['./node_modules/@ethernity-cloud/sdk-js/nodenithy/run.js'], {
+            env: { ...process.env, PRIVATE_KEY: privateKey },
             stdio: 'inherit'
         });
 
@@ -126,6 +136,7 @@ async function prompt(question) {
     } else if (SERVICE_TYPE === 'Pynithy') {
         console.log('Adding prerequisites for Pynithy...');
         const run = spawn('node', ['./node_modules/@ethernity-cloud/sdk-js/pynithy/run.js'], {
+            env: { ...process.env, PRIVATE_KEY: privateKey },
             stdio: 'inherit'
         });
 

@@ -154,6 +154,30 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   unless `REWARD_ADDRESS` names another one; the image's owner can change it
   later with the registry's `changeImageRewardAddress`.
 
+  ecld-publish keeps the publishing wallet's key in `.env` encrypted and never
+  writes it in plain text. A publish on a terminal with no key asks whether
+  you have a wallet, then for its private key and for a password (twice), and
+  writes the key encrypted under that password as `ENC_PRIVATE_KEY`, with the wallet's
+  address as `WALLET_ADDRESS`; a later publish asks for the password (again
+  after a wrong one). `ENC_PRIVATE_KEY` is the form ethernity-cloud-sdk-py
+  keeps in `.config.json`: base64 of a 16-byte salt, a 16-byte IV and the key
+  encrypted with AES-256-CBC (PKCS#7 padding) under PBKDF2-HMAC-SHA256 of the
+  password (100000 iterations), so either SDK decrypts the other's. The
+  password is read without echo. For a publish without a terminal (a script,
+  CI) set the environment variable `ECLD_PRIVATE_KEY`, which is used before
+  any other source and, with `ECLD_KEY_PASSWORD` also set, is written as
+  `ENC_PRIVATE_KEY` and `WALLET_ADDRESS`; `ECLD_KEY_PASSWORD` alone decrypts
+  the stored key. Both are read from the environment, not from `.env`. A
+  publish without a terminal that has neither a key nor the password of the
+  stored one exits 2 before it reaches the chain. `PRIVATE_KEY` of the
+  environment or of `.env` is used as given, after `ECLD_PRIVATE_KEY` and
+  before `ENC_PRIVATE_KEY`; ecld-publish writes no `PRIVATE_KEY` line, and
+  when it reads one from `.env` it prints that the key is stored there in
+  plain text: remove the line and publish again to store it encrypted. With
+  a forgotten password, remove `ENC_PRIVATE_KEY` and `WALLET_ADDRESS` from
+  `.env` and publish again to enter the key. The publish hands the key to
+  `nodenithy/run.js` or `pynithy/run.js` in its environment as `PRIVATE_KEY`.
+
   How the image reaches the network: leave `IPFS_ENDPOINT` in `.env` empty
   unless it names an IPFS API of your own (`IPFS_TOKEN` is the Authorization
   header value that API takes, when it takes one); the public API
@@ -219,8 +243,13 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   decrypt the result. It **costs gas and needs a funded key**. Network and
   enclaves come from `.env` (`BLOCKCHAIN_NETWORK`, `PROJECT_NAME`,
   `TRUSTED_ZONE_IMAGE`), overridable with
-  `--network`/`--securelock`/`--trustedzone`; the signing key is `PRIVATE_KEY`
-  (or `ECLD_PRIVATE_KEY`) — a funded `0x` key that pays for the order. Resources
+  `--network`/`--securelock`/`--trustedzone`. The signing key, a funded `0x`
+  key that pays for the order, is `PRIVATE_KEY`, else `ECLD_PRIVATE_KEY`, of
+  the environment or `.env`; else the `ENC_PRIVATE_KEY` ecld-publish writes to
+  `.env`, decrypted with `ECLD_KEY_PASSWORD` of the environment or with the
+  password asked on the terminal. A stored key that cannot be decrypted (no
+  terminal and no `ECLD_KEY_PASSWORD`, or a wrong `ECLD_KEY_PASSWORD`) exits
+  2, no key at all exits 1, both before the order is submitted. Resources
   are tunable with `--task-price`/`--cpu`/`--memory`/`--storage`/`--bandwidth`/`--validators`;
   `--task-price` is in ECLD and may be fractional (`--task-price 2.5`), and a
   value that is not a non-negative number is a usage error (exit 2). The
