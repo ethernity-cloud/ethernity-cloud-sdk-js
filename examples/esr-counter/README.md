@@ -48,11 +48,16 @@ npx ecld-test 'esrIncrementOnce(1)'   # run twice: second returns task code 36
 ## Running it on the network
 
 ```sh
-cp .env.example .env    # add your PRIVATE_KEY for publish
+cp .env.example .env
 npx ecld-build          # bakes the ESR registry address in; fails if the network has none
-npx ecld-publish
-npx ecld-run 'esrIncrement()'
+npx ecld-publish        # asks for the wallet's key and a password; keeps the key encrypted in .env
+npx ecld-run 'esrIncrement()'   # asks for that password
 ```
+
+`ecld-publish` writes the key to `.env` as `ENC_PRIVATE_KEY`, encrypted under
+the password, and `WALLET_ADDRESS`; it writes no `PRIVATE_KEY`. Without a
+terminal, set `ECLD_PRIVATE_KEY` in the environment (with `ECLD_KEY_PASSWORD`
+it is stored encrypted too), or `ECLD_KEY_PASSWORD` to decrypt the stored key.
 
 **Nothing to fund**: the node that runs your task relays each commit and pays
 the gas, so a published dApp is autonomous. `ECLD_ESR_ENABLE=true` is all the

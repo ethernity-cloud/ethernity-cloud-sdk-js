@@ -23,7 +23,11 @@
  *                        on an -unsafe network)
  *   TRUSTED_ZONE_IMAGE   the trustedzone enclave (its -unsafe variant on an
  *                        -unsafe network)
- *   PRIVATE_KEY          a funded 0x key — it pays for the order
+ *
+ * The key that pays for the order (a funded 0x key) is PRIVATE_KEY, else
+ * ECLD_PRIVATE_KEY, of the environment or .env; else the ENC_PRIVATE_KEY
+ * ecld-publish writes to .env, decrypted with ECLD_KEY_PASSWORD of the
+ * environment or a password asked on the terminal (privateKey.js).
  *
  * Usage, from the project root:
  *
@@ -42,7 +46,8 @@
  *
  * The runner is ESM; this CJS entry loads it with dynamic import().
  *
- * Exit code 0 on a SUCCESS task result, 1 otherwise, 2 on a usage error.
+ * Exit code 0 on a SUCCESS task result, 1 otherwise, 2 on a usage error and on
+ * a stored key it cannot decrypt.
  */
 
 'use strict';
@@ -53,6 +58,7 @@ const { networkFor, unsafeVariant } = require('./network.js');
 const { PUBLIC_IPFS_HOST } = require('./localKubo.js');
 const { reportRun } = require('./runReport.js');
 const execution = require('./execution.js');
+const { resolvePrivateKey, promptHidden, readEnvFile, KeyError } = require('./privateKey.js');
 
 // `--ipfs intake` (the default): the artefacts' CIDs are computed locally and
 // the bytes delivered to the bootnode's payload intake once the DO request is
@@ -179,7 +185,8 @@ network:   --network BLOXBERG_TESTNET (default: BLOCKCHAIN_NETWORK from .env)
            (BLOXBERG_TESTNET_UNSAFE, LITVM_LITEFORGE_UNSAFE, ETHEREUM_SEPOLIA_UNSAFE)
 enclaves:  --securelock <name> (default PROJECT_NAME), --trustedzone <name> (default TRUSTED_ZONE_IMAGE);
            on an -unsafe network the default is each one's -unsafe variant
-key:       PRIVATE_KEY (a funded 0x key) from .env / env, or ECLD_PRIVATE_KEY
+key:       PRIVATE_KEY or ECLD_PRIVATE_KEY (a funded 0x key) from env / .env, else ENC_PRIVATE_KEY of .env
+           (ecld-publish writes it) decrypted with ECLD_KEY_PASSWORD or the password asked on the terminal
 resources: --task-price 3 (ECLD, fractional allowed: 2.5) --cpu 1 --memory 1 --storage 10 --bandwidth 1 --validators 1
 execution: each flag overrides its EXEC_* key in .env (ecld-init writes them; the defaults otherwise)
            --mode task|session  --duration-hours 1 (alias --duration)  --parallelism 1  --max-gflops 0  --headroom 25
@@ -190,6 +197,9 @@ other:     --node <addr>  --ipfs intake|<ipfs api url> (default intake: the boot
            --timeout <sec>  --json`;
 
 async function main() {
+  // The environment ecld-run was started with, before dotenv adds the
+  // variables of .env to process.env.
+  const startEnv = { ...process.env };
   try { require('dotenv').config(); } catch (e) { /* dotenv optional */ }
   let opts, positional;
   try {
@@ -264,11 +274,16 @@ async function main() {
     process.exit(1);
   }
 
-  let privateKey = (process.env.PRIVATE_KEY || process.env.ECLD_PRIVATE_KEY || '').trim();
-  if (!privateKey) {
-    console.error('ecld-run: no signing key. Set PRIVATE_KEY (a funded 0x key) in .env '
-      + '(ecld-publish stores it) or ECLD_PRIVATE_KEY.');
-    process.exit(1);
+  let privateKey;
+  try {
+    privateKey = await resolvePrivateKey('run', {
+      env: startEnv, file: readEnvFile('.env'), isTTY: Boolean(process.stdin.isTTY),
+      promptHidden, log: (line) => console.error(line),
+    });
+  } catch (e) {
+    if (!(e instanceof KeyError)) throw e;
+    if (e.message) console.error(`ecld-run: ${e.message}`);
+    process.exit(e.exitCode);
   }
   if (!privateKey.startsWith('0x')) privateKey = '0x' + privateKey;
 

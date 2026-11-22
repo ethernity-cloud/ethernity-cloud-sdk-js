@@ -1,0 +1,30 @@
+{
+  "source": "ethernity-cloud-sdk-py 1.9.0, PrivateKeyManager(password).encrypt_private_key(privateKey) and extract_address_from_private_key(privateKey) of ethernity_cloud_sdk_py.commands.private_key",
+  "privateKeyOrigin": "the first account of Hardhat's public test mnemonic",
+  "vectors": [
+    {
+      "password": "dummy-password",
+      "privateKey": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+      "encPrivateKey": "RzV2lIyB6k2MwW2hcKBIkzRJfYgX7656Io3DAyNBwLA2/r6mxKVdOx9UUcWfAOymr92PnZPMdPKTgiJ4U7aV4SbYpGKHweS2qDe7TLKfuXdfrN8DdsEwZ//IinPMDd3bTfT68lSPHv1sepilKyexZA==",
+      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    },
+    {
+      "password": "dummy-password",
+      "privateKey": "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+      "encPrivateKey": "0VvXd0enU/4sVmBsOk7ETbhOambtZkAF7d22ajmtl+ZNRGfBpO63gUryPhFp9o5fL9LtAM2dtDdpeBD22JW6kiyNcZKtRhiwGFbqI6GO1qp9SeDIWYya27kLuRwUXQ3SVnC4ok9H7IKr2Vw787VHKQ==",
+      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    },
+    {
+      "password": "pässwörd €",
+      "privateKey": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+      "encPrivateKey": "Qz/mQvldOTPRdnqkzglJnI3hQi1MIy3u1dWb1SSSvn8+5PtRp3L/LznInHcW3S9DYzeGhIlaQiDQk29OXyKIrV/oyICo6nsalbFL+Vhg2entJjOaGwmuCcE15qqTCfL9FXpSjycxE4HodN9mWJdbmg==",
+      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    },
+    {
+      "password": "",
+      "privateKey": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+      "encPrivateKey": "pKs26perYy5itcurcO/YDVCI7sgHw8X/XKmXYdPiVXoYO5IbAabeKDCcw5a1WVcKrC+lSFWyia0Yk38ykBgO68NQdNkSLHI8HMHq0IZaVVb2/EXB2QliTx538Xefno1iW1Vgg3k8xb0lYJMKH/GTEA==",
+      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    }
+  ]
+}
