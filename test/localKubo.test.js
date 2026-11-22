@@ -195,7 +195,7 @@ test('with none kept, start removes a container of the name, runs one with its A
     await k.start();
     assert.deepEqual(commands[0], ['port', k.container, '5001/tcp']);
     assert.deepEqual(commands[1], ['start', k.container]);
-    assert.deepEqual(commands[2], ['rm', '-f', k.container]);
+    assert.deepEqual(commands[2], ['rm', '-f', '-v', k.container]);
     const run = commands[3];
     assert.deepEqual(run.slice(0, 5), ['run', '-d', '--name', k.container, '-p']);
     assert.match(run[5], /^127\.0\.0\.1:\d+:5001$/);
@@ -241,7 +241,7 @@ test('a swarm port another container holds published is left unpublished: the re
     const lines = await printedBy(() => k.start());
     assert.deepEqual(commands.map((args) => args[0]), ['port', 'start', 'rm', 'run', 'rm', 'run']);
     assert.deepEqual(commands[3].slice(6, 10), SWARM_PUBLISHED);
-    assert.deepEqual(commands[4], ['rm', '-f', k.container]);
+    assert.deepEqual(commands[4], ['rm', '-f', '-v', k.container]);
     assert.ok(!commands[5].includes(`${SWARM_PORT}:4001`));
     assert.equal(commands[5][5], commands[3][5], 'the API port is the same');
     assert.equal(commands[5].length, 10);
@@ -253,7 +253,7 @@ test('a run docker refuses for another reason leaves no container', async () => 
     const commands = recording(k, { runErrors: ['no such image'] });
     await assert.rejects(() => k.start(), { message: `docker could not start ${KUBO_IMAGE}: no such image` });
     assert.deepEqual(commands.map((args) => args[0]), ['port', 'start', 'rm', 'run', 'rm']);
-    assert.deepEqual(commands[4], ['rm', '-f', k.container]);
+    assert.deepEqual(commands[4], ['rm', '-f', '-v', k.container]);
 });
 
 test('an allocated port refused with the swarm port unpublished is a failure', async () => {
@@ -263,19 +263,36 @@ test('an allocated port refused with the swarm port unpublished is a failure', a
     assert.deepEqual(commands.map((args) => args[0]), ['port', 'start', 'rm', 'run', 'rm']);
 });
 
-test('stop removes the container', () => {
+test('stop removes the container with its anonymous volumes, the IPFS repo in /data/ipfs and /export', () => {
     const k = kubo([]);
     const commands = recording(k);
     k.stop();
-    assert.deepEqual(commands, [['rm', '-f', k.container]]);
+    assert.deepEqual(commands, [['rm', '-f', '-v', k.container]]);
 });
 
-test('a Kubo serving no registered image is stopped on release', () => {
+test('a Kubo serving no registered image is stopped on release, its anonymous volumes removed with it', () => {
     const k = kubo([]);
     const commands = recording(k);
     const lines = printed(() => k.release());
-    assert.deepEqual(commands, [['rm', '-f', k.container]]);
+    assert.deepEqual(commands, [['rm', '-f', '-v', k.container]]);
     assert.deepEqual(lines, []);
+});
+
+test('every container the Kubo removes is removed with -v: a refused run, an API that does not come up, the release', async () => {
+    for (const [options, failing] of [
+        [{ runErrors: ['no such image'] }, null],
+        [{ runErrors: [PORT_ALLOCATED] }, null],
+        [{}, async () => { throw new Error('connection refused'); }],
+    ]) {
+        const k = kubo([]);
+        const commands = recording(k, options);
+        if (failing) k.api = failing;
+        await pastTheDeadline(() => printedBy(() => k.start().catch(() => {})));
+        printed(() => k.release());
+        const removals = commands.filter((args) => args[0] === 'rm');
+        assert.ok(removals.length >= 2);
+        for (const removal of removals) assert.deepEqual(removal, ['rm', '-f', '-v', k.container]);
+    }
 });
 
 test('a Kubo serving a registered image is kept on release', () => {
@@ -285,7 +302,7 @@ test('a Kubo serving a registered image is kept on release', () => {
     const lines = printed(() => k.release());
     assert.deepEqual(commands, []);
     assert.ok(lines.some((line) => line.includes('The registered image stays available from this publish\'s IPFS node')));
-    assert.ok(lines.some((line) => line.includes(`docker rm -f ${k.container}`)));
+    assert.ok(lines.includes(`\t   Publish again to retry; \`docker rm -f -v ${k.container}\` stops it.`));
 });
 
 for (const runner_ of ['nodenithy', 'pynithy']) {
