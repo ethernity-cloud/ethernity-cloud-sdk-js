@@ -419,6 +419,7 @@ const main = async () => {
     const registerSessionOnChain = async () => {
         const registered = await sessionRegistry.register(
             casChain.rpcUrl, casChain.chainId, casConfig.SESSION_REGISTRY[templateName],
+            casConfig.SESSION_RULES_FORM[templateName],
             process.env.PRIVATE_KEY, fs.readFileSync('etny-securelock-test.yaml'),
             ipfsApi, '', ipfsToken);
         if (localKubo) await localKubo.provide(registered.cid);

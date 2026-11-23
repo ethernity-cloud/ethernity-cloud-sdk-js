@@ -44,6 +44,21 @@ const SESSION_REGISTRY = {
   'ecld-nodenithy-amoy': '0x059662030fEeB4Ea8Fc7b05951A578d527a827e5',
 };
 
+// The form of each SessionRegistry's rules above, as its RULES_FORM()
+// numbers it: 1, a flat measurement list (the registries that answer no
+// RULES_FORM()), or 2, a list per service. Kept in sync with
+// etny-{pynithy,nodenithy}/v3/networks.yaml (session_rules_form).
+const SESSION_RULES_FORM = {
+  'etny-pynithy-testnet': 1,
+  'etny-nodenithy-testnet': 1,
+  'ecld-pynithy-litvm-testnet': 1,
+  'ecld-nodenithy-litvm-testnet': 1,
+  'ecld-pynithy-ethereum-sepolia': 1,
+  'ecld-nodenithy-ethereum-sepolia': 1,
+  'ecld-pynithy-amoy': 1,
+  'ecld-nodenithy-amoy': 1,
+};
+
 // The chain the registries above live on. Sepolia's RPC is Tenderly's gateway:
 // publicnode caps eth_getLogs at 50,000 blocks and prunes older ranges. LitVM
 // LiteForge's RPC is Zeeve's (docs.litvm.com), which caps eth_getLogs at 3,000
@@ -146,7 +161,7 @@ const esrSessionEnvironment = (env) => {
 };
 
 module.exports = {
-  VALIDATOR_REGISTRY, SESSION_REGISTRY, CHAIN, casProvisioned, isMainnetNetwork,
+  VALIDATOR_REGISTRY, SESSION_REGISTRY, SESSION_RULES_FORM, CHAIN, casProvisioned, isMainnetNetwork,
   UNSAFE_NETWORKS, isUnsafeNetwork, TESTNETS, isTestnetNetwork, sessionAttestation,
   nameOnNetwork, sessionTag, renderCompose, esrSessionEnvironment,
 };
