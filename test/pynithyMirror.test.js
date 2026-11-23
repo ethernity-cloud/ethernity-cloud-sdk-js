@@ -46,6 +46,8 @@ test('the mirror tree holds the five mirrored entries and no build leftovers', (
   assert.ok(files.some((f) => f.startsWith('src/')));
   assert.ok(files.includes('fixed-start/fixed_start.c'));
   assert.ok(files.includes('fixed-start/securelock.h'));
+  assert.ok(files.includes('fixed-start/securelock.tree'));
+  assert.ok(files.includes('fixed-start/tree_digest.sh'));
   assert.ok(!files.some((f) => f.includes('__pycache__') || f.endsWith('.pyc')));
 });
 

@@ -5,12 +5,18 @@
 // nodeFlags.js decides; its keys are the ones the securelock's JavaScript
 // reads from its environment; the rendered Dockerfile links the launcher into
 // /libbinary-fs.so with FIXED_START_JITLESS set to match the ENTRYPOINT. The
-// launcher is the same file in the pynithy mirror and in etny-nodenithy. With
-// a musl C library and gcc on the host, the launcher is compiled with the
-// securelock's header and a program started through it runs with the fixed
-// vector and the listed keys whatever it is started with.
+// file tree check: fixed-start/securelock.tree names the paths from which node
+// loads code, the release stage writes their digests with
+// fixed-start/tree_digest.sh after it makes the binary-fs, and the link line
+// compiles them into the launcher. The launcher and the generator are the same
+// files in the pynithy mirror and in etny-nodenithy. With a musl C library,
+// gcc and bash on the host, the launcher is compiled with the securelock's
+// header and the digests of a tree, and a program started through it runs
+// with the fixed vector and the listed keys whatever it is started with, and
+// only while that tree is the one the digests were written for.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,12 +33,19 @@ const SECURELOCK = path.join(ROOT, 'nodenithy', 'build', 'securelock');
 const SRC = path.join(SECURELOCK, 'src');
 const LAUNCHER = path.join(SECURELOCK, 'fixed-start', 'fixed_start.c');
 const HEADER = path.join(SECURELOCK, 'fixed-start', 'securelock.h');
-const MIRROR_LAUNCHER = path.join(ROOT, 'pynithy', 'build', 'securelock', 'fixed-start', 'fixed_start.c');
+const TREE_FILE = path.join(SECURELOCK, 'fixed-start', 'securelock.tree');
+const TREE_DIGEST = path.join(SECURELOCK, 'fixed-start', 'tree_digest.sh');
+const MIRROR_FIXED_START = path.join(ROOT, 'pynithy', 'build', 'securelock', 'fixed-start');
+const MIRROR_LAUNCHER = path.join(MIRROR_FIXED_START, 'fixed_start.c');
 // The etny-nodenithy checkout: ETNY_NODENITHY, else the sibling of this repository.
 const NODENITHY = path.resolve(process.env.ETNY_NODENITHY || path.join(ROOT, '..', 'etny-nodenithy'));
-const NODENITHY_LAUNCHER = path.join(NODENITHY, 'v3', 'build', 'trustedzone', 'fixed-start', 'fixed_start.c');
+const NODENITHY_FIXED_START = path.join(NODENITHY, 'v3', 'build', 'trustedzone', 'fixed-start');
+const NODENITHY_LAUNCHER = path.join(NODENITHY_FIXED_START, 'fixed_start.c');
 
 const ENTRY = '/etny-securelock/securelock.js';
+// The paths the file tree check covers: the entry's directory, the
+// node_modules of its parent and Node's global folder (securelock.tree).
+const TREE = ['/etny-securelock', '/node_modules', '/usr/local/lib/node'];
 const VECTORS = {
   0: ['/usr/local/bin/node', ENTRY],
   1: ['/usr/local/bin/node', '--jitless', ENTRY],
@@ -92,8 +105,12 @@ const render = (memory, production) => renderSecurelockDockerfile(read(path.join
   ...VALUES, memory, nodeFlags: securelockNodeFlags(memory, ''), production,
 });
 const linkLine = (jitless) => 'RUN scone gcc ./binary_fs_blob.s -O2 -fPIC -include /fixed-start/securelock.h '
-  + `-DFIXED_START_JITLESS=${jitless} /fixed-start/fixed_start.c ./libbinary_fs_template.a -shared -o /libbinary-fs.so`;
+  + `-include /fixed_start_tree.h -DFIXED_START_JITLESS=${jitless} /fixed-start/fixed_start.c ./libbinary_fs_template.a `
+  + '-shared -o /libbinary-fs.so';
+const TREE_RUN = 'RUN bash /fixed-start/tree_digest.sh /fixed-start/securelock.tree '
+  + '/binary-fs-dir/fixed_start_tree.h /binary-fs-dir/fixed_start_tree.txt';
 const stages = (dockerfile) => dockerfile.split(/^(?=FROM )/m).filter((s) => s.startsWith('FROM '));
+const treePaths = (text) => text.split(/\r?\n/).filter((l) => l !== '' && !l.startsWith('#'));
 
 test('the header\'s vectors are node with and without --jitless, then securelock.js', () => {
   assert.deepEqual(fixedStart(read(HEADER)).args, VECTORS);
@@ -141,6 +158,30 @@ test('Dockerfile.tmpl links the launcher into /libbinary-fs.so once, in the cros
   const signed = stages(dockerfile).at(-1);
   assert.match(signed, /^COPY --from=build \/libbinary-fs\.so \/lib\/libbinary-fs\.so$/m);
   assert.match(signed, /^ENV SCONE_EXTENSIONS_PATH=\/lib\/libbinary-fs\.so$/m);
+  assert.ok(build.indexOf('COPY --from=release /binary-fs-dir /.\n') >= 0);
+  assert.ok(build.indexOf('COPY --from=release /binary-fs-dir /.\n') < build.indexOf(writers[0]));
+});
+
+test('the release stage writes the tree\'s digests after it makes the binary-fs, into the directory the link stage takes', () => {
+  const [release, ...others] = stages(read(path.join(SECURELOCK, 'Dockerfile.tmpl'))).filter((s) => s.includes(TREE_RUN));
+  assert.deepEqual(others, []);
+  assert.match(release, /^FROM \$\{SCONE_NODE\} AS release$/m);
+  const make = release.indexOf('RUN etny-securelock/binary-fs-build.sh\n');
+  const copy = release.indexOf('COPY fixed-start/ /fixed-start/\n');
+  const run = release.indexOf(TREE_RUN);
+  assert.ok(make >= 0 && make < copy && copy < run);
+  // Nothing after the digests changes the file system the binary-fs was made from.
+  assert.deepEqual(release.slice(run).split('\n').filter((l) => /^(RUN|COPY|ADD) /.test(l)), [TREE_RUN]);
+  assert.match(read(path.join(SECURELOCK, 'scripts', 'binary-fs-build.sh')), /--include '\/etny-securelock\/\*'/);
+});
+
+test('the tree file names the entry\'s directory, the node_modules of its parent and Node\'s global folder', () => {
+  assert.deepEqual(treePaths(read(TREE_FILE)), TREE);
+  assert.equal(TREE[0], path.posix.dirname(ENTRY));
+  assert.equal(TREE[1], path.posix.join(path.posix.dirname(TREE[0]), 'node_modules'));
+  assert.equal(TREE[2], path.posix.join(path.posix.dirname(path.posix.dirname(VECTORS[0][0])), 'lib', 'node'));
+  const { env, allowed } = fixedStart(read(HEADER));
+  assert.ok(!env.some((entry) => entry.startsWith('HOME=')) && !allowed.includes('HOME'), 'no HOME: no folder under a home directory');
 });
 
 test('the rendered Dockerfile links the launcher with the vector of its ENTRYPOINT and leaves no token', () => {
@@ -174,23 +215,69 @@ test('the rendered Dockerfile takes the build\'s network values and its ESR line
   assert.doesNotMatch(render('1024M', false), /^ENV ESR_CONTRACT_ADDRESS=/m);
 });
 
-test('fixed_start.c is the same file in the pynithy mirror', () => {
+test('fixed_start.c and tree_digest.sh are the same files in the pynithy mirror', () => {
   assert.equal(lf(LAUNCHER), lf(MIRROR_LAUNCHER));
+  assert.equal(lf(TREE_DIGEST), lf(path.join(MIRROR_FIXED_START, 'tree_digest.sh')));
 });
 
-test('fixed_start.c is byte-identical to etny-nodenithy\'s when that checkout is present', (t) => {
+test('fixed_start.c and tree_digest.sh are byte-identical to etny-nodenithy\'s when that checkout is present', (t) => {
   if (!fs.existsSync(NODENITHY_LAUNCHER)) {
     t.skip(`no etny-nodenithy checkout at ${NODENITHY} (set ETNY_NODENITHY)`);
     return;
   }
   assert.equal(lf(LAUNCHER), lf(NODENITHY_LAUNCHER));
+  assert.equal(lf(TREE_DIGEST), lf(path.join(NODENITHY_FIXED_START, 'tree_digest.sh')));
 });
 
 function launcherToolchainMissing() {
   if (process.platform !== 'linux') return `the host is ${process.platform}, not Linux`;
   if (!fs.readdirSync('/lib').some((f) => /^ld-musl-.*\.so\.1$/.test(f))) return 'the host C library is not musl';
   if (spawnSync('gcc', ['--version']).status !== 0) return 'gcc is not on PATH';
+  if (spawnSync('bash', ['--version']).status !== 0) return 'bash is not on PATH';
   return null;
+}
+
+// The digest of the tree at p as fixed_start.c defines it, computed here from
+// the definition.
+function treeDigest(p) {
+  const h = crypto.createHash('sha256');
+  const record = (...fields) => { for (const f of fields) h.update(Buffer.concat([Buffer.from(f), Buffer.from([0])])); };
+  const entry = (x) => {
+    const st = fs.lstatSync(x);
+    if (st.isFile()) {
+      const data = fs.readFileSync(x);
+      record(`F${x}`, String(data.length), crypto.createHash('sha256').update(data).digest('hex'));
+    } else if (st.isSymbolicLink()) {
+      record(`L${x}`, fs.readlinkSync(x));
+    } else if (st.isDirectory()) {
+      for (const name of fs.readdirSync(x).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))) entry(`${x}/${name}`);
+    } else {
+      record(`O${x}`);
+    }
+  };
+  if (fs.lstatSync(p, { throwIfNoEntry: false })) entry(p); else record(`A${p}`);
+  return h.digest('hex');
+}
+
+// A tree for the launcher's tests: an entry, a module, a dApp backend, a
+// node_modules package, names whose bytewise order differs from a sort of the
+// whole paths (a/, a-b, a.js) and a symbolic link. reverse reverses the order
+// the entries are made in; mode and time set the files' modes and times.
+function makeTree(root, { reverse = false, mode = 0o644, time = 1e9 } = {}) {
+  const files = [
+    ['securelock.js', 'require("./a");\n'], ['a/x.js', 'module.exports = 1;\n'], ['a-b', 'a-b\n'], ['a.js', 'module.exports = 2;\n'],
+    ['serverless/backend.js', 'module.exports = { hello: (m) => m };\n'], ['node_modules/pkg/index.js', 'module.exports = "pkg";\n'],
+  ];
+  const steps = [
+    ...files.map(([name, content]) => () => {
+      fs.mkdirSync(path.dirname(path.join(root, name)), { recursive: true });
+      fs.writeFileSync(path.join(root, name), content, { mode });
+      fs.utimesSync(path.join(root, name), time, time);
+    }),
+    () => fs.symlinkSync('a.js', path.join(root, 'link.js')),
+  ];
+  fs.mkdirSync(root, { recursive: true });
+  for (const step of reverse ? steps.reverse() : steps) step();
 }
 
 const STARTED_C = `#include <stdio.h>
@@ -229,7 +316,17 @@ int main(int argc, char **argv)
 test.describe('the launcher, compiled with the securelock\'s header (musl, gcc)', () => {
   const missing = launcherToolchainMissing();
   let dir;
+  let tree;
+  let absent;
+  let treeFile;
   const built = {};
+
+  // tree_digest.sh over treeFile: its header and its listing.
+  const digests = (out) => {
+    const r = spawnSync('bash', [TREE_DIGEST, treeFile, `${out}.h`, `${out}.txt`], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    return { header: read(`${out}.h`), listing: read(`${out}.txt`) };
+  };
 
   test.before(() => {
     if (missing) return;
@@ -238,14 +335,20 @@ test.describe('the launcher, compiled with the securelock\'s header (musl, gcc)'
       const r = spawnSync('gcc', args, { encoding: 'utf8' });
       assert.equal(r.status, 0, `gcc ${args.join(' ')}: ${r.stderr}`);
     };
+    tree = path.join(dir, 'etny-securelock');
+    absent = path.join(dir, 'node_modules');
+    treeFile = path.join(dir, 'test.tree');
+    makeTree(tree);
+    fs.writeFileSync(treeFile, `# the test's paths\n${tree}\n${absent}\n`);
+    digests(path.join(dir, 'fixed_start_tree'));
     fs.writeFileSync(path.join(dir, 'started.c'), STARTED_C);
     fs.writeFileSync(path.join(dir, 'loader.c'), LOADER_C);
     for (const jitless of [0, 1]) {
       const sub = path.join(dir, String(jitless));
       fs.mkdirSync(sub);
       const launcher = path.join(sub, 'libfixedstart.so');
-      gcc(['-shared', '-fPIC', '-O2', '-Wall', '-Wextra', '-Werror', '-include', HEADER, `-DFIXED_START_JITLESS=${jitless}`,
-        '-o', launcher, LAUNCHER]);
+      gcc(['-shared', '-fPIC', '-O2', '-Wall', '-Wextra', '-Werror', '-include', HEADER,
+        '-include', path.join(dir, 'fixed_start_tree.h'), `-DFIXED_START_JITLESS=${jitless}`, '-o', launcher, LAUNCHER]);
       const started = path.join(sub, 'started');
       gcc(['-O2', '-o', started, path.join(dir, 'started.c'), `-L${sub}`, '-lfixedstart', `-Wl,-rpath,${sub}`]);
       built[jitless] = { launcher, started };
@@ -294,5 +397,86 @@ test.describe('the launcher, compiled with the securelock\'s header (musl, gcc)'
     assert.equal(r.status, REFUSED);
     assert.equal(r.stdout, '');
     assert.match(r.stderr, /^fixed start: the start is refused: the start did not come through the launcher\n$/);
+  });
+
+  const start = (jitless) => spawnSync(built[jitless].started, [], { encoding: 'utf8', env: { ETNY_MODE: 'PUBLIC_KEY' } });
+
+  // Both builds refused after change() and, once undone, started again.
+  const refusedAt = (where, change, undo) => {
+    change();
+    try {
+      for (const jitless of [0, 1]) {
+        const r = start(jitless);
+        assert.equal(r.status, REFUSED, r.stdout);
+        assert.equal(r.stdout, '');
+        assert.equal(r.stderr, `fixed start: the start is refused: the file tree is not the image's at ${where}\n`);
+      }
+    } finally {
+      undo();
+    }
+    for (const jitless of [0, 1]) assert.equal(start(jitless).status, 0);
+  };
+
+  test('the generator writes the digest of each path the tree file names, as fixed_start.c defines it', (t) => {
+    if (missing) { t.skip(missing); return; }
+    const { header, listing } = digests(path.join(dir, 'check'));
+    assert.equal(header, [
+      '/* Written by tree_digest.sh from test.tree: the digest of each path. */',
+      '#define FIXED_START_TREE \\',
+      `    { "${tree}", "${treeDigest(tree)}" }, \\`,
+      `    { "${absent}", "${treeDigest(absent)}" }, \\`,
+      '',
+      '',
+    ].join('\n'));
+    assert.deepEqual(listing.split('\n').filter((l) => /^[FLOA] /.test(l)).map((l) => l.split(' ').at(-1)), [
+      `${tree}/a/x.js`, `${tree}/a-b`, `${tree}/a.js`, 'a.js', `${tree}/node_modules/pkg/index.js`, `${tree}/securelock.js`,
+      `${tree}/serverless/backend.js`, absent,
+    ]);
+  });
+
+  test('a start whose tree is the one the digests were written for runs the program\'s main', (t) => {
+    if (missing) { t.skip(missing); return; }
+    for (const jitless of [0, 1]) {
+      const r = start(jitless);
+      assert.equal(r.status, 0, r.stderr);
+      assert.deepEqual(lines(r.stdout, 'arg'), VECTORS[jitless]);
+    }
+  });
+
+  test('a changed file is refused: the entry, a module and the dApp\'s backend', (t) => {
+    if (missing) { t.skip(missing); return; }
+    for (const rel of ['securelock.js', 'node_modules/pkg/index.js', 'serverless/backend.js']) {
+      const file = path.join(tree, rel);
+      const was = fs.readFileSync(file);
+      refusedAt(tree, () => fs.writeFileSync(file, 'process.exit(0);\n'), () => fs.writeFileSync(file, was));
+    }
+  });
+
+  test('an added file is refused: beside a file of the tree, without an extension, in a new directory and at a path the tree does not hold', (t) => {
+    if (missing) { t.skip(missing); return; }
+    const add = (file) => () => {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, 'process.exit(0);\n');
+    };
+    refusedAt(tree, add(path.join(tree, 'added.js')), () => fs.rmSync(path.join(tree, 'added.js')));
+    refusedAt(tree, add(path.join(tree, 'a', 'x')), () => fs.rmSync(path.join(tree, 'a', 'x')));
+    const other = path.join(tree, 'node_modules', 'other');
+    refusedAt(tree, add(path.join(other, 'index.js')), () => fs.rmSync(other, { recursive: true }));
+    refusedAt(absent, add(path.join(absent, 'pkg', 'index.js')), () => fs.rmSync(absent, { recursive: true }));
+  });
+
+  test('the digests do not depend on modes, times or the order the entries were made in', (t) => {
+    if (missing) { t.skip(missing); return; }
+    const first = digests(path.join(dir, 'first'));
+    assert.deepEqual(digests(path.join(dir, 'second')), first);
+    fs.renameSync(tree, `${tree}-kept`);
+    try {
+      makeTree(tree, { reverse: true, mode: 0o600, time: 2e9 });
+      assert.deepEqual(digests(path.join(dir, 'remade')), first);
+      assert.equal(start(0).status, 0);
+    } finally {
+      fs.rmSync(tree, { recursive: true });
+      fs.renameSync(`${tree}-kept`, tree);
+    }
   });
 });

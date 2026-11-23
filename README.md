@@ -366,8 +366,20 @@ rebuilding and republishing on 1.8.0.
   `ECAS_CAS_QUOTE` and `ESR_CONTRACT_ADDRESS` its start's environment holds,
   and nothing else; the arguments and environment of the compose or of a CAS
   session reach neither node nor the securelock. A start that did not come
-  through the launcher ends with status 78. The pynithy securelock carries the
-  same file with its own header (the mirror below).
+  through the launcher ends with status 78. Before it calls node's main the
+  launcher checks the file tree: for each path of
+  `fixed-start/securelock.tree` (`/etny-securelock`, with the dApp's backend
+  and the node_modules, and `/node_modules` and `/usr/local/lib/node`, which
+  the tree does not hold) it computes the digest of the tree at that path as
+  the enclave sees it (every regular file with its size and SHA-256, every
+  symbolic link with its target, in a fixed order; `fixed_start.c` and
+  `fixed-start/tree_digest.sh` state the records) and ends with status 78
+  (`the file tree is not the image's at <path>`) when one differs from the
+  digest the release stage wrote with `tree_digest.sh` after the binary-fs was
+  made, which the link line compiles into the measured extension. A file at
+  such a path that is not the tree's changes the digest; a file at another
+  path (`/tmp`, `/app`, `/etc`) is not checked. The pynithy securelock carries
+  the same files with its own header and tree file (the mirror below).
 - **The pynithy mirror.** `pynithy/build/securelock` is a byte-for-byte copy
   of the Python SDK's securelock tree (`ethernity-cloud-sdk-py`,
   `ethernity_cloud_sdk_py/commands/pynithy/build/securelock`), never edited
