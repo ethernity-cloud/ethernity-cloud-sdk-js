@@ -23,7 +23,9 @@
 // handlers the template registers, its exit code). etny_crypto is stood in
 // for by helpers/securelock_app.js's signatures and the AES-256-GCM sealing
 // below, the object store by esr_local's MemSwift, SwiftStreamService by a
-// class that answers the test's store.
+// class that answers the test's store, and dotenv by its parse alone (the one
+// function of it the template calls), so a template that calls dotenv.config
+// does not load.
 'use strict';
 
 const test = require('node:test');
@@ -123,7 +125,7 @@ function loadTemplate({ store = null } = {}) {
 
   const storeOf = store || (() => new mods.esrLocal.MemSwift());
   const standIns = {
-    dotenv: { config: () => ({}), parse: require('dotenv').parse },
+    dotenv: Object.freeze({ parse: require('dotenv').parse }),
     './etny_crypto': { ...cryptoStub, ...sealing },
     './swift_stream_service': class SwiftStreamService {
       constructor() { return storeOf(); }

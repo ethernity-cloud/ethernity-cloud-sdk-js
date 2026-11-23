@@ -378,7 +378,13 @@ rebuilding and republishing on 1.8.0.
   digest the release stage wrote with `tree_digest.sh` after the binary-fs was
   made, which the link line compiles into the measured extension. A file at
   such a path that is not the tree's changes the digest; a file at another
-  path (`/tmp`, `/app`, `/etc`) is not checked. The pynithy securelock carries
+  path (`/tmp`, `/app`, `/etc`) is not checked. The securelock reads no `.env`
+  file of its file system: `securelock.js` uses dotenv only to parse the
+  `.env` object of its store bucket (`readEnv`, which admits the keys of
+  `NODE_ENV_ALLOWLIST` that its environment does not set), so a file such as
+  `/app/.env` is read by nothing; `test/enclaveEnvFiles.test.js` fails on any
+  other use of dotenv, and on `process.loadEnvFile`, in its sources, and on
+  any use of dotenv in the pynithy securelock's. The pynithy securelock carries
   the same files with its own header and tree file (the mirror below).
 - **The pynithy mirror.** `pynithy/build/securelock` is a byte-for-byte copy
   of the Python SDK's securelock tree (`ethernity-cloud-sdk-py`,

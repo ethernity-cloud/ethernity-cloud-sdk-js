@@ -7,10 +7,6 @@
 try { if (process.stdout._handle && process.stdout._handle.setBlocking) process.stdout._handle.setBlocking(true); } catch (e) {}
 try { if (process.stderr._handle && process.stderr._handle.setBlocking) process.stderr._handle.setBlocking(true); } catch (e) {}
 
-require('dotenv').config();
-require('dotenv').config({path: './app/.env'});
-require('dotenv').config({path: '/app/.env'});
-
 const ethers = require('ethers');
 const crypto = require('crypto');
 const fs = require("fs");
