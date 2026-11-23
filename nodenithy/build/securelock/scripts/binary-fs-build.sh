@@ -2,9 +2,6 @@
 
 cd /etny-securelock
 ls
-echo "####################"
-cat .env
-echo "####################"
 
 cat securelock.js.tmpl | sed  s/"__ENCLAVE_NAME_SECURELOCK__"/"${ENCLAVE_NAME_SECURELOCK}"/g > securelock.js.tmp
 # "|" delimits: the RPC URL contains "/".

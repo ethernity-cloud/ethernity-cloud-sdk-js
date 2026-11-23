@@ -384,7 +384,12 @@ rebuilding and republishing on 1.8.0.
   `NODE_ENV_ALLOWLIST` that its environment does not set), so a file such as
   `/app/.env` is read by nothing; `test/enclaveEnvFiles.test.js` fails on any
   other use of dotenv, and on `process.loadEnvFile`, in its sources, and on
-  any use of dotenv in the pynithy securelock's. The pynithy securelock carries
+  any use of dotenv in the pynithy securelock's. No `.env` file is built into
+  a securelock image or printed into a build log: the trees the Dockerfiles
+  copy (`src/`, `scripts/`, `fixed-start/` of both securelocks) hold no file
+  named `.env` or `.env.<suffix>`, the Dockerfiles and the build scripts name
+  none, and the pynithy securelock installs no python-dotenv; the same test
+  fails otherwise. The pynithy securelock carries
   the same files with its own header and tree file (the mirror below).
 - **The pynithy mirror.** `pynithy/build/securelock` is a byte-for-byte copy
   of the Python SDK's securelock tree (`ethernity-cloud-sdk-py`,

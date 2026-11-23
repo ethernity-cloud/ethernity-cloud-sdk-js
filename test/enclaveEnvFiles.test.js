@@ -8,6 +8,14 @@
 // store bucket, which readEnv parses in memory and admits key by key
 // (NODE_ENV_ALLOWLIST). A file a CAS session places outside the paths of the
 // file tree check, such as /app/.env, is read by no entry.
+//
+// No .env file goes into a securelock image or a build log. The trees the
+// securelocks' Dockerfiles copy (src/, scripts/, fixed-start/ of
+// nodenithy/build/securelock and of pynithy/build/securelock) hold no file
+// named .env or .env.<suffix>; the Dockerfiles and the build scripts name no
+// .env on a line that is not a comment; the pynithy securelock's pip lines
+// install no python-dotenv, which none of its sources imports. The tests
+// check names and lines of these files; no test reads a .env file.
 'use strict';
 
 const test = require('node:test');
@@ -18,7 +26,24 @@ const Module = require('module');
 const { SRC, cryptoStub, freshModules } = require('./helpers/securelock_app');
 
 const ROOT = path.join(__dirname, '..');
-const PYNITHY_SRC = path.join(ROOT, 'pynithy', 'build', 'securelock', 'src');
+const NODENITHY_SECURELOCK = path.join(ROOT, 'nodenithy', 'build', 'securelock');
+const PYNITHY_SECURELOCK = path.join(ROOT, 'pynithy', 'build', 'securelock');
+const PYNITHY_SRC = path.join(PYNITHY_SECURELOCK, 'src');
+// The trees the securelocks' Dockerfiles copy from the build context.
+const IMAGE_TREES = ['src', 'scripts', 'fixed-start'].flatMap((name) => [
+  path.join(NODENITHY_SECURELOCK, name),
+  path.join(PYNITHY_SECURELOCK, name),
+]);
+const DOCKERFILES = [
+  path.join(NODENITHY_SECURELOCK, 'Dockerfile.tmpl'),
+  path.join(PYNITHY_SECURELOCK, 'Dockerfile.tpl'),
+  path.join(PYNITHY_SECURELOCK, 'Dockerfile.base.tpl'),
+];
+// A file name of a .env file: .env, or .env.<suffix>.
+const ENV_FILE_NAME = /^\.env(\..*)?$/;
+// A .env file named as a path word: .env or .env.<suffix>, alone or as the
+// last component of a path, quoted or not.
+const ENV_PATH_WORD = /(^|[\s'"=:/(<>])\.env(\.[\w.-]+)?(?=$|[\s'";|&)<>])/;
 const TEMPLATE = path.join(SRC, 'securelock.js.tmpl');
 // The one use of dotenv a nodenithy securelock source makes: a parse in memory.
 const PARSE = "require('dotenv').parse(";
@@ -192,4 +217,76 @@ test('readEnv takes the bucket\'s .env through dotenv.parse alone and admits the
   for (const key of ['ESR_CONTRACT_ADDRESS', 'ENCLAVE_KDF_SALT']) {
     assert.ok(lines.includes(`Ignoring non-allowlisted .env key from the node bucket: ${key}`), key);
   }
+});
+
+// The entries below `dir` with the name of a .env file, node_modules left
+// out. Only the names are read.
+function envFilesBelow(dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const file = path.join(dir, entry.name);
+    if (ENV_FILE_NAME.test(entry.name)) out.push(relative(file));
+    if (entry.isDirectory() && entry.name !== 'node_modules') out.push(...envFilesBelow(file));
+  }
+  return out;
+}
+
+// The lines of a shell script or Dockerfile `text` that name a .env file, as
+// "<line>: <text>": every line that is not a comment line (one that starts
+// with #) and holds ENV_PATH_WORD.
+function envFileLines(text) {
+  const found = [];
+  text.split(/\r?\n/).forEach((line, i) => {
+    const code = line.trim();
+    if (!code.startsWith('#') && ENV_PATH_WORD.test(code)) found.push(`${i + 1}: ${code}`);
+  });
+  return found;
+}
+
+// The `RUN pip install` lines of a Dockerfile `text`, with their continuations.
+const pipLines = (text) => text.replace(/\r\n/g, '\n').match(/^RUN pip install (?:[^\n]*\\\n)*[^\n]*$/gm) || [];
+
+test('no tree a securelock Dockerfile copies holds a file named .env or .env.<suffix>', () => {
+  for (const dir of IMAGE_TREES) assert.ok(fs.existsSync(dir), relative(dir));
+  assert.deepEqual(IMAGE_TREES.flatMap(envFilesBelow), []);
+});
+
+test('the securelock Dockerfiles and build scripts name no .env file: none is copied into a stage or printed into the build log', () => {
+  const list = [
+    ...DOCKERFILES,
+    ...files(path.join(NODENITHY_SECURELOCK, 'scripts'), /\.sh$/),
+    ...files(path.join(PYNITHY_SECURELOCK, 'scripts'), /\.sh$/),
+  ];
+  const names = list.map(relative);
+  assert.ok(names.includes('nodenithy/build/securelock/scripts/binary-fs-build.sh'));
+  assert.ok(names.includes('pynithy/build/securelock/scripts/binary-fs-build.sh'));
+  assert.deepEqual(loads(list, envFileLines), {});
+});
+
+test('the pynithy securelock image installs no python-dotenv', () => {
+  const lines = DOCKERFILES.slice(1).flatMap((file) => pipLines(fs.readFileSync(file, 'utf8')));
+  assert.ok(lines.length > 0, 'the freeze stage installs the securelock\'s packages');
+  for (const line of lines) assert.doesNotMatch(line, /python[-_.]?dotenv\b/i);
+});
+
+test('the build checks find a .env file by its name and on a build line, and pass the other names and lines', () => {
+  for (const name of ['.env', '.env.local', '.env.example']) assert.ok(ENV_FILE_NAME.test(name), name);
+  for (const name of ['env', '.envrc', '.environment', 'dotenv', 'a.env', 'package.json']) assert.ok(!ENV_FILE_NAME.test(name), name);
+  for (const line of [
+    'cat .env',
+    'echo "***"; cat .env; echo "***"',
+    'COPY ./src/.env /etny-securelock/',
+    'RUN cat /etny-securelock/.env',
+    "cp '.env.local' /tmp/",
+    'source ./.env',
+  ]) assert.equal(envFileLines(line).length, 1, line);
+  for (const line of [
+    '# cat .env',
+    'COPY ./src /etny-securelock/',
+    'cat securelock.js.tmpl | sed  s/"__ENCLAVE_NAME_SECURELOCK__"/"${ENCLAVE_NAME_SECURELOCK}"/g > securelock.js.tmp',
+    'echo "${NODE_ENV}"',
+    'RUN npm install dotenv',
+  ]) assert.deepEqual(envFileLines(line), [], line);
+  assert.deepEqual(pipLines('RUN pip install --no-cache-dir \\\n      pyinstaller \\\n      python-dotenv "web3>=6"\n'),
+    ['RUN pip install --no-cache-dir \\\n      pyinstaller \\\n      python-dotenv "web3>=6"']);
 });
