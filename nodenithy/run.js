@@ -149,6 +149,16 @@ const main = async () => {
         console.error(`Error: ${e.message}`);
         process.exit(1);
     }
+    // A registry seeding its securelock name owners (ECImageRegistryV4 while
+    // seedingOpen() answers true) refuses the securelock's registration with
+    // SeedingOpen(): the publish stops here, before anything is started, as
+    // it does when the registry's answer cannot be read (image_registry.js
+    // checkSeeding prints why).
+    try {
+        execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "checkSeeding"`, { stdio: 'inherit', env: { ...process.env, PROJECT_NAME: securelock } });
+    } catch (e) {
+        process.exit(1);
+    }
 
     // Where the image goes. An IPFS API of the application's own
     // (IPFS_ENDPOINT, with IPFS_TOKEN as its Authorization header when set)

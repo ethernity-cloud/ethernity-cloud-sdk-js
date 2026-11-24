@@ -39,6 +39,7 @@
     "localKubo.js",
     "localRegistry.js",
     "revert.js",
+    "registrySeeding.js",
     "payloadLint.mjs",
     "!**/__pycache__/**",
     "!**/*.pyc"

@@ -136,6 +136,13 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   npm run ecld-publish
   ```
   Required after build, to build and integrate the secure certificates that will be used during executions and to register the project to the Ethernity Cloud Image Register.
+  The publish first reads whether the network's image registry is seeding
+  the owners of its securelock names (ECImageRegistryV4's `seedingOpen()`):
+  such a registry refuses every securelock registration with `SeedingOpen()`
+  until its owner closes seeding, so the publish stops there, naming
+  `SeedingOpen()`, before anything is started; it stops too when the
+  registry's answer cannot be read. A registry without seeding (V1 to V3)
+  takes the publish as before.
   The publish measures the securelock out of the project's own `registry/`
   tree, served by a registry container of its own (`ecld-registry-<project>`,
   on a loopback port chosen free) and not out of the machine's

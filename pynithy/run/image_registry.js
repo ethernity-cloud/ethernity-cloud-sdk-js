@@ -4,6 +4,7 @@ const { config } = require('dotenv');
 const fs = require('fs');
 const path = require('path');
 const { isRevert, revertReason } = require('../../revert.js');
+const { seedingOpen, seedingRefusal } = require('../../registrySeeding.js');
 
 config();
 
@@ -456,6 +457,23 @@ class ImageRegistry {
         }
 
         const imageRegistry = new ImageRegistry();
+        // Exits 1 with the refusal while the registry is seeding its
+        // securelock name owners (registrySeeding.js), and when its answer
+        // cannot be read; 0 when it takes registrations.
+        if (action === 'checkSeeding') {
+            let seeding;
+            try {
+                seeding = await seedingOpen(imageRegistry.provider, IMAGE_REGISTRY_ADDRESS);
+            } catch (e) {
+                console.error(`Could not read whether the image registry ${IMAGE_REGISTRY_ADDRESS} is seeding: ${e.reason || e.message}`);
+                process.exit(1);
+            }
+            if (seeding) {
+                console.error(`Error: ${seedingRefusal(IMAGE_REGISTRY_ADDRESS)}`);
+                process.exit(1);
+            }
+            process.exit(0);
+        }
         // Whether the registry records images before their certificate.
         if (action === 'isV2') {
             try {
