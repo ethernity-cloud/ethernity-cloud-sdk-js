@@ -1,19 +1,24 @@
 // test/fixtures holds byte-identical copies of pox-smart-contract-litvm's
-// spec/*.json and spec/metadata-keys.md with its spec/MANIFEST.sha256, the
-// SHA-256 of every fixture in the sha256sum text format. The copies must hash
-// to the manifest, the manifest must name exactly the fixtures present, and,
-// where a litvm checkout is reachable (POX_SMART_CONTRACT_LITVM, else the
-// sibling ../pox-smart-contract-litvm), every copy must equal its source bytes.
+// spec/*.json and spec/metadata-keys.md at SOURCE_COMMIT, and
+// MANIFEST.sha256, the lines of that commit's spec/MANIFEST.sha256 for the
+// copies held, in the sha256sum text format (`sha256sum -c MANIFEST.sha256`
+// in test/fixtures checks every copy). The copies must hash to the manifest
+// and the manifest must name exactly the fixtures present. Where a
+// pox-smart-contract-litvm checkout is found (POX_SMART_CONTRACT_LITVM, else
+// a directory of that name beside this repository or beside any directory
+// above it), every copy must equal `git show SOURCE_COMMIT:spec/<name>` and
+// every manifest line that commit's line, never the checkout's working tree.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const FIXTURES = path.join(__dirname, 'fixtures');
 const MANIFEST = 'MANIFEST.sha256';
 const LITVM_ENV = 'POX_SMART_CONTRACT_LITVM';
-const LITVM_DEFAULT = path.join(__dirname, '..', '..', 'pox-smart-contract-litvm');
+const SOURCE_COMMIT = '2f600f6';
 
 function sha256(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
@@ -34,6 +39,30 @@ function fixtureNames() {
   return fs.readdirSync(FIXTURES)
     .filter((name) => name.endsWith('.json') || name === 'metadata-keys.md')
     .sort();
+}
+
+// The pox-smart-contract-litvm checkout: POX_SMART_CONTRACT_LITVM, else the
+// first directory of that name beside this repository or beside a directory
+// above it; null when none holds a .git.
+function litvmCheckout() {
+  const candidates = [];
+  if (process.env[LITVM_ENV]) candidates.push(path.resolve(process.env[LITVM_ENV]));
+  for (let dir = path.resolve(__dirname, '..'); ; dir = path.dirname(dir)) {
+    candidates.push(path.join(path.dirname(dir), 'pox-smart-contract-litvm'));
+    if (path.dirname(dir) === dir) break;
+  }
+  return candidates.find((c) => fs.existsSync(path.join(c, '.git'))) || null;
+}
+
+// `git show SOURCE_COMMIT:spec/<name>` in `checkout`, or null when the
+// checkout holds no such commit.
+function shownAtSource(checkout, name) {
+  try {
+    return execFileSync('git', ['-C', checkout, 'show', `${SOURCE_COMMIT}:spec/${name}`],
+      { maxBuffer: 1 << 26, stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch (e) {
+    return null;
+  }
 }
 
 test('the manifest is LF-terminated sha256sum text in bytewise name order', () => {
@@ -59,15 +88,20 @@ test('the manifest names exactly the fixtures present', () => {
   assert.deepEqual(entries.map((e) => e.name), fixtureNames());
 });
 
-test('the copies equal the litvm spec bytes when a checkout is reachable', (t) => {
-  const spec = path.join(path.resolve(process.env[LITVM_ENV] || LITVM_DEFAULT), 'spec');
-  if (!fs.existsSync(path.join(spec, MANIFEST))) {
-    t.skip(`no pox-smart-contract-litvm checkout at ${spec} (set ${LITVM_ENV})`);
+test('the copies and the manifest lines are the source commit\'s', (t) => {
+  const checkout = litvmCheckout();
+  if (checkout === null) {
+    t.skip(`no pox-smart-contract-litvm checkout found (set ${LITVM_ENV})`);
     return;
   }
-  for (const name of [...fixtureNames(), MANIFEST]) {
+  const source = shownAtSource(checkout, MANIFEST);
+  assert.ok(source !== null, `${checkout} holds no commit ${SOURCE_COMMIT}`);
+  const lines = new Map(manifestEntries(source.toString('utf8')).map((e) => [e.name, e.hash]));
+  for (const { hash, name } of manifestEntries(fs.readFileSync(path.join(FIXTURES, MANIFEST), 'utf8'))) {
+    assert.equal(hash, lines.get(name), `the manifest line of ${name} is not ${SOURCE_COMMIT}'s`);
+  }
+  for (const name of fixtureNames()) {
     const ours = fs.readFileSync(path.join(FIXTURES, name));
-    const theirs = fs.readFileSync(path.join(spec, name));
-    assert.ok(ours.equals(theirs), `test/fixtures/${name} differs from ${path.join(spec, name)}`);
+    assert.ok(ours.equals(shownAtSource(checkout, name)), `test/fixtures/${name} differs from ${SOURCE_COMMIT}:spec/${name}`);
   }
 });
