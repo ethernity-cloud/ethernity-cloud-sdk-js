@@ -144,6 +144,18 @@ function decrypt(privateKeyFile, encryptedMsg) {
     return decrypt_ecc(encryptedMsg, privatePoint);
 }
 
+// The text of `bytes` when they are UTF-8: decoding and encoding again give
+// the same bytes, which every invalid sequence (a surrogate's encoding, an
+// overlong form, a cut sequence) fails, its decoding being U+FFFD. Throws
+// otherwise.
+function utf8Text(bytes) {
+    const text = bytes.toString('utf8');
+    if (!Buffer.from(text, 'utf8').equals(bytes)) throw new Error('the plaintext is not UTF-8');
+    return text;
+}
+
+// The plaintext of an ECIES envelope as text; false when the envelope does
+// not decrypt with the key or its plaintext is not UTF-8.
 function decrypt_ecc(encryptedMsg, privatePoint) {
     try {
         const {ciphertext, nonce, authTag, x, y} = encryptedMsg;
@@ -153,9 +165,7 @@ function decrypt_ecc(encryptedMsg, privatePoint) {
 
         const decipher = crypto.createDecipheriv('aes-256-gcm', secretKey, Buffer.from(nonce, 'hex'));
         decipher.setAuthTag(Buffer.from(authTag, 'hex'));
-        let decrypted = decipher.update(ciphertext, 'hex', 'utf8');
-        decrypted += decipher.final('utf8');
-        return decrypted;
+        return utf8Text(Buffer.concat([decipher.update(Buffer.from(String(ciphertext), 'hex')), decipher.final()]));
     } catch (e) {
         // Opaque on purpose: the failure cause (rejected point vs. tag
         // mismatch) is not logged, so the caller of the decrypt sees only
