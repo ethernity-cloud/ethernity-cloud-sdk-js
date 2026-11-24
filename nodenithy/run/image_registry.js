@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { isRevert, revertReason } = require('../../revert.js');
 const { seedingOpen, seedingRefusal } = require('../../registrySeeding.js');
+const { EPC_SETTING, epcUnitsOfSetting, recordEpcNeed } = require('../../registryEpc.js');
 
 config();
 
@@ -500,6 +501,22 @@ class ImageRegistry {
                 }
             } catch (e) {
                 console.error(`Could not register the image: ${e.reason || e.message}`);
+                process.exit(1);
+            }
+            process.exit(0);
+        }
+        // Record the EPC need ECLD_EPC_MIB states for the registered image
+        // IPFS_HASH (registryEpc.js recordEpcNeed): exits 1 when a need
+        // recorded already differs, when the write is refused and when the
+        // registry's answer cannot be read.
+        if (action === 'recordEpcNeed') {
+            try {
+                const told = await recordEpcNeed(imageRegistry.provider, IMAGE_REGISTRY_ADDRESS,
+                    process.env.IPFS_HASH || "", epcUnitsOfSetting(process.env[EPC_SETTING]),
+                    (method, ...args) => imageRegistry.write(method, ...args));
+                if (told) console.log(told);
+            } catch (e) {
+                console.error(`Error: ${e.message}`);
                 process.exit(1);
             }
             process.exit(0);

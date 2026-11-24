@@ -10,6 +10,7 @@ const casResolver = require('../cas/resolver.js');
 const sessionRegistry = require('../cas/session_registry.js');
 const { LocalKubo, ownEndpoint, exitOnInterrupt, pinOnPublicApi } = require('../localKubo.js');
 const { LocalRegistry, recordedSecurelockBuild, servedDigest, composeAgainst, buildGateRefusal } = require('../localRegistry.js');
+const { EPC_SETTING, epcUnitsOfSetting } = require('../registryEpc.js');
 
 if (!fs.existsSync('.env')) {
     console.error("Error: .env file not found");
@@ -157,6 +158,15 @@ const main = async () => {
     try {
         execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "checkSeeding"`, { stdio: 'inherit', env: { ...process.env, PROJECT_NAME: securelock } });
     } catch (e) {
+        process.exit(1);
+    }
+    // ECLD_EPC_MIB, the EPC the securelock needs in MiB (registryEpc.js): a
+    // setting that is not a whole number of 1 to 4,194,240 ends the publish
+    // here, before anything is started.
+    try {
+        epcUnitsOfSetting(process.env[EPC_SETTING]);
+    } catch (e) {
+        console.error(`Error: ${e.message}`);
         process.exit(1);
     }
 
@@ -690,6 +700,14 @@ const main = async () => {
         // From here the registered image's source is this Kubo, until its
         // certificate is on chain.
         if (localKubo) localKubo.serving = true;
+        // The image's EPC need (ECLD_EPC_MIB), written once, after the
+        // registration and before the certificate; image_registry.js
+        // recordEpcNeed prints why it ends the publish.
+        try {
+            execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "recordEpcNeed"`, { stdio: 'inherit', env: { ...process.env, PROJECT_NAME: securelock } });
+        } catch (e) {
+            process.exit(1);
+        }
     }
     uploadToIpfs();
     const registryEnv = { ...process.env, PROJECT_NAME: securelock, IPFS_PEER: ipfsPeer };
@@ -868,6 +886,13 @@ const main = async () => {
         // image_registry.js registers the image under PROJECT_NAME and prints
         // why when it cannot.
         registryEnv.IPFS_HASH = process.env.IPFS_HASH;
+        // A V1 registry records no EPC need: recordEpcNeed tells the
+        // developer when ECLD_EPC_MIB states one above a unit.
+        try {
+            execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "v3" "recordEpcNeed"`, { stdio: 'inherit', env: registryEnv });
+        } catch (e) {
+            process.exit(1);
+        }
         try {
             execSync(`node ${runDir}/image_registry.js "${process.env.BLOCKCHAIN_NETWORK}" "${securelock}" "${process.env.VERSION}" "registerSecureLockImage"`, { stdio: "inherit", env: registryEnv });
         } catch (error) {
