@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import EthernityCloudRunner from '@ethernity-cloud/runner';
 import * as runnerEnums from '@ethernity-cloud/runner/enums.js';
 import casConfig from '../cas/config.js';
+import scontainSession from '../cas/scontain_session.js';
 import network from '../network.js';
 import init from '../init.js';
 
@@ -171,9 +172,10 @@ test('a PoX 1.0 publish posts the session to the Scontain CAS and names the trus
     assert.ok(run.includes(`const ENCLAVE_NAME_TRUSTEDZONE = trustedZoneSession || 'ecld-${kind}-trustedzone-v3-3.0.0';`), kind);
     // The validator set's CAS replaces scone-cas.cf on a CAS-attested testnet alone.
     assert.match(run, /if \(casTestnet\) \{\s+const fileCasAddr = file === 'docker-compose-final\.yml' \? publishedCasAddr : casAddr;/, kind);
-    assert.match(run, /\} else if \(!casTestnet\) \{/, kind);
-    assert.match(run, /axios\.post\('https:\/\/scone-cas\.cf:8081\/session'/, kind);
+    // The session is posted to the URL cas/scontain_session.js names.
+    assert.match(run, /\} else if \(!casTestnet\) \{\s+(?:\/\/.*\s+)*await scontainSession\.upload\(\{\s+url: scontainSession\.SESSION_URL,/, kind);
   }
+  assert.equal(scontainSession.SESSION_URL, 'https://scone-cas.cf:8081/session');
 });
 
 test('the session tag and the extraction service name of a PoX 1.0 network are its word, unlike any published network\'s', () => {

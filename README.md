@@ -254,6 +254,47 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   `.env` and publish again to enter the key. The publish hands the key to
   `nodenithy/run.js` or `pynithy/run.js` in its environment as `PRIVATE_KEY`.
 
+  Who may update the securelock session: on the mainnets and the PoX 1.0
+  testnet networks the publish posts the session to the Scontain CAS over TLS
+  under a client key, and the CAS lets that key alone read and update the
+  session. The key belongs to your publishing wallet: the publish derives it
+  from the wallet's private key at each upload (an RSA-4096 key,
+  `docs/cas-client-key.md`; a few seconds of computation), presents it with a
+  self-signed certificate made for that upload and writes it to no file.
+  ethernity-cloud-sdk-py derives the same key from the same wallet. So:
+  - Whoever publishes with the wallet can update the session, from any
+    machine, from a fresh checkout of the project and from either SDK.
+  - Losing the project folder does not lose the update right. Losing the
+    wallet's private key does, and a publish with another wallet cannot
+    update a session this wallet holds.
+  - `.env` records which key holds the session as `CAS_CLIENT_KEY`:
+    `wallet` once an upload under the wallet's key succeeded.
+
+  What a project published with an SDK up to 1.9.1 sees at its next publish:
+  those versions made a random key at a project's first publish and kept it
+  as `key.pem` and `cert.pem` in the run directory of the installed package,
+  `node_modules/@ethernity-cloud/sdk-js/<nodenithy|pynithy>/run/`. npm
+  removes them when it installs another version of the package; a copy made
+  before the upgrade and put back there afterwards restores them.
+  - With both files there and a session to update
+    (`PREDECESSOR_HASH_SECURELOCK` in `.env`), the publish sends that update
+    under the old key once more, with an access policy that gives the
+    session's read and update rights to the wallet's key, and writes
+    `CAS_CLIENT_KEY=handover` to `.env`. Every later publish posts under the
+    wallet's key; the first that succeeds writes `CAS_CLIENT_KEY=wallet` and
+    says once that `key.pem` and `cert.pem` are no longer used. The publish
+    never deletes or changes the two files. A project whose `.env` has no
+    `CAS_CLIENT_KEY` line is one whose session is still to be handed over:
+    removing the line makes the next publish post under the old key again.
+  - Without the files, the update is posted under the wallet's key. The CAS
+    takes it when the session is already the wallet's; a session that an old
+    key holds stays with that key, and the publish ends as it did before for
+    a project without its key ("Could not update session file for
+    securelock"): a project name and version that are both new give a new
+    session, which the wallet holds.
+  - A new session is posted under the wallet's key, whether or not the two
+    files are there.
+
   How the image reaches the network: leave `IPFS_ENDPOINT` in `.env` empty
   unless it names an IPFS API of your own (`IPFS_TOKEN` is the Authorization
   header value that API takes, when it takes one); the public API

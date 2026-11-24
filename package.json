@@ -65,7 +65,8 @@
     "web3": "^4.9.0"
   },
   "devDependencies": {
-    "acorn-jsx": "^5.3.2"
+    "acorn-jsx": "^5.3.2",
+    "js-yaml": "^4.1.0"
   },
   "author": "Alexandru Luca",
   "license": "AGPL-3.0"

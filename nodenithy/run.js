@@ -2,11 +2,9 @@ const fs = require('fs');
 const { execSync, execFileSync } = require('child_process');
 require('dotenv').config();
 const readline = require('readline');
-const forge = require('node-forge');
-const axios = require('axios');
-const https = require('https');
 const casConfig = require('../cas/config.js');
 const casResolver = require('../cas/resolver.js');
+const scontainSession = require('../cas/scontain_session.js');
 const sessionRegistry = require('../cas/session_registry.js');
 const { LocalKubo, ownEndpoint, exitOnInterrupt, pinOnPublicApi } = require('../localKubo.js');
 const { LocalRegistry, recordedSecurelockBuild, servedDigest, composeAgainst, buildGateRefusal } = require('../localRegistry.js');
@@ -437,90 +435,21 @@ const main = async () => {
     if (!cas) {
         console.log(`\t✔  ${process.env.BLOCKCHAIN_NETWORK}: no CAS session; the securelock self-signs from MR_ENCLAVE`);
     } else if (!casTestnet) {
-    // don't generate new keys if PREDECESSOR_HASH_SECURELOCK is not empty and the key.pem and cert.pem files exist
-    if (PREDECESSOR_HASH_SECURELOCK !== 'EMPTY' && fs.existsSync('key.pem') && fs.existsSync('cert.pem')) {
-        console.log("Skipping keypair generation and certificate creation.");
-        console.log("Using existing key.pem and cert.pem files.");
-    } else {
-        // Generate a keypair and create an X.509v3 certificate
-        const pki = forge.pki;
-        const keys = pki.rsa.generateKeyPair(4096);
-        const cert = pki.createCertificate();
-
-        cert.publicKey = keys.publicKey;
-        cert.serialNumber = '01';
-        cert.validity.notBefore = new Date();
-        cert.validity.notBefore.setFullYear(cert.validity.notBefore.getFullYear() - 1);
-        cert.validity.notAfter = new Date();
-        cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 2);
-
-        const attrs = [
-            {
-                name: 'countryName',
-                value: 'AU'
-            },
-            {
-                shortName: 'ST',
-                value: 'Some-State'
-            },
-            {
-                name: 'organizationName',
-                value: process.env.ENCLAVE_NAME_SECURELOCK || 'Internet Widgits Pty Ltd'
-            }
-        ];
-        cert.setSubject(attrs);
-        cert.setIssuer(attrs);
-
-        cert.setExtensions([
-            {
-                name: 'subjectKeyIdentifier'
-            },
-            {
-                name: 'authorityKeyIdentifier',
-                keyIdentifier: true
-            },
-            {
-                name: 'basicConstraints',
-                cA: true,
-                critical: true
-            }
-        ]);
-
-
-        // TOdo: use same certificate for future entryes
-        // Self-sign certificate
-        cert.sign(keys.privateKey, forge.md.sha256.create());
-
-        // PEM-format keys and cert
-        const privateKeyPem = pki.privateKeyToPem(keys.privateKey, 72, { type: 'pkcs8' });
-        const certPem = pki.certificateToPem(cert);
-
-        // Write to files
-        fs.writeFileSync('key.pem', privateKeyPem);
-        fs.writeFileSync('cert.pem', certPem);
-
-        console.log("# Generated cert.pem and key.pem files");
-
-
-    }
-    // Read the certificate and key files
-    const certFile = fs.readFileSync('cert.pem');
-    const keyFile = fs.readFileSync('key.pem');
-    const data = fs.readFileSync('etny-securelock-test.yaml');
-
-    // Create an HTTPS agent with the certificate and key
-    const agent = new https.Agent({
-        cert: certFile,
-        key: keyFile,
-        rejectUnauthorized: false, // This is equivalent to the `-k` option in curl
-        secureProtocol: 'TLSv1_2_method' // Ensure using TLSv1.2
-    });
-    // Perform the POST request
-    await axios.post('https://scone-cas.cf:8081/session', data, {
-        httpsAgent: agent,
-        headers: {
-            'Content-Type': 'application/octet-stream'
-        }
+    // The session is posted under the CAS client key of the publishing
+    // wallet, which is derived from PRIVATE_KEY and written to no file. A
+    // project whose run directory holds the key.pem and cert.pem of an SDK up
+    // to 1.9.1 hands its session over to that key first
+    // (cas/scontain_session.js).
+    await scontainSession.upload({
+        url: scontainSession.SESSION_URL,
+        sessionFile: 'etny-securelock-test.yaml',
+        predecessor: PREDECESSOR_HASH_SECURELOCK !== 'EMPTY',
+        legacyDir: runDir,
+        recorded: process.env[scontainSession.RECORD],
+        walletKey: process.env.PRIVATE_KEY,
+        organization: process.env.ENCLAVE_NAME_SECURELOCK || 'Internet Widgits Pty Ltd',
+        writeRecord: (value) => writeEnv(scontainSession.RECORD, value),
+        log: (line) => console.log(`# ${line}`)
     })
         .then(response => {
             fs.writeFileSync('predecessor.json', JSON.stringify(response.data, null, 2));
