@@ -144,6 +144,27 @@ async function publish(p, cas) {
   return result;
 }
 
+// The outcome of `run` with the clock `days` ahead: Date reads that much
+// later while it runs.
+async function daysAhead(days, run) {
+  const RealDate = Date;
+  const shift = days * 86400000;
+  global.Date = class extends RealDate {
+    constructor(...args) {
+      super(...(args.length ? args : [RealDate.now() + shift]));
+    }
+
+    static now() {
+      return RealDate.now() + shift;
+    }
+  };
+  try {
+    return await run();
+  } finally {
+    global.Date = RealDate;
+  }
+}
+
 // Every file under `dir`, by its path from it, with the SHA-256 of its bytes.
 function snapshot(dir, prefix = '') {
   const files = {};
@@ -246,13 +267,16 @@ test('a new session is posted under the wallet\'s CAS client key, over TLS 1.2, 
   assert.deepEqual(written(p, before), ['.env', `${RUN}/nodenithy/run/etny-securelock-test.yaml`]);
   assert.deepEqual(fs.readdirSync(p.runDir), ['etny-securelock-test.yaml']);
 
-  // The update of that session: the same key under another certificate.
-  const second = await publish(p, cas);
+  // The update of that session, a day later by the clock: the same key under
+  // a certificate built then.
+  const second = await daysAhead(1, () => publish(p, cas));
   assert.equal(second.refusal, null);
   assert.equal(second.request.key, WALLET_CAS_KEY);
   assert.equal(yaml.load(second.request.body.toString('utf8')).predecessor, first.response.data.hash);
   assert.equal(policyOf(second.request.body), undefined);
-  assert.ok(!second.request.certificate.equals(request.certificate));
+  const later = new crypto.X509Certificate(second.request.certificate);
+  assert.ok(new Date(later.validFrom) - new Date(certificate.validFrom) > 20 * 3600000);
+  assert.ok(new Date(later.validTo) - new Date(certificate.validTo) > 20 * 3600000);
   assert.equal(readEnv(p)[RECORD], WALLET_RECORD);
   assert.deepEqual(fs.readdirSync(p.runDir), ['etny-securelock-test.yaml']);
 });
