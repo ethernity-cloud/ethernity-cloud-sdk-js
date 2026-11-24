@@ -126,6 +126,11 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   npm run ecld-build
   ```
     the project will be built and the docker repository output will be stored in the `registry/` directory. This is the stage where the backend functions are added to the secure images.
+  Everything in `src/serverless` is published with the enclave image and
+  readable by anyone, so the build stops, before it copies or builds
+  anything, when the directory holds a file named `.env` or `.env.<anything>`
+  at any depth, and names each such file; a secret belongs in the task's
+  payload or input, which are encrypted for the enclave.
   The build also records in `.env` the securelock it pushed:
   `SECURELOCK_IMAGE_DIGEST`, the digest of the pushed image manifest, and
   `MRENCLAVE_SECURELOCK_SIGNED`, the enclave measurement it was signed with.

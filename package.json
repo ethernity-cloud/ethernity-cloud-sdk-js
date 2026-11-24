@@ -37,6 +37,7 @@
     "execution.js",
     "localKubo.js",
     "localRegistry.js",
+    "serverlessEnvFiles.js",
     "revert.js",
     "!**/__pycache__/**",
     "!**/*.pyc"

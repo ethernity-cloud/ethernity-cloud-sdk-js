@@ -71,6 +71,7 @@ export const ECRunner = {
 const require = createRequire(import.meta.url);
 const casConfig = require('../cas/config.js');
 const localRegistry = require('../localRegistry.js');
+const serverlessEnvFiles = require('../serverlessEnvFiles.js');
 export const VALIDATOR_REGISTRY = casConfig.VALIDATOR_REGISTRY;
 
 // An -unsafe network runs an -unsafe trustedzone and nothing else, and an
@@ -83,6 +84,14 @@ if (unsafe !== String(process.env.TRUSTED_ZONE_IMAGE || '').endsWith('-unsafe'))
     ? '       An -unsafe network runs only a trustedzone whose name ends in -unsafe.'
     : '       A trustedzone whose name ends in -unsafe runs only on an -unsafe network.');
   console.error('       Run ecld-init to choose the network again.');
+  process.exit(1);
+}
+
+// src/serverless goes whole into the securelock's image, which is published:
+// a .env file in it ends the build before anything is removed, copied or built.
+const envFiles = serverlessEnvFiles.find('./src/serverless');
+if (envFiles.length) {
+  serverlessEnvFiles.refusal(envFiles).forEach((line) => console.error(line));
   process.exit(1);
 }
 
