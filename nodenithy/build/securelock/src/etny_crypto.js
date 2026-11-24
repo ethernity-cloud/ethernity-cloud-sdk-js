@@ -1,3 +1,9 @@
+// The securelock's copy of the trustedzone's etny_crypto.js (etny-nodenithy
+// v3/build/trustedzone/src/etny_crypto.js): every function this copy shares
+// with it by name is identical to it. The trustedzone's statement signer (the
+// form 0xFF || "ecld-stmt-1" || 0x00 || statement of pox-smart-contract-litvm
+// spec reserved-prefixes.json), which signs the trustedzone's own
+// statements, is the trustedzone's alone and is not in this copy.
 const fs = require("fs");
 const elliptic = require('elliptic');
 const crypto = require('crypto');
