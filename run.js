@@ -34,6 +34,7 @@
  *   npx ecld-run --input data.json 'processData(___etny_data_set___)'
  *   npx ecld-run --network BLOXBERG_TESTNET --task-price 2.5 'esrIncrement()'
  *   npx ecld-run --mode session --expected-inputs 5 'hello("World")'
+ *   npx ecld-run --bid-wei 1200000000000000000 --bid-ceiling-wei 2000000000000000000 --epc-mib 256 'hello("World")'
  *   npx ecld-run --unsafe 'hello("World")'    # the network's -unsafe variant
  *   npx ecld-run --json 'hello("World")'      # machine-readable result
  *
@@ -41,6 +42,13 @@
  * of .env, as ecld-init writes them, and each flag overrides its key; it is
  * validated before the runner is constructed and passed nested in the
  * resources beside the flat duration a 1.1 runner reads.
+ *
+ * The claims flags go to the runner's run() options (runOptionsFor): with
+ * --bid-wei the request's V2 terms (options.v2), the execution's maxGflops as
+ * the GFLOPS ceiling and the relays per hour among them; --min-node-score and
+ * --allow-marked-image beside them. On a network that serves requests by
+ * claims the runner refuses a request without a bid before anything is sent,
+ * and ecld-run reports that refusal and exits 1 (runReport.js).
  *
  * The runner is ESM; this CJS entry loads it with dynamic import().
  *
@@ -92,6 +100,50 @@ function priceFlag(name, raw) {
   return n;
 }
 
+// The bounds of the claims flags, the runners' (ethernity-cloud-runner-js
+// options.v2, ethernity-cloud-runner-py resources): a bid and a bid ceiling
+// per CU-hour 1 to 2^128 - 1 wei and a gas level 1e18 to 2^128 - 1 (the PoX
+// 2.0's MAX_PRICE and MAX_GAS_LEVEL; the pricing refuses a gas level below
+// 1e18), a required GFLOPS figure 0 to 65,535, an EPC figure 1 to 4,194,240
+// MiB (65,535 units of 64 MiB, which the runner rounds the figure up to) and
+// a minimum node score 0 to 5.00 points.
+const UINT128_MAX = (1n << 128n) - 1n;
+const UINT256_MAX = (1n << 256n) - 1n;
+const GAS_LEVEL_MIN = 10n ** 18n;
+const REQUIRED_GFLOPS_MAX = 65535n;
+const EPC_MIB_MAX = 65535n * 64n;
+const SCORE_MAX = 5;
+
+// A whole-number flag from `min` to `max`, as a bigint.
+function wholeFlag(name, raw, min, max) {
+  const s = String(raw === undefined ? '' : raw).trim();
+  if (!/^\d+$/.test(s)) throw new UsageError(`${name} takes a whole number, got ${JSON.stringify(raw)}`);
+  const n = BigInt(s);
+  if (n < min || n > max) throw new UsageError(`${name} takes a whole number from ${min} to ${max}, got ${s}`);
+  return n;
+}
+
+// --min-node-score: points, a plain decimal from 0 to 5.00.
+function scoreFlag(name, raw) {
+  const s = String(raw === undefined ? '' : raw).trim();
+  if (!/^\d+(\.\d+)?$/.test(s) || Number(s) > SCORE_MAX) {
+    throw new UsageError(`${name} takes a score from 0 to 5.00, got ${JSON.stringify(raw)}`);
+  }
+  return Number(s);
+}
+
+// Each claims flag names the runner's options.v2 key it sets and its bounds;
+// the bigint the flag gives is passed as a Number where the key is a count.
+const CLAIMS_FLAGS = {
+  '--bid-wei': ['maxPricePerCuHourWei', 1n, UINT128_MAX, false],
+  '--bid-ceiling-wei': ['maxBidPerCuHourWei', 1n, UINT128_MAX, false],
+  '--escrow-wei': ['escrowWei', 1n, UINT256_MAX, false],
+  '--required-gflops': ['requiredGflops', 0n, REQUIRED_GFLOPS_MAX, true],
+  '--gas-level': ['gasLevel', GAS_LEVEL_MIN, UINT128_MAX, false],
+  '--epc-mib': ['epcMiB', 1n, EPC_MIB_MAX, true],
+};
+const BID_FLAG = '--bid-wei';
+
 // Each integer execution flag names the execution.js key it sets.
 const EXECUTION_FLAGS = {
   '--duration-hours': 'durationHours',
@@ -123,7 +175,7 @@ function setKey(obj, dotted, value) {
 }
 
 function parseArgs(argv) {
-  const opts = { ipfs: DEFAULT_IPFS, timeout: 600, taskPrice: 3, cpu: 1, memory: 1, storage: 10, bandwidth: 1, validators: 1, node: '', execution: {} };
+  const opts = { ipfs: DEFAULT_IPFS, timeout: 600, taskPrice: 3, cpu: 1, memory: 1, storage: 10, bandwidth: 1, validators: 1, node: '', execution: {}, claims: {} };
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -147,12 +199,39 @@ function parseArgs(argv) {
     else if (a === '--mode') setKey(opts.execution, 'mode', wordFlag(a, argv[++i]));
     else if (a in EXECUTION_FLAGS) setKey(opts.execution, EXECUTION_FLAGS[a], integerFlag(a, argv[++i]));
     else if (a in EXECUTION_SWITCHES) setKey(opts.execution, ...EXECUTION_SWITCHES[a]);
+    else if (a in CLAIMS_FLAGS) {
+      const [key, min, max, count] = CLAIMS_FLAGS[a];
+      const value = wholeFlag(a, argv[++i], min, max);
+      opts.claims[key] = count ? Number(value) : value;
+    } else if (a === '--min-node-score') opts.minNodeScore = scoreFlag(a, argv[++i]);
+    else if (a === '--allow-marked-image') opts.allowMarkedImage = true;
     else if (a === '--json') opts.json = true;
     else if (a === '--help' || a === '-h') opts.help = true;
     else if (isOption(a)) throw new UsageError(`unknown option ${a}`);
     else positional.push(a);
   }
+  // A request is added with V2 terms only with a bid.
+  const [bidKey] = CLAIMS_FLAGS[BID_FLAG];
+  const unbid = Object.keys(CLAIMS_FLAGS).find((flag) => opts.claims[CLAIMS_FLAGS[flag][0]] !== undefined);
+  if (unbid && opts.claims[bidKey] === undefined) {
+    throw new UsageError(`${unbid} states a V2 term of the request, which is added with V2 terms only with ${BID_FLAG}`);
+  }
   return { opts, positional };
+}
+
+/* The options of runner.run(): the input dataset; with --bid-wei, the V2
+ * terms (options.v2): the bid, the execution's maxGflops as the GFLOPS
+ * ceiling, the relays per hour and each claims flag given; --min-node-score
+ * and --allow-marked-image when given. Without a claims flag the options are
+ * the input dataset alone. */
+function runOptionsFor(opts, exec, relaysPerHour, inputData) {
+  const options = { inputData };
+  if (opts.claims[CLAIMS_FLAGS[BID_FLAG][0]] !== undefined) {
+    options.v2 = { maxGflops: exec.maxGflops, relaysPerHour, ...opts.claims };
+  }
+  if (opts.minNodeScore !== undefined) options.minNodeScore = opts.minNodeScore;
+  if (opts.allowMarkedImage) options.allowMarkedImage = true;
+  return options;
 }
 
 /* The order's execution object: the EXEC_* keys of env (the project's .env)
@@ -190,6 +269,11 @@ execution: each flag overrides its EXEC_* key in .env (ecld-init writes them; th
            --mode task|session  --duration-hours 1 (alias --duration)  --parallelism 1  --max-gflops 0  --headroom 25
            --expected-inputs 1  --keep-open / --no-keep-open  --renew / --no-renew  --max-renewals 0
            --expected-commits 0  --relays-per-hour <n> (default 1 + expected inputs, plus 10 with ESR_ENABLED)
+claims:    --bid-wei <wei>: the bid per CU-hour; the request is added with V2 terms, with --max-gflops as
+           its GFLOPS ceiling and --relays-per-hour; a network that serves requests by claims takes none without it
+           --bid-ceiling-wei <wei> (the most a raise bids)  --escrow-wei <wei> (the most the add pulls)
+           --required-gflops <n>  --gas-level <n> (default 1e18)  --epc-mib <MiB> (the EPC the task needs)
+           --min-node-score <0-5.00>  --allow-marked-image
 other:     --node <addr>  --ipfs intake|<ipfs api url> (default intake: the bootnode's payload intake;
            a URL takes ECLD_IPFS_TOKEN or IPFS_TOKEN as its Authorization header)
            --timeout <sec>  --json`;
@@ -333,9 +417,14 @@ async function main() {
     duration: exec.durationHours,
   };
   const resources = { ...flat, execution: exec };
+  const runOptions = runOptionsFor(opts, exec, relaysPerHour, input);
   console.log(`resources  : ${JSON.stringify(flat)}`);
   console.log(`execution  : ${JSON.stringify(exec)}`);
   console.log(`relays/hour: ${relaysPerHour}`);
+  const { inputData, ...claims } = runOptions;
+  if (Object.keys(claims).length) {
+    console.log(`claims     : ${JSON.stringify(claims, (k, v) => (typeof v === 'bigint' ? v.toString() : v))}`);
+  }
   console.log('submitting order... (this places an on-chain request and costs gas)');
 
   const done = new Promise((resolve) => {
@@ -354,7 +443,7 @@ async function main() {
 
   try {
     // Fire the run; its own promise also settles on completion.
-    const runPromise = runner.run(resources, securelock, code, opts.node, trustedzone || null, { inputData: input })
+    const runPromise = runner.run(resources, securelock, code, opts.node, trustedzone || null, runOptions)
       .catch((e) => ({ error: e.message }));
     const outcome = await Promise.race([done, timeout, runPromise]);
     clearTimeout(timer);
@@ -375,4 +464,4 @@ if (require.main === module) {
   main().catch((e) => { console.error(e && e.stack ? e.stack : String(e)); process.exit(1); });
 }
 
-module.exports = { parseArgs, executionFor, relaysPerHourFor, UsageError, HELP };
+module.exports = { parseArgs, executionFor, relaysPerHourFor, runOptionsFor, UsageError, HELP };

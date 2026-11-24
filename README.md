@@ -266,7 +266,21 @@ the JIT. `ECLD_NODE_JITLESS=0` or `1` overrides the choice.
   `--expected-inputs`, `--keep-open`/`--no-keep-open`, `--renew`/`--no-renew`,
   `--max-renewals`, `--expected-commits`; it is validated before the runner is
   constructed and printed with the relays-per-hour default (`--relays-per-hour`
-  names another value). See "The order's execution object" below. An option
+  names another value). See "The order's execution object" below. The
+  claims flags, the same in ethernity-cloud-sdk-py's `ecld-run`, go to the
+  runner: `--bid-wei <wei>` (the bid per CU-hour, in wei of the network
+  token) adds the request with V2 terms, whose GFLOPS ceiling is
+  `--max-gflops` and whose relays per hour are `--relays-per-hour` (or its
+  default), with `--bid-ceiling-wei` (the most a raise of the bid goes to),
+  `--escrow-wei` (the most the add pulls), `--required-gflops`,
+  `--gas-level` (1e18 when not given) and `--epc-mib` (the EPC the task
+  needs, in MiB; the runner states it in units of 64 MiB, at least one, and
+  at least the dApp's recorded need); each of them needs `--bid-wei`, and a
+  value outside the runners' bounds is a usage error (exit 2).
+  `--min-node-score <0-5.00>` and `--allow-marked-image` are the claims
+  path's own options. On a network that serves requests by claims the runner
+  refuses a run without `--bid-wei` before anything is sent, and `ecld-run`
+  prints that refusal and exits 1. An option
   `ecld-run` does not know (an argument that starts with `-`, holds no
   whitespace and is not a number) is a usage error (exit 2).
   `--input <file>` / `--input-text <string>` send the task's input dataset, read
