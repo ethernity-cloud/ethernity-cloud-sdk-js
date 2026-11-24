@@ -96,9 +96,9 @@ if (envFiles.length) {
 }
 
 // The securelock pipeline (build/securelock: Dockerfile.base.tpl, Dockerfile.tpl,
-// scripts/, src/) is ethernity-cloud-sdk-py's, kept identical to it, and so are
-// the images it builds on: a static SCONE python 3.14 the code is frozen for,
-// and the SCONE 6.0.7 LAS that runs beside it.
+// scripts/, fixed-start/, src/) is ethernity-cloud-sdk-py's, kept identical to
+// it, and so are the images it builds on: the SCONE python 3.14 the enclave
+// runs, and the SCONE 6.0.7 LAS that runs beside it.
 const SDK_REGISTRY = 'registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry';
 const BASE_IMAGE_REPO = `${SDK_REGISTRY}/sconecuratedimages/apps`;
 const BASE_IMAGE_TAG = 'python-3.14.6-alpine3.24-scone6.0.7';
