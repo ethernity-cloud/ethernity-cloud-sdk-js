@@ -13,12 +13,10 @@ const assert = require('node:assert/strict');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { LITVM_ENV, SOURCE_COMMIT, litvmCheckout, shownAt } = require('./helpers/litvmCheckout');
 
 const FIXTURES = path.join(__dirname, 'fixtures');
 const MANIFEST = 'MANIFEST.sha256';
-const LITVM_ENV = 'POX_SMART_CONTRACT_LITVM';
-const SOURCE_COMMIT = '2f600f6';
 
 function sha256(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
@@ -41,29 +39,7 @@ function fixtureNames() {
     .sort();
 }
 
-// The pox-smart-contract-litvm checkout: POX_SMART_CONTRACT_LITVM, else the
-// first directory of that name beside this repository or beside a directory
-// above it; null when none holds a .git.
-function litvmCheckout() {
-  const candidates = [];
-  if (process.env[LITVM_ENV]) candidates.push(path.resolve(process.env[LITVM_ENV]));
-  for (let dir = path.resolve(__dirname, '..'); ; dir = path.dirname(dir)) {
-    candidates.push(path.join(path.dirname(dir), 'pox-smart-contract-litvm'));
-    if (path.dirname(dir) === dir) break;
-  }
-  return candidates.find((c) => fs.existsSync(path.join(c, '.git'))) || null;
-}
-
-// `git show SOURCE_COMMIT:spec/<name>` in `checkout`, or null when the
-// checkout holds no such commit.
-function shownAtSource(checkout, name) {
-  try {
-    return execFileSync('git', ['-C', checkout, 'show', `${SOURCE_COMMIT}:spec/${name}`],
-      { maxBuffer: 1 << 26, stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch (e) {
-    return null;
-  }
-}
+const shownAtSource = (checkout, name) => shownAt(checkout, `spec/${name}`);
 
 test('the manifest is LF-terminated sha256sum text in bytewise name order', () => {
   const text = fs.readFileSync(path.join(FIXTURES, MANIFEST), 'latin1');
