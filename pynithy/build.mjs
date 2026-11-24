@@ -217,6 +217,14 @@ const signFlags =
   `--key=/enclave-key.pem --env --heap=${MEMORY_TO_ALLOCATE} ` +
   `--stack=4M --tcs=64 --dlopen=1 --extensions=/lib/libbinary-fs.so`;
 
+// The session's name is given to the launcher as a C string literal inside a
+// shell word (the link line's FIXED_START_SESSION) and names the directories
+// the session places its files in.
+if (!/^[A-Za-z0-9._-]+$/.test(ENCLAVE_NAME_SECURELOCK)) {
+  console.error(`ERROR: the securelock's session name ${JSON.stringify(ENCLAVE_NAME_SECURELOCK)} is not letters, digits, dots, dashes and underscores alone.`);
+  process.exit(1);
+}
+
 console.log('Building etny-securelock');
 fs.writeFileSync('Dockerfile', fs.readFileSync('Dockerfile.tpl', 'utf8')
   .replace(/__SECURELOCK_SESSION__/g, ENCLAVE_NAME_SECURELOCK)

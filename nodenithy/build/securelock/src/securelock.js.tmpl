@@ -1,3 +1,15 @@
+// The start is the fixed one (fixed-start/securelock.h): node runs from the
+// path the image signs, and the one folder Node searches for modules outside
+// the directories of this file is the global folder of that path's prefix,
+// which the image does not hold and the launcher's file tree check refuses.
+// A HOME or a NODE_PATH, neither of which the launcher passes, adds folders
+// to require('module').globalPaths. The process ends with status 78, the
+// launcher's own, on any other start.
+if (process.execPath !== '/usr/local/bin/node' || require('module').globalPaths.join('\n') !== '/usr/local/lib/node') {
+    require('fs').writeSync(2, 'fixed start: the start is refused: node is not /usr/local/bin/node with /usr/local/lib/node as its one global folder\n');
+    process.exit(78);
+}
+
 // Force stdout/stderr to be synchronous (blocking). Under SCONE 6 + Node, when
 // the process exits quickly (e.g. the PUBLIC_KEY cert-harvest run, which prints
 // the cert then returns) Node's pipe-buffered stdout can be torn down before it

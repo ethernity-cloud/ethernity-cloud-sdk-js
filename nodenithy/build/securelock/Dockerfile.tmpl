@@ -47,28 +47,32 @@ WORKDIR /
 RUN ["chmod", "+x", "etny-securelock/binary-fs-build.sh"]
 RUN etny-securelock/binary-fs-build.sh
 
-# The digests of the fixed start's file tree check: the tree of this stage's
-# file system, from which the binary-fs above is made, at the paths
-# fixed-start/securelock.tree names (fixed-start/tree_digest.sh). The header
-# goes to the cross compiler stage with /binary-fs-dir, the listing of the
-# entries each digest covers beside it.
+# binary-fs-build.sh made the binary-fs of /enclave-root, the enclave's files
+# and nothing else. The ELF files of that root with the libraries they need
+# (fixed-start/elf_needed.sh) and the digest of the root for the fixed
+# start's file tree check (fixed-start/tree_digest.sh, the last step that
+# reads the root) are written beside the binary-fs: the header goes to the
+# cross compiler stage with /binary-fs-dir, the two listings with it.
 COPY fixed-start/ /fixed-start/
-RUN bash /fixed-start/tree_digest.sh /fixed-start/securelock.tree /binary-fs-dir/fixed_start_tree.h /binary-fs-dir/fixed_start_tree.txt
+RUN bash /fixed-start/elf_needed.sh /enclave-root /binary-fs-dir/fixed_start_elf.txt
+RUN bash /fixed-start/tree_digest.sh /enclave-root /binary-fs-dir/fixed_start_tree.h /binary-fs-dir/fixed_start_tree.txt
 
 FROM registry.ethernity.cloud:443/debuggingdelight/ethernity-cloud-sdk-registry/sconecuratedimages/crosscompilers:alpine-scone6.0.7 as build
 
 COPY --from=release /binary-fs-dir /.
 # The fixed start (fixed-start/fixed_start.c, with the securelock's argument
-# vector and environment keys in fixed-start/securelock.h, and the tree's
-# digests in /fixed_start_tree.h) is linked into the extension, which the
-# signer measures: the enclave runs the ENTRYPOINT's vector with the listed
-# keys of its environment, whatever arguments and environment its start gives
-# it, and only when the files at the checked paths are the binary-fs tree's.
-# build.mjs renders __FIXED_START_JITLESS__ to 1 when the ENTRYPOINT runs node
-# --jitless, else to 0.
+# vector, environment keys, working directory and excepted entries in
+# fixed-start/securelock.h, the name of its CAS session in
+# FIXED_START_SESSION and the root's digest in /fixed_start_tree.h) is linked
+# into the extension, which the signer measures: the enclave runs the
+# ENTRYPOINT's vector with the listed keys of its environment, whatever
+# arguments and environment its start gives it, and only when its file system
+# holds the entries of /enclave-root and, beside them, the excepted entries
+# alone. build.mjs renders __FIXED_START_JITLESS__ to 1 when the ENTRYPOINT
+# runs node --jitless, else to 0.
 COPY fixed-start/ /fixed-start/
 
-RUN scone gcc ./binary_fs_blob.s -O2 -fPIC -include /fixed-start/securelock.h -include /fixed_start_tree.h -DFIXED_START_JITLESS=__FIXED_START_JITLESS__ /fixed-start/fixed_start.c ./libbinary_fs_template.a -shared -o /libbinary-fs.so
+RUN scone gcc ./binary_fs_blob.s -O2 -fPIC -DFIXED_START_SESSION='"__ENCLAVE_NAME_SECURELOCK__"' -include /fixed-start/securelock.h -include /fixed_start_tree.h -DFIXED_START_JITLESS=__FIXED_START_JITLESS__ /fixed-start/fixed_start.c ./libbinary_fs_template.a -shared -o /libbinary-fs.so
 
 FROM ${SCONE_NODE}
 

@@ -7,12 +7,12 @@ const path = require('path');
 let addon = null;
 function load() {
   if (addon) return addon;
-  // The addon sits next to the enclave sources in the image; try a couple of
-  // resolutions so it works in the enclave (/etny-securelock) and in local test.
+  // The addon sits beside this file in the image: by this file's directory,
+  // then by the image's absolute path. No candidate is relative to the
+  // working directory.
   const candidates = [
     path.join(__dirname, 'sgx_report.node'),
-    '/etny-trustedzone/sgx_report.node',
-    './sgx_report.node',
+    '/etny-securelock/sgx_report.node',
   ];
   let lastErr;
   for (const p of candidates) {

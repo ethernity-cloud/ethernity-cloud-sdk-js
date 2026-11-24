@@ -359,26 +359,48 @@ rebuilding and republishing on 1.8.0.
   is linked into the extension the signer measures (`/lib/libbinary-fs.so`)
   with the securelock's header `securelock.h`: the enclave's program is called
   with the ENTRYPOINT's vector (`/usr/local/bin/node`, `--jitless` when the
-  build runs node jitless, `/etny-securelock/securelock.js`;
-  `renderSecurelockDockerfile` sets `FIXED_START_JITLESS` to match) and with
-  the first entry of each of `ETNY_MODE`, `ETNY_ORDER_ID`,
-  `ETNY_CLIENT_CHALLENGE`, `ECAS_ATTEST_SESSION`, `ECAS_ENCLAVE_NONCE`,
-  `ECAS_CAS_QUOTE` and `ESR_CONTRACT_ADDRESS` its start's environment holds,
-  and nothing else; the arguments and environment of the compose or of a CAS
-  session reach neither node nor the securelock. A start that did not come
-  through the launcher ends with status 78. Before it calls node's main the
-  launcher checks the file tree: for each path of
-  `fixed-start/securelock.tree` (`/etny-securelock`, with the dApp's backend
-  and the node_modules, and `/node_modules` and `/usr/local/lib/node`, which
-  the tree does not hold) it computes the digest of the tree at that path as
-  the enclave sees it (every regular file with its size and SHA-256, every
-  symbolic link with its target, in a fixed order; `fixed_start.c` and
-  `fixed-start/tree_digest.sh` state the records) and ends with status 78
-  (`the file tree is not the image's at <path>`) when one differs from the
-  digest the release stage wrote with `tree_digest.sh` after the binary-fs was
-  made, which the link line compiles into the measured extension. A file at
-  such a path that is not the tree's changes the digest; a file at another
-  path (`/tmp`, `/app`, `/etc`) is not checked. The securelock reads no `.env`
+  build runs node jitless, `--disable-sigusr1`,
+  `--openssl-config=/etny-securelock/fixed-start/openssl.cnf`,
+  `/etny-securelock/securelock.js`; `nodeFlags.js` gives the flags, which are
+  also `.env`'s `SECURELOCK_NODE_FLAGS` and the CAS session's command, and
+  `renderSecurelockDockerfile` sets `FIXED_START_JITLESS` to match), in the
+  working directory `/`, and with the first entry of each of `ETNY_MODE`,
+  `ETNY_ORDER_ID`, `ETNY_CLIENT_CHALLENGE`, `ECAS_ATTEST_SESSION`,
+  `ECAS_ENCLAVE_NONCE`, `ECAS_CAS_QUOTE` and `ESR_CONTRACT_ADDRESS` its
+  start's environment holds, and nothing else; the arguments, the environment
+  and the working directory of the compose or of a CAS session reach neither
+  node nor the securelock. With `--disable-sigusr1` node installs no SIGUSR1
+  handler, so a signal of the host starts no inspector; `--openssl-config`
+  names an empty file of the image. A start that did not come through the
+  launcher ends with status 78. `securelock.js`'s first statements end the
+  process with status 78 unless `process.execPath` is `/usr/local/bin/node`
+  and `require('module').globalPaths` is `/usr/local/lib/node` alone, and
+  `sgx_report.js` names the addon beside it and by
+  `/etny-securelock/sgx_report.node`, never by a path relative to the working
+  directory. The file tree check covers the whole file system the enclave
+  sees. `scripts/binary-fs-build.sh` assembles the enclave's files in a new
+  directory, `/enclave-root` (the node of the stage, `/etny-securelock` with
+  the dApp's backend and the node_modules, and the empty OpenSSL
+  configuration), and makes the binary-fs of that directory whole;
+  `fixed-start/tree_digest.sh` writes its digest, which the link line
+  compiles into the measured extension with the session's name, and
+  `fixed-start/elf_needed.sh` lists the root's ELF files with the libraries
+  they need in the build's log. Before it calls node's main the launcher
+  reads the file system from `/` down and ends with status 78 (`the file tree
+  is not the image's at <path>`) unless every entry is one the digest covers
+  (a record per directory, per regular file with its size and SHA-256 and
+  per symbolic link with its target, in a fixed order; `fixed_start.c` and
+  `tree_digest.sh` state the records) or one the header excepts: `/dev` and
+  `/proc`, which are not read; `/etc` with `hosts` and `resolv.conf` and no
+  other name; `/app/<session>` with `ca.pem` and `cert.pem` and
+  `/private/<session>` with `key.pem`, the files the CAS session places, and
+  no other name. An added, removed or changed file, link or directory
+  anywhere else is refused, as is an entry more than 64 names below `/`. The
+  binary-fs holds no empty directory, so an empty directory of
+  `src/serverless` is not in the image; a file that is neither a regular file
+  nor a symbolic link, and a tree deeper than 64 names, fail the build. The
+  session's name is letters, digits, dots, dashes and underscores alone
+  (`renderSecurelockDockerfile` throws otherwise). The securelock reads no `.env`
   file of its file system: `securelock.js` uses dotenv only to parse the
   `.env` object of its store bucket (`readEnv`, which admits the keys of
   `NODE_ENV_ALLOWLIST` that its environment does not set), so a file such as
@@ -390,7 +412,8 @@ rebuilding and republishing on 1.8.0.
   named `.env` or `.env.<suffix>`, the Dockerfiles and the build scripts name
   none, and the pynithy securelock installs no python-dotenv; the same test
   fails otherwise. The pynithy securelock carries
-  the same files with its own header and tree file (the mirror below).
+  the same three files (`fixed_start.c`, `tree_digest.sh`, `elf_needed.sh`)
+  with its own header (the mirror below).
 - **The pynithy mirror.** `pynithy/build/securelock` is a byte-for-byte copy
   of the Python SDK's securelock tree (`ethernity-cloud-sdk-py`,
   `ethernity_cloud_sdk_py/commands/pynithy/build/securelock`), never edited

@@ -27,6 +27,12 @@ const SIGNED_MRENCLAVE_STEP =
 // ENTRYPOINT's.
 const fixedStartJitless = (nodeFlags) => (nodeFlags.includes('--jitless') ? '1' : '0');
 
+// The enclave's name is the securelock's CAS session name. The link line
+// gives it to the launcher as a C string literal inside a shell word
+// (FIXED_START_SESSION), and it names the directories the session places its
+// files in: letters, digits, dots, dashes and underscores alone.
+const ENCLAVE_NAME = /^[A-Za-z0-9._-]+$/;
+
 /**
  * @param {string} template the text of build/securelock/Dockerfile.tmpl
  * @param {object} v the build's values: enclaveName, networkType ("mainnet" or
@@ -35,8 +41,13 @@ const fixedStartJitless = (nodeFlags) => (nodeFlags.includes('--jitless') ? '1' 
  *   of the ESR registry, "" without ESR), memory (SCONE_HEAP), nodeFlags (the
  *   node flags, nodeFlags.js) and production (sign --production)
  * @returns {string} the Dockerfile
+ * @throws when enclaveName holds a character other than letters, digits,
+ *   dots, dashes and underscores
  */
 function renderSecurelockDockerfile(template, v) {
+  if (!ENCLAVE_NAME.test(String(v.enclaveName))) {
+    throw new Error(`the enclave name ${JSON.stringify(v.enclaveName)} is not letters, digits, dots, dashes and underscores alone`);
+  }
   return template
     .replace(/__ENCLAVE_NAME_SECURELOCK__/g, v.enclaveName)
     .replace(/__NETWORK_TYPE__/g, v.networkType)

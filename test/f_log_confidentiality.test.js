@@ -131,12 +131,16 @@ function loadTemplate({ store = null } = {}) {
       constructor() { return storeOf(); }
     },
     './self_sign': { generateCertFromMrEnclave() { throw new Error('no SGX report off the enclave'); } },
+    // The global folders and, below, node's path as the image's fixed start
+    // gives them: the template's first statements check both.
+    module: Object.freeze({ globalPaths: Object.freeze(['/usr/local/lib/node']) }),
   };
   const fromSrc = Module.createRequire(path.join(SRC, 'securelock.js'));
   const requireOf = (name) => (Object.prototype.hasOwnProperty.call(standIns, name) ? standIns[name] : fromSrc(name));
   const handlers = {};
   const proc = {
     env: {},
+    execPath: '/usr/local/bin/node',
     handlers,
     exitCode: undefined,
     on(event, fn) { handlers[event] = fn; return proc; },

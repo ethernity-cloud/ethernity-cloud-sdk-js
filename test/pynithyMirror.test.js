@@ -44,10 +44,9 @@ test('the mirror tree holds the five mirrored entries and no build leftovers', (
   assert.ok(files.includes('Dockerfile.tpl'));
   assert.ok(files.some((f) => f.startsWith('scripts/')));
   assert.ok(files.some((f) => f.startsWith('src/')));
-  assert.ok(files.includes('fixed-start/fixed_start.c'));
-  assert.ok(files.includes('fixed-start/securelock.h'));
-  assert.ok(files.includes('fixed-start/securelock.tree'));
-  assert.ok(files.includes('fixed-start/tree_digest.sh'));
+  assert.deepEqual(files.filter((f) => f.startsWith('fixed-start/')).sort(),
+    ['fixed-start/elf_needed.sh', 'fixed-start/fixed_start.c', 'fixed-start/securelock.h', 'fixed-start/tree_digest.sh']);
+  for (const script of ['binary-fs-build.sh', 'enclave-root.sh', 'pyfreeze.sh']) assert.ok(files.includes(`scripts/${script}`), script);
   assert.ok(!files.some((f) => f.includes('__pycache__') || f.endsWith('.pyc')));
 });
 
