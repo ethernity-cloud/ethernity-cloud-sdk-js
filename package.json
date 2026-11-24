@@ -1,6 +1,6 @@
 {
   "name": "@ethernity-cloud/sdk-js",
-  "version": "1.8.7",
+  "version": "2.0.0-beta.1",
   "description": "A package to run ethernity cloud build scripts",
   "scripts": {
     "test": "node --test \"test/**/*.test.js\"",
