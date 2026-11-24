@@ -1,6 +1,6 @@
 {
   "name": "@ethernity-cloud/sdk-js",
-  "version": "1.8.6",
+  "version": "2.0.0-beta.1",
   "description": "A package to run ethernity cloud build scripts",
   "scripts": {
     "test": "node --test \"test/**/*.test.js\"",
@@ -39,11 +39,12 @@
     "localKubo.js",
     "localRegistry.js",
     "revert.js",
+    "payloadLint.mjs",
     "!**/__pycache__/**",
     "!**/*.pyc"
   ],
   "dependencies": {
-    "@ethernity-cloud/runner": "^0.6.12",
+    "@ethernity-cloud/runner": "^2.0.0-beta.1",
     "acorn": "^8.11.0",
     "adm-zip": "^0.5.14",
     "axios": "^1.7.2",
@@ -62,6 +63,9 @@
     "shx": "^0.3.4",
     "web-vitals": "^2.1.4",
     "web3": "^4.9.0"
+  },
+  "devDependencies": {
+    "acorn-jsx": "^5.3.2"
   },
   "author": "Alexandru Luca",
   "license": "AGPL-3.0"
